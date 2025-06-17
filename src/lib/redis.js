@@ -1,0 +1,842 @@
+import Redis from "ioredis";
+import crypto from "crypto";
+import { v4 as uuidv4 } from "uuid";
+
+// --- Improved Logging Configuration (Simple Console Logger) ---
+const logger = {
+  info: (message) =>
+    console.log(`[INFO] ${new Date().toISOString()} - ${message}`),
+  error: (message) =>
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`),
+  warn: (message) =>
+    console.warn(`[WARN] ${new Date().toISOString()} - ${message}`),
+  debug: (message) =>
+    console.log(`[DEBUG] ${new Date().toISOString()} - ${message}`), // Add debug if needed
+};
+
+// --- Configuration with Validation ---
+class QueueConfig {
+  constructor(config) {
+    this.redis_host = config.redis_host || "localhost";
+    this.redis_port = parseInt(config.redis_port || "6379", 10);
+    this.redis_db = parseInt(config.redis_db || "0", 10);
+    this.redis_password = config.redis_password || null;
+
+    this.queue_name = "optimized_queue_js";
+    this.processing_queue_name = "optimized_queue_js_processing";
+    this.dead_letter_queue_name = "optimized_queue_js_dlq";
+    this.metadata_hash_name = "optimized_queue_js_metadata";
+
+    this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
+    this.max_attempts = parseInt(config.max_attempts || "3", 10);
+    this.batch_size = parseInt(config.batch_size || "100", 10);
+    this.connection_pool_size = parseInt(config.redis_pool_size || "10", 10); // ioredis handles pooling differently, this is more for reference
+
+    this.enable_message_encryption =
+      (config.enable_message_encryption || "false").toLowerCase() === "true";
+    this.secret_key = config.secret_key || null;
+
+    this._validate();
+  }
+
+  _validate() {
+    if (this.enable_message_encryption && !this.secret_key) {
+      throw new Error("SECRET_KEY is required when encryption is enabled");
+    }
+    if (this.ack_timeout_seconds <= 0) {
+      throw new Error("ACK_TIMEOUT_SECONDS must be greater than 0");
+    }
+    if (this.max_attempts <= 0) {
+      throw new Error("MAX_ATTEMPTS must be greater than 0");
+    }
+  }
+}
+
+//const config = new QueueConfig();
+
+// --- Data Classes ---
+class MessageMetadata {
+  constructor(
+    attempt_count = 0,
+    dequeued_at = null,
+    created_at = 0.0,
+    last_error = null,
+    processing_duration = 0.0
+  ) {
+    this.attempt_count = attempt_count;
+    this.dequeued_at = dequeued_at; // timestamp in seconds
+    this.created_at = created_at; // timestamp in seconds
+    this.last_error = last_error;
+    this.processing_duration = processing_duration;
+  }
+
+  static fromObject(data) {
+    return new MessageMetadata(
+      data.attempt_count,
+      data.dequeued_at,
+      data.created_at,
+      data.last_error,
+      data.processing_duration
+    );
+  }
+}
+
+class QueueMessage {
+  constructor(id, type, payload, created_at, priority = 0) {
+    this.id = id;
+    this.type = type;
+    this.payload = payload;
+    this.created_at = created_at; // timestamp in seconds
+    this.priority = priority;
+  }
+
+  static fromObject(data) {
+    return new QueueMessage(
+      data.id,
+      data.type,
+      data.payload,
+      data.created_at,
+      data.priority
+    );
+  }
+}
+
+// --- Security Utilities ---
+class MessageSecurity {
+  constructor(secret_key) {
+    if (!secret_key)
+      throw new Error("Secret key is required for MessageSecurity");
+    this.secret_key = Buffer.from(secret_key, "utf-8");
+  }
+
+  signMessage(message) {
+    const hmac = crypto.createHmac("sha256", this.secret_key);
+    hmac.update(message, "utf-8");
+    const signature = hmac.digest("hex");
+    return `${message}|${signature}`;
+  }
+
+  verifyMessage(signedMessage) {
+    try {
+      const parts = signedMessage.split("|");
+      if (parts.length < 2) return null; // Handle cases where there's no pipe
+
+      const signature = parts.pop();
+      const message = parts.join("|");
+
+      const hmac = crypto.createHmac("sha256", this.secret_key);
+      hmac.update(message, "utf-8");
+      const expectedSignature = hmac.digest("hex");
+
+      if (
+        crypto.timingSafeEqual(
+          Buffer.from(signature, "hex"),
+          Buffer.from(expectedSignature, "hex")
+        )
+      ) {
+        return message;
+      }
+      return null;
+    } catch (error) {
+      logger.error(`Error verifying message: ${error.message}`);
+      return null;
+    }
+  }
+}
+
+// --- Optimized Redis Connection Management ---
+class RedisConnectionManager {
+  constructor(config) {
+    this.config = config;
+    this._redis = null;
+    this.security =
+      config.enable_message_encryption && config.secret_key
+        ? new MessageSecurity(config.secret_key)
+        : null;
+  }
+
+  get redis() {
+    if (!this._redis) {
+      const redisOptions = {
+        host: this.config.redis_host,
+        port: this.config.redis_port,
+        db: this.config.redis_db,
+        retryStrategy: (times) => Math.min(times * 50, 2000), // Standard retry strategy
+        maxRetriesPerRequest: 3, // Corresponds to some level of retry
+        enableReadyCheck: true,
+        // ioredis handles connection pooling implicitly when sharing a client instance
+        // or you can use `new Redis.Cluster([...])` for cluster mode.
+        // `max_connections` equivalent is managed by how many client instances you create or by cluster setup.
+      };
+      if (this.config.redis_password) {
+        redisOptions.password = this.config.redis_password;
+      }
+      this._redis = new Redis(redisOptions);
+
+      this._redis.on("connect", () =>
+        logger.info(
+          `Connected to Redis at ${this.config.redis_host}:${this.config.redis_port}`
+        )
+      );
+      this._redis.on("error", (err) =>
+        logger.error(`Redis connection error: ${err}`)
+      );
+      this._redis.on("ready", () => logger.info("Redis client ready."));
+    }
+    return this._redis;
+  }
+
+  async testConnection() {
+    try {
+      await this.redis.ping();
+      logger.info(
+        `Successfully pinged Redis at ${this.config.redis_host}:${this.config.redis_port}`
+      );
+    } catch (e) {
+      logger.error(`Redis connection test failed: ${e}`);
+      throw e;
+    }
+  }
+
+  pipeline() {
+    return this.redis.pipeline();
+  }
+
+  async disconnect() {
+    if (this._redis) {
+      await this._redis.quit();
+      this._redis = null;
+      logger.info("Disconnected from Redis.");
+    }
+  }
+}
+
+// --- Optimized Queue System ---
+class OptimizedRedisQueue {
+  constructor(config) {
+    this.config = config;
+    this.redisManager = new RedisConnectionManager(config);
+    this._stats = {
+      enqueued: 0,
+      dequeued: 0,
+      acknowledged: 0,
+      failed: 0,
+      requeued: 0,
+    };
+  }
+
+  _serializeMessage(message) {
+    let messageJson = JSON.stringify(message);
+    if (this.redisManager.security) {
+      messageJson = this.redisManager.security.signMessage(messageJson);
+    }
+    return messageJson;
+  }
+
+  _deserializeMessage(messageJson) {
+    try {
+      if (this.redisManager.security) {
+        messageJson = this.redisManager.security.verifyMessage(messageJson);
+        if (messageJson === null) {
+          logger.error("Message with invalid signature detected");
+          return null;
+        }
+      }
+      return JSON.parse(messageJson);
+    } catch (e) {
+      logger.error(`Error deserializing message: ${e}`);
+      return null;
+    }
+  }
+
+  async enqueueMessage(messageData, priority = 0) {
+    try {
+      if (!messageData.id) {
+        messageData.id = uuidv4();
+      }
+      if (typeof messageData.created_at === "undefined") {
+        messageData.created_at = Date.now() / 1000; // seconds timestamp
+      }
+      messageData.priority = priority;
+
+      const messageJson = this._serializeMessage(messageData);
+
+      if (priority > 0) {
+        await this.redisManager.redis.lpush(
+          this.config.queue_name,
+          messageJson
+        );
+      } else {
+        await this.redisManager.redis.rpush(
+          this.config.queue_name,
+          messageJson
+        );
+      }
+
+      this._stats.enqueued++;
+      logger.info(
+        `Message enqueued: ${messageData.id} (priority: ${priority})`
+      );
+      return true;
+    } catch (e) {
+      logger.error(`Error enqueuing message ${messageData.id || "N/A"}: ${e}`);
+      return false;
+    }
+  }
+
+  async enqueueBatch(messages) {
+    let successful = 0;
+    if (!messages || messages.length === 0) return 0;
+
+    const pipeline = this.redisManager.pipeline();
+    for (const msg of messages) {
+      if (!msg.id) {
+        msg.id = uuidv4();
+      }
+      if (typeof msg.created_at === "undefined") {
+        msg.created_at = Date.now() / 1000;
+      }
+      const messageJson = this._serializeMessage(msg);
+      const priority = msg.priority || 0;
+
+      if (priority > 0) {
+        pipeline.lpush(this.config.queue_name, messageJson);
+      } else {
+        pipeline.rpush(this.config.queue_name, messageJson);
+      }
+    }
+
+    try {
+      const results = await pipeline.exec();
+      // Each successful push command in ioredis pipeline returns the new length of the list.
+      // We count how many operations were successful (didn't throw an error in the result array).
+      results.forEach((result) => {
+        if (!result[0]) {
+          // result[0] is error, result[1] is value
+          successful++;
+        }
+      });
+
+      this._stats.enqueued += successful;
+      logger.info(
+        `Batch processed: ${successful}/${messages.length} messages enqueued`
+      );
+      return successful;
+    } catch (e) {
+      logger.error(`Error in batch enqueue: ${e}`);
+      return successful; // return count of those that might have succeeded before error
+    }
+  }
+
+  async dequeueMessage(timeout = 0) {
+    try {
+      const messageJson = await this.redisManager.redis.brpoplpush(
+        this.config.queue_name,
+        this.config.processing_queue_name,
+        timeout
+      );
+
+      if (!messageJson) {
+        return null;
+      }
+
+      const messageData = this._deserializeMessage(messageJson);
+      if (!messageData) {
+        // Potentially move to DLQ or log an error if deserialization fails after signature check
+        // For now, just returning null as the Python version implies
+        await this.redisManager.redis.lrem(
+          this.config.processing_queue_name,
+          1,
+          messageJson
+        ); // Clean up bad message
+        logger.warn(
+          "Failed to deserialize message from processing queue, removed."
+        );
+        return null;
+      }
+
+      const messageId = messageData.id;
+      if (!messageId) {
+        logger.warn("Message without ID found in processing queue");
+        return messageData; // Or handle differently
+      }
+
+      const currentTime = Date.now() / 1000;
+      const metadataKey = messageId;
+
+      let metadata;
+      const existingMetadataJson = await this.redisManager.redis.hget(
+        this.config.metadata_hash_name,
+        metadataKey
+      );
+
+      if (existingMetadataJson) {
+        metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
+      } else {
+        metadata = new MessageMetadata(
+          0,
+          null,
+          messageData.created_at || currentTime
+        );
+      }
+
+      metadata.dequeued_at = currentTime;
+      metadata.attempt_count += 1;
+
+      await this.redisManager.redis.hset(
+        this.config.metadata_hash_name,
+        metadataKey,
+        JSON.stringify(metadata)
+      );
+
+      this._stats.dequeued++;
+      logger.info(
+        `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count})`
+      );
+      return messageData;
+    } catch (e) {
+      logger.error(`Error dequeuing message: ${e}`);
+      return null;
+    }
+  }
+
+  async acknowledgeMessage(messageData) {
+    const messageId = messageData.id;
+    if (!messageId) {
+      logger.warn("Cannot acknowledge message without ID");
+      return false;
+    }
+
+    try {
+      // Re-serialize to ensure the exact string is used for LREM, if it was modified post-dequeue.
+      // Or, pass the original messageJson from dequeue if available and unchanged.
+      // For simplicity, re-serializing the acknowledged version.
+      const messageJson = this._serializeMessage(messageData);
+
+      const pipeline = this.redisManager.pipeline();
+      pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+      pipeline.hdel(this.config.metadata_hash_name, messageId);
+      const results = await pipeline.exec();
+
+      const removedCount = results[0][1]; // LREM result
+
+      if (removedCount > 0) {
+        this._stats.acknowledged++;
+        logger.info(`Message acknowledged: ${messageId}`);
+        return true;
+      } else {
+        logger.warn(
+          `Message ${messageId} not found in processing queue for acknowledgment (or content mismatch for LREM)`
+        );
+        return false;
+      }
+    } catch (e) {
+      logger.error(`Error acknowledging message ${messageId}: ${e}`);
+      return false;
+    }
+  }
+
+  async requeueFailedMessages() {
+    logger.info("Verifying failed messages...");
+    const currentTime = Date.now() / 1000;
+    let requeuedCount = 0;
+    let movedToDlqCount = 0;
+
+    try {
+      const processingMessagesJson = await this.redisManager.redis.lrange(
+        this.config.processing_queue_name,
+        0,
+        this.config.batch_size - 1
+      );
+
+      if (!processingMessagesJson || processingMessagesJson.length === 0) {
+        return 0;
+      }
+
+      const pipeline = this.redisManager.pipeline();
+
+      for (const messageJson of processingMessagesJson) {
+        const messageData = this._deserializeMessage(messageJson);
+        if (!messageData) {
+          logger.warn(
+            `Could not deserialize message for requeue check: ${messageJson.substring(
+              0,
+              50
+            )}... removing.`
+          );
+          pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+          continue;
+        }
+
+        const messageId = messageData.id;
+        if (!messageId) {
+          logger.warn(
+            `Message without ID found during requeue check: ${JSON.stringify(
+              messageData
+            )}. Removing.`
+          );
+          pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+          continue;
+        }
+
+        const metadataJson = await this.redisManager.redis.hget(
+          this.config.metadata_hash_name,
+          messageId
+        );
+        let metadata;
+        if (metadataJson) {
+          try {
+            metadata = MessageMetadata.fromObject(JSON.parse(metadataJson));
+          } catch (parseError) {
+            logger.warn(
+              `Could not parse metadata for ${messageId}, assuming new: ${parseError}`
+            );
+            metadata = new MessageMetadata(
+              0,
+              null,
+              messageData.created_at || currentTime,
+              "Metadata parse error"
+            );
+          }
+        } else {
+          // No metadata, might be an orphaned message. Requeue with attempt 1 or DLQ.
+          logger.warn(
+            `No metadata for ${messageId}, assuming first attempt for requeue logic.`
+          );
+          metadata = new MessageMetadata(
+            0,
+            currentTime,
+            messageData.created_at || currentTime,
+            "Missing metadata"
+          );
+          // Ensure dequeued_at is set for timeout check logic to apply immediately if it's old
+        }
+
+        if (
+          metadata.dequeued_at &&
+          currentTime - metadata.dequeued_at > this.config.ack_timeout_seconds
+        ) {
+          if (metadata.attempt_count >= this.config.max_attempts) {
+            logger.warn(
+              `Message ${messageId} exceeded max attempts (${metadata.attempt_count}), moving to DLQ.`
+            );
+            pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+            pipeline.rpush(this.config.dead_letter_queue_name, messageJson);
+            pipeline.hdel(this.config.metadata_hash_name, messageId); // Clean metadata for DLQ'd message
+            movedToDlqCount++;
+          } else {
+            logger.info(
+              `Message ${messageId} timed out, requeueing (attempt ${
+                metadata.attempt_count + 1
+              }).`
+            );
+            pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+            pipeline.rpush(this.config.queue_name, messageJson); // Requeue to main queue
+
+            // Reset dequeued_at, keep attempt_count (it's incremented on dequeue)
+            // The Python version resets metadata, here we'll update for next dequeue
+            // metadata.dequeued_at = null; // Will be set on next dequeue
+            // metadata.attempt_count is already incremented by dequeue. If requeueing, it means this attempt failed.
+            // The next dequeue will increment it again. So, we don't modify attempt_count here.
+            // The Python code creates new metadata with the old attempt count. Here, we let dequeue handle it.
+            // For consistency with Python's logic of resetting metadata upon requeue:
+            const newRequeueMetadata = new MessageMetadata(
+              metadata.attempt_count,
+              null,
+              metadata.created_at,
+              "Requeued due to timeout"
+            );
+            pipeline.hset(
+              this.config.metadata_hash_name,
+              messageId,
+              JSON.stringify(newRequeueMetadata)
+            );
+            requeuedCount++;
+          }
+        }
+      }
+
+      if (pipeline.length > 0) {
+        await pipeline.exec();
+      }
+
+      this._stats.requeued += requeuedCount;
+      this._stats.failed += movedToDlqCount;
+
+      if (requeuedCount > 0) logger.info(`Requeued ${requeuedCount} messages.`);
+      if (movedToDlqCount > 0)
+        logger.warn(`Moved ${movedToDlqCount} messages to DLQ.`);
+
+      return requeuedCount;
+    } catch (e) {
+      logger.error(`Error in requeueFailedMessages: ${e}`);
+      return 0;
+    }
+  }
+
+  async removeMessagesByDateRange(startTimestamp, endTimestamp) {
+    let totalRemovedCount = 0;
+    const queuesToCheck = [
+      { name: this.config.queue_name, type: "main" },
+      { name: this.config.processing_queue_name, type: "processing" },
+      { name: this.config.dead_letter_queue_name, type: "DLQ" },
+    ];
+
+    for (const queueInfo of queuesToCheck) {
+      logger.info(
+        `Verifying queue ${
+          queueInfo.type
+        } for deletion by date range (${new Date(
+          startTimestamp * 1000
+        ).toISOString()} - ${new Date(endTimestamp * 1000).toISOString()})`
+      );
+      let removedFromCurrentQueue = 0;
+      let offset = 0;
+      try {
+        while (true) {
+          const messagesJson = await this.redisManager.redis.lrange(
+            queueInfo.name,
+            offset,
+            offset + this.config.batch_size - 1
+          );
+
+          if (!messagesJson || messagesJson.length === 0) {
+            break; // No more messages or end of list for non-blocking lrange behavior
+          }
+
+          const pipeline = this.redisManager.pipeline();
+          let foundInBatch = 0;
+
+          for (const messageJson of messagesJson) {
+            const messageData = this._deserializeMessage(messageJson);
+            if (!messageData) {
+              // If message is undecipherable, can't check date. Decide if to remove or skip.
+              // For safety, skipping undecipherable messages in date range removal.
+              offset++; // If not removing, increment offset to avoid infinite loop on bad message
+              continue;
+            }
+            foundInBatch++;
+
+            const createdAt = messageData.created_at; // Assuming this is in seconds
+            if (
+              createdAt &&
+              createdAt >= startTimestamp &&
+              createdAt <= endTimestamp
+            ) {
+              pipeline.lrem(queueInfo.name, 1, messageJson);
+              if (
+                messageData.id &&
+                queueInfo.name === this.config.processing_queue_name
+              ) {
+                pipeline.hdel(this.config.metadata_hash_name, messageData.id);
+              }
+              removedFromCurrentQueue++;
+            } else {
+              // If not removing this specific message, and lrange is used with static offsets,
+              // we need to increment the offset for the next batch correctly.
+              // However, lrem shifts indices, so processing in batches and re-fetching is safer.
+            }
+          }
+
+          if (pipeline.length > 0) {
+            await pipeline.exec();
+          }
+
+          // If we processed messages but didn't remove all of them,
+          // the next offset should be based on what's left.
+          // Simplest for lrange is to just fetch next batch from current 'offset'.
+          // If all messages in the fetched batch were removed, offset effectively stays same for next fetch.
+          // If some were not removed, they are now at earlier indices.
+          // A more robust way is to iterate with LLEN and LINDEX/LPOP if order matters and changes are frequent.
+          // Given LREM, the list shrinks. Iterating with a fixed offset and batch size is okay if we expect removals.
+          // If no messages were found in the batch that matched, we must advance the offset.
+          if (foundInBatch === 0 && messagesJson.length > 0) {
+            // Processed a batch, but nothing matched criteria to remove
+            offset += messagesJson.length;
+          } else if (messagesJson.length < this.config.batch_size) {
+            break; // Reached end of list
+          }
+          // If items were removed, the list is shorter. The next lrange from the same offset will get new items.
+          // If no items were removed from the current batch, and it was a full batch, advance offset.
+          else if (
+            pipeline.length === 0 &&
+            messagesJson.length === this.config.batch_size
+          ) {
+            offset += this.config.batch_size;
+          }
+          // If pipeline.length > 0, items were removed, so the next lrange(queue, offset, ...) will correctly fetch.
+        }
+        if (removedFromCurrentQueue > 0) {
+          logger.info(
+            `Removed ${removedFromCurrentQueue} messages from ${queueInfo.type}`
+          );
+        }
+        totalRemovedCount += removedFromCurrentQueue;
+      } catch (e) {
+        logger.error(`Error removing messages from ${queueInfo.type}: ${e}`);
+      }
+    }
+    return totalRemovedCount;
+  }
+
+  async getMetrics() {
+    try {
+      const pipeline = this.redisManager.pipeline();
+      pipeline.llen(this.config.queue_name);
+      pipeline.llen(this.config.processing_queue_name);
+      pipeline.llen(this.config.dead_letter_queue_name);
+      pipeline.hlen(this.config.metadata_hash_name);
+      const results = await pipeline.exec();
+
+      const queueMetrics = {
+        main_queue_size: results[0][1],
+        processing_queue_size: results[1][1],
+        dead_letter_queue_size: results[2][1],
+        metadata_count: results[3][1],
+      };
+      return { ...queueMetrics, stats: { ...this._stats } }; // Return a copy of stats
+    } catch (e) {
+      logger.error(`Error getting metrics: ${e}`);
+      return { error: e.toString() };
+    }
+  }
+
+  async healthCheck() {
+    try {
+      const startTime = Date.now();
+      await this.redisManager.redis.ping();
+      const pingTime = Date.now() - startTime;
+      const metrics = await this.getMetrics();
+      return {
+        status: "healthy",
+        redis_ping_ms: pingTime,
+        metrics: metrics,
+        timestamp: Date.now() / 1000,
+      };
+    } catch (e) {
+      return {
+        status: "unhealthy",
+        error: e.toString(),
+        timestamp: Date.now() / 1000,
+      };
+    }
+  }
+
+  async disconnect() {
+    await this.redisManager.disconnect();
+  }
+}
+
+// --- Optimized Usage Example ---
+async function demoOptimizedQueue() {
+  logger.info("=== Starting Optimized Queue System Demo (Node.js) ===");
+  const queue = new OptimizedRedisQueue(config);
+
+  try {
+    await queue.redisManager.testConnection(); // Test connection first
+
+    logger.info("Cleaning queues for demo...");
+    const p = queue.redisManager.pipeline();
+    p.del(config.queue_name);
+    p.del(config.processing_queue_name);
+    p.del(config.dead_letter_queue_name);
+    p.del(config.metadata_hash_name);
+    await p.exec();
+    logger.info("Queues cleaned for demo.");
+
+    logger.info("\n--- Demo: Batch Enqueueing ---");
+    const messages = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push({
+        // id will be auto-generated by enqueueBatch if not provided
+        type: "email_send",
+        payload: { recipient: `user${i}@example.com` },
+        priority: i < 3 ? 1 : 0, // First 3 with priority
+      });
+    }
+    const enqueued = await queue.enqueueBatch(messages);
+    logger.info(`Batch enqueued: ${enqueued} messages`);
+
+    logger.info("\n--- Demo: Message Processing ---");
+    let processed = 0;
+    for (let i = 0; i < 5; i++) {
+      // Try to process 5 messages
+      const message = await queue.dequeueMessage(1); // 1 second timeout
+      if (message) {
+        const msgId = message.id || "N/A";
+        logger.info(`Processing: ${msgId}, Priority: ${message.priority}`);
+
+        await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate processing
+
+        if (
+          message.payload &&
+          message.payload.recipient === "user2@example.com"
+        ) {
+          // Check specific message for simulated failure
+          logger.warn(`Simulating failure for ${msgId}`);
+          // Do not acknowledge, it should be requeued later
+        } else {
+          await queue.acknowledgeMessage(message);
+        }
+        processed++;
+      } else {
+        logger.info("No message to process, or timeout.");
+      }
+    }
+    logger.info(`Attempted to process ${processed} messages initially.`);
+
+    logger.info("\n--- Demo: Requeue Failed Messages ---");
+    logger.info(
+      `Waiting ${config.ack_timeout_seconds + 1} seconds for timeout...`
+    );
+    await new Promise((resolve) =>
+      setTimeout(resolve, (config.ack_timeout_seconds + 1) * 1000)
+    );
+    const requeued = await queue.requeueFailedMessages();
+    logger.info(
+      `Messages requeued/moved to DLQ after timeout check: ${requeued} (requeued to main)`
+    );
+
+    // Try processing again to see if the failed message is picked up
+    logger.info("\n--- Demo: Processing messages after requeue ---");
+    let processedAfterRequeue = 0;
+    for (let i = 0; i < 5; i++) {
+      // Try to process up to 5 more messages
+      const message = await queue.dequeueMessage(1);
+      if (message) {
+        const msgId = message.id || "N/A";
+        logger.info(`Processing (post-requeue): ${msgId}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await queue.acknowledgeMessage(message);
+        processedAfterRequeue++;
+      } else {
+        logger.info("No more messages after requeue check or timeout.");
+        break;
+      }
+    }
+    logger.info(`Processed ${processedAfterRequeue} messages after requeue.`);
+
+    logger.info("\n--- Demo: System Metrics ---");
+    const metrics = await queue.getMetrics();
+    logger.info(`Current metrics: ${JSON.stringify(metrics, null, 2)}`);
+
+    logger.info("\n--- Demo: Health Check ---");
+    const health = await queue.healthCheck();
+    logger.info(`Health status: ${JSON.stringify(health, null, 2)}`);
+  } catch (error) {
+    logger.error(`Error in demo: ${error.stack}`);
+  } finally {
+    await queue.disconnect();
+    logger.info("\n=== Demo Completed (Node.js) ===");
+  }
+}
+
+// Run demo if the script is run directly
+if (require.main === module) {
+  demoOptimizedQueue().catch((err) => {
+    logger.error(`Fatal error in demo: ${err.stack}`);
+    process.exit(1);
+  });
+}
+
+export { OptimizedRedisQueue, QueueConfig, MessageSecurity };
