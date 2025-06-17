@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { config } from "dotenv";
 import { expand } from "dotenv-expand";
 
@@ -25,7 +25,7 @@ export const EnvSchema = z.object({
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),
   MAX_ATTEMPTS: z.coerce.number().default(3),
   BATCH_SIZE: z.coerce.number().default(100),
-  ENABLE_ENCRYPTION: z.boolean().default(false),
+  ENABLE_ENCRYPTION: z.string().default("false"),
   SECRET_KEY: z.string().optional().nullable(),
 });
 

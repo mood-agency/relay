@@ -20,7 +20,7 @@ interface QueueConfigI {
   max_attempts: number;
   batch_size: number;
   redis_pool_size: number;
-  enable_message_encryption: boolean;
+  enable_message_encryption: string;
   secret_key: string | null | undefined;
 }
 
