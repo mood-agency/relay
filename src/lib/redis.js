@@ -161,6 +161,7 @@ class RedisConnectionManager {
         host: this.config.redis_host,
         port: this.config.redis_port,
         db: this.config.redis_db,
+        family: 0,
         retryStrategy: (times) => Math.min(times * 50, 2000), // Standard retry strategy
         maxRetriesPerRequest: 3, // Corresponds to some level of retry
         enableReadyCheck: true,
