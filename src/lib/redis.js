@@ -575,6 +575,31 @@ class OptimizedRedisQueue {
     }
   }
 
+  async getMessagesByDateRange(startTimestamp, endTimestamp, limit) {
+    const messages = [];
+    const queuesToCheck = [
+      { name: this.config.queue_name, type: "main" },
+      { name: this.config.processing_queue_name, type: "processing" },
+      { name: this.config.dead_letter_queue_name, type: "DLQ" },
+    ];
+
+    for (const queue of queuesToCheck) {
+      const allMessages = await this.redisManager.redis().zrange(queue.name, 0, -1, "WITHSCORES");
+      for (let i = 0; i < allMessages.length; i += 2) {
+        const messageData = JSON.parse(allMessages[i]);
+        const score = parseFloat(allMessages[i + 1]);
+        if (score >= startTimestamp && score <= endTimestamp) {
+          messages.push(messageData);
+          if (messages.length >= limit) {
+            return messages;
+          }
+        }
+      }
+    }
+
+    return messages;
+  }
+
   async removeMessagesByDateRange(startTimestamp, endTimestamp) {
     let totalRemovedCount = 0;
     const queuesToCheck = [

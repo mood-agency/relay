@@ -8,6 +8,14 @@ const router = createRouter()
   .openapi(routes.getMessage, handlers.getMessage)
   .openapi(routes.acknowledgeMessage, handlers.acknowledgeMessage)
   .openapi(routes.metrics, handlers.metrics)
-  .openapi(routes.healthCheck, handlers.healthCheck);
+  .openapi(routes.healthCheck, handlers.healthCheck)
+  .openapi(
+    routes.removeMessagesByDateRange,
+    handlers.removeMessagesByDateRange
+  )
+  .openapi(
+    routes.getMessagesByDateRange,
+    handlers.getMessagesByDateRange
+  );
 
 export default router;

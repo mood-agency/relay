@@ -94,7 +94,7 @@ export const getMessage = createRoute({
   method: "get",
   tags,
   request: {
-    query: z.object({ timeout: z.number().optional() }),
+    query: z.object({ timeout: z.string().pipe(z.coerce.number()).optional() }),
   },
   responses: {
     200: jsonContent(DequeuedMessageSchema, "Queue Message"),
@@ -161,5 +161,46 @@ export type AddMessageRoute = typeof addMessage;
 export type AddBatchRoute = typeof addBatch;
 export type GetMessageRoute = typeof getMessage;
 export type AcknowledgeMessageRoute = typeof acknowledgeMessage;
+export const removeMessagesByDateRange = createRoute({
+  path: "/queue/messages",
+  method: "delete",
+  tags,
+  request: {
+    query: z.object({
+      startTimestamp: z.string().transform((val: string) => new Date(val).getTime()),
+      endTimestamp: z.string().transform((val: string) => new Date(val).getTime()),
+    }),
+  },
+  responses: {
+    200: jsonContent(z.object({ message: z.string() }), "Messages Deleted"),
+    422: jsonContent(
+      createErrorSchema(z.object({ startTimestamp: z.string(), endTimestamp: z.string() })),
+      "Validation Error"
+    ),
+  },
+});
+
 export type MetricsRoute = typeof metrics;
 export type HealthCheckRoute = typeof healthCheck;
+export type RemoveMessagesByDateRangeRoute = typeof removeMessagesByDateRange;
+export type GetMessagesByDateRangeRoute = typeof getMessagesByDateRange;
+
+export const getMessagesByDateRange = createRoute({
+  path: "/queue/messages",
+  method: "get",
+  tags,
+  request: {
+    query: z.object({
+      startTimestamp: z.string().transform((val: string) => new Date(val).getTime()),
+      endTimestamp: z.string().transform((val: string) => new Date(val).getTime()),
+      limit: z.string().transform((val: string) => parseInt(val, 10)).optional(),
+    }),
+  },
+  responses: {
+    200: jsonContent(z.array(DequeuedMessageSchema), "Messages Found"),
+    422: jsonContent(
+      createErrorSchema(z.object({ startTimestamp: z.string(), endTimestamp: z.string(), limit: z.string().optional() })),
+      "Validation Error"
+    ),
+  },
+});
