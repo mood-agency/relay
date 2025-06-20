@@ -401,38 +401,83 @@ class OptimizedRedisQueue {
     }
   }
 
-  async acknowledgeMessage(messageData) {
-    const messageId = messageData.id;
+  async acknowledgeMessage(ackPayload) { // ackPayload is e.g., { id: "message-uuid" }
+    const messageId = ackPayload.id;
     if (!messageId) {
-      logger.warn("Cannot acknowledge message without ID");
+      // Ensure 'logger' is available in this scope (e.g., this.logger or imported)
+      // For now, using console.warn as a placeholder if logger is not this.logger
+      const logger = this.logger || console;
+      logger.warn("Cannot acknowledge message: ID is missing in payload.", { payload: ackPayload });
       return false;
     }
 
-    try {
-      // Re-serialize to ensure the exact string is used for LREM, if it was modified post-dequeue.
-      // Or, pass the original messageJson from dequeue if available and unchanged.
-      // For simplicity, re-serializing the acknowledged version.
-      const messageJson = this._serializeMessage(messageData);
+    const logger = this.logger || console; // Use this.logger if available, else console
 
+    try {
+      // STEP 1: Retrieve the original serialized message string.
+      // This is THE MOST CRITICAL part and depends on your dequeue logic.
+      //
+      // HYPOTHETICAL: Assume that when a message is dequeued and added to the
+      // `processing_queue_name`, its original exact serialized string is ALSO stored
+      // in the metadata hash (this.config.metadata_hash_name) under a specific field.
+      // For this example, let's call this field `${messageId}:original_json_string`.
+      // YOU MUST VERIFY OR IMPLEMENT THIS STORAGE LOGIC IN YOUR DEQUEUE PROCESS.
+
+      const originalJsonStringField = `${messageId}:original_json_string`; // Example field name
+      const originalMessageJson = await this.redisManager.hget(this.config.metadata_hash_name, originalJsonStringField);
+
+      if (!originalMessageJson) {
+        logger.warn(
+          `Original serialized message JSON not found in metadata for ID ${messageId} (field: ${originalJsonStringField}). ` +
+          `Cannot perform LREM. Message might be already processed, timed out, or field not stored.`, 
+          { messageId }
+        );
+        // Attempt to clean up any potentially orphaned main metadata entry for this ID.
+        await this.redisManager.hdel(this.config.metadata_hash_name, messageId);
+        return false; // Acknowledgment cannot proceed as intended.
+      }
+
+      // STEP 2: Perform the removal using the retrieved original serialized message.
       const pipeline = this.redisManager.pipeline();
-      pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
+      // Command 1: Remove the message from the processing queue using its exact original string
+      pipeline.lrem(this.config.processing_queue_name, 1, originalMessageJson);
+      // Command 2: Remove the main metadata entry for the message ID
       pipeline.hdel(this.config.metadata_hash_name, messageId);
+      // Command 3: Remove the field that stored the original JSON string from metadata
+      pipeline.hdel(this.config.metadata_hash_name, originalJsonStringField);
+
       const results = await pipeline.exec();
 
-      const removedCount = results[0][1]; // LREM result
+      // Check LREM result (first command in pipeline)
+      // results is an array of [error, data] tuples for each command
+      const lremCmdResult = results[0];
+      const lremError = lremCmdResult[0];
+      const removedCount = lremCmdResult[1];
+
+      if (lremError) {
+        logger.error(`Error in LREM command for message ${messageId}: ${lremError.message || lremError}`, { messageId, error: lremError });
+        return false;
+      }
 
       if (removedCount > 0) {
-        this._stats.acknowledged++;
-        logger.info(`Message acknowledged: ${messageId}`);
+        if (this._stats && typeof this._stats.acknowledged === 'number') {
+          this._stats.acknowledged++;
+        }
+        logger.info(`Message acknowledged successfully: ${messageId}`, { messageId });
         return true;
       } else {
         logger.warn(
-          `Message ${messageId} not found in processing queue for acknowledgment (or content mismatch for LREM)`
+          `Message ${messageId} (original JSON found) was not present in processing queue for LREM. ` +
+          `It might have been processed/timed out concurrently. Metadata (id: ${messageId}, field: ${originalJsonStringField}) was targeted for cleanup.`, 
+          { messageId }
         );
-        return false;
+        return false; 
       }
-    } catch (e) {
-      logger.error(`Error acknowledging message ${messageId}: ${e}`);
+    } catch (error) {
+      logger.error(`Critical error during message acknowledgment for ID ${messageId}: ${error.message}`, {
+        messageId,
+        error: { message: error.message, stack: error.stack },
+      });
       return false;
     }
   }
