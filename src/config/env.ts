@@ -7,7 +7,7 @@ expand(config());
 export const EnvSchema = z.object({
   // General
   NODE_ENV: z
-    .enum(["development", "production", "local"])
+    .enum(["development", "production", "local", "test"])
     .default("development"),
   APP_URL: z.string().optional().default("http://localhost"),
   PORT: z.coerce.number().default(3000),
@@ -41,7 +41,10 @@ try {
     "❌ Invalid environment variables",
     error.flatten().fieldErrors
   );
-  process.exit(1);
+  if (process.env.NODE_ENV !== "test") {
+    process.exit(1);
+  }
+  env = EnvSchema.parse({});
 }
 
 export default env;

@@ -384,10 +384,17 @@ class OptimizedRedisQueue {
       metadata.dequeued_at = currentTime;
       metadata.attempt_count += 1;
 
+      // Store both the metadata and the original JSON string for acknowledgment
+      const originalJsonStringField = `${messageId}:original_json_string`;
       await this.redisManager.redis.hset(
         this.config.metadata_hash_name,
         metadataKey,
         JSON.stringify(metadata)
+      );
+      await this.redisManager.redis.hset(
+        this.config.metadata_hash_name,
+        originalJsonStringField,
+        messageJson
       );
 
       this._stats.dequeued++;
@@ -424,7 +431,7 @@ class OptimizedRedisQueue {
       // YOU MUST VERIFY OR IMPLEMENT THIS STORAGE LOGIC IN YOUR DEQUEUE PROCESS.
 
       const originalJsonStringField = `${messageId}:original_json_string`; // Example field name
-      const originalMessageJson = await this.redisManager.hget(this.config.metadata_hash_name, originalJsonStringField);
+      const originalMessageJson = await this.redisManager.redis.hget(this.config.metadata_hash_name, originalJsonStringField);
 
       if (!originalMessageJson) {
         logger.warn(
@@ -433,7 +440,7 @@ class OptimizedRedisQueue {
           { messageId }
         );
         // Attempt to clean up any potentially orphaned main metadata entry for this ID.
-        await this.redisManager.hdel(this.config.metadata_hash_name, messageId);
+        await this.redisManager.redis.hdel(this.config.metadata_hash_name, messageId);
         return false; // Acknowledgment cannot proceed as intended.
       }
 
@@ -629,15 +636,19 @@ class OptimizedRedisQueue {
     ];
 
     for (const queue of queuesToCheck) {
-      const allMessages = await this.redisManager.redis().zrange(queue.name, 0, -1, "WITHSCORES");
-      for (let i = 0; i < allMessages.length; i += 2) {
-        const messageData = JSON.parse(allMessages[i]);
-        const score = parseFloat(allMessages[i + 1]);
-        if (score >= startTimestamp && score <= endTimestamp) {
-          messages.push(messageData);
-          if (messages.length >= limit) {
-            return messages;
+      const allMessages = await this.redisManager.redis.lrange(queue.name, 0, -1);
+      for (const messageJson of allMessages) {
+        try {
+          const messageData = JSON.parse(messageJson);
+          const messageTimestamp = messageData.created_at * 1000; // Convert to milliseconds
+          if (messageTimestamp >= startTimestamp && messageTimestamp <= endTimestamp) {
+            messages.push(messageData);
+            if (messages.length >= limit) {
+              return messages;
+            }
           }
+        } catch (e) {
+          logger.warn(`Failed to parse message in queue ${queue.name}: ${e}`);
         }
       }
     }
