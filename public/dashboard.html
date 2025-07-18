@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis Queue Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .refresh-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .btn:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn.active {
+            background: rgba(255,255,255,0.4);
+            border-color: rgba(255,255,255,0.6);
+        }
+
+        .tabs-container {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            margin-bottom: 30px;
+        }
+
+        .tabs-header {
+            display: flex;
+            border-bottom: 2px solid #f0f0f0;
+            background: rgba(255,255,255,0.5);
+            border-radius: 15px 15px 0 0;
+        }
+
+        .tab-button {
+            flex: 1;
+            padding: 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #6c757d;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            position: relative;
+        }
+
+        .tab-button:first-child {
+            border-radius: 15px 0 0 0;
+        }
+
+        .tab-button:last-child {
+            border-radius: 0 15px 0 0;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        .tab-button.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+        }
+
+        .tab-button:hover {
+            background: rgba(102, 126, 234, 0.05);
+            color: #667eea;
+        }
+
+        .tab-badge {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            min-width: 24px;
+            text-align: center;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 25px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .queue-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .queue-table th {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .queue-table td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: top;
+        }
+
+        .queue-table tr:hover {
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .queue-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .message-id-cell {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            color: #495057;
+            max-width: 120px;
+            word-break: break-all;
+        }
+
+        .message-type-cell {
+            background: #28a745;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        .message-payload-cell {
+            max-width: 300px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            color: #495057;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .message-meta-cell {
+            font-size: 0.8rem;
+            color: #6c757d;
+            min-width: 100px;
+        }
+
+        .priority-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .priority-0 { background: #e9ecef; color: #495057; }
+        .priority-1 { background: #fff3cd; color: #856404; }
+        .priority-2 { background: #f8d7da; color: #721c24; }
+
+        .empty-table {
+            text-align: center;
+            padding: 60px 20px;
+            color: #6c757d;
+            font-style: italic;
+        }
+
+        .empty-table-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        .empty-queue {
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+            padding: 40px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 2px dashed #dee2e6;
+        }
+
+        .stats-card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            grid-column: 1 / -1;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border-radius: 12px;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .last-updated {
+            text-align: center;
+            color: rgba(255,255,255,0.8);
+            font-size: 0.9rem;
+            margin-top: 20px;
+        }
+
+        /* Scrollbar styling */
+        .messages-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .messages-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .refresh-controls {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Redis Queue Dashboard</h1>
+            <p>Real-time monitoring of queue status and messages</p>
+        </div>
+
+        <div class="refresh-controls">
+            <button class="btn" onclick="refreshData()">🔄 Refresh Now</button>
+            <button class="btn" id="autoRefreshBtn" onclick="toggleAutoRefresh()">▶️ Auto Refresh (5s)</button>
+            <button class="btn" onclick="clearAllQueues()">🗑️ Clear All Queues</button>
+        </div>
+
+        <div id="error-container"></div>
+        <div id="loading" class="loading">Loading queue data...</div>
+
+        <div id="dashboard" style="display: none;">
+            <div class="stats-card">
+                <h2 style="margin-bottom: 20px; color: #333;">📊 Queue Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalProcessed">0</div>
+                        <div class="stat-label">Total Processed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalFailed">0</div>
+                        <div class="stat-label">Total Failed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalQueued">0</div>
+                        <div class="stat-label">Currently Queued</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalProcessing">0</div>
+                        <div class="stat-label">Currently Processing</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tabs-container">
+                <div class="tabs-header">
+                    <button class="tab-button active" onclick="switchTab('main')">
+                        📥 Main Queue
+                        <span class="tab-badge" id="mainQueueBadge">0</span>
+                    </button>
+                    <button class="tab-button" onclick="switchTab('processing')">
+                        ⚙️ Processing Queue
+                        <span class="tab-badge" id="processingQueueBadge">0</span>
+                    </button>
+                    <button class="tab-button" onclick="switchTab('dead')">
+                        💀 Dead Letter Queue
+                        <span class="tab-badge" id="deadQueueBadge">0</span>
+                    </button>
+                </div>
+
+                
+                <div class="tab-content active" id="mainTab">
+                    <table class="queue-table" id="mainQueueTable">
+                        <thead>
+                            <tr>
+                                <th>Message ID</th>
+                                <th>Type</th>
+                                <th>Priority</th>
+                                <th>Payload</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mainQueueBody">
+                            <!-- Messages will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="tab-content" id="processingTab">
+                    <table class="queue-table" id="processingQueueTable">
+                        <thead>
+                            <tr>
+                                <th>Message ID</th>
+                                <th>Type</th>
+                                <th>Priority</th>
+                                <th>Payload</th>
+                                <th>Processing Since</th>
+                                <th>Attempts</th>
+                            </tr>
+                        </thead>
+                        <tbody id="processingQueueBody">
+                            <!-- Messages will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="tab-content" id="deadTab">
+                    <table class="queue-table" id="deadQueueTable">
+                        <thead>
+                            <tr>
+                                <th>Message ID</th>
+                                <th>Type</th>
+                                <th>Priority</th>
+                                <th>Payload</th>
+                                <th>Failed At</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody id="deadQueueBody">
+                            <!-- Messages will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="last-updated" id="lastUpdated"></div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let isAutoRefresh = false;
+
+        async function fetchQueueStatus() {
+            try {
+                const response = await fetch('/api/queue/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching queue status:', error);
+                throw error;
+            }
+        }
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'N/A';
+            return new Date(timestamp * 1000).toLocaleString();
+        }
+
+        function formatPayload(payload) {
+            if (typeof payload === 'object') {
+                return JSON.stringify(payload, null, 2);
+            }
+            return String(payload);
+        }
+
+        function switchTab(tabName) {
+            // Remove active class from all tabs and buttons
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // Add active class to selected tab and button
+            document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}Tab`).classList.add('active');
+        }
+
+        function createTableRow(message, queueType) {
+            const row = document.createElement('tr');
+            const truncatedId = message.id ? message.id.substring(0, 12) + '...' : 'N/A';
+            const priority = message.priority || 0;
+            const priorityClass = priority === 0 ? 'priority-0' : priority === 1 ? 'priority-1' : 'priority-2';
+            
+            let columns = '';
+            
+            if (queueType === 'main') {
+                columns = `
+                    <td class="message-id-cell">${truncatedId}</td>
+                    <td><span class="message-type-cell">${message.type || 'Unknown'}</span></td>
+                    <td><span class="priority-badge ${priorityClass}">${priority}</span></td>
+                    <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
+                    <td class="message-meta-cell">${formatTimestamp(message.created_at)}</td>
+                `;
+            } else if (queueType === 'processing') {
+                columns = `
+                    <td class="message-id-cell">${truncatedId}</td>
+                    <td><span class="message-type-cell">${message.type || 'Unknown'}</span></td>
+                    <td><span class="priority-badge ${priorityClass}">${priority}</span></td>
+                    <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
+                    <td class="message-meta-cell">${formatTimestamp(message.processing_started_at || message.created_at)}</td>
+                    <td class="message-meta-cell">${message.attempt_count || 0}</td>
+                `;
+            } else if (queueType === 'dead') {
+                columns = `
+                    <td class="message-id-cell">${truncatedId}</td>
+                    <td><span class="message-type-cell">${message.type || 'Unknown'}</span></td>
+                    <td><span class="priority-badge ${priorityClass}">${priority}</span></td>
+                    <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
+                    <td class="message-meta-cell">${formatTimestamp(message.failed_at || message.created_at)}</td>
+                    <td class="message-meta-cell">${message.error_message || 'Unknown error'}</td>
+                `;
+            }
+            
+            row.innerHTML = columns;
+            return row;
+        }
+
+        function updateQueueTable(bodyId, badgeId, messages, queueType) {
+            const tbody = document.getElementById(bodyId);
+            const badge = document.getElementById(badgeId);
+            
+            badge.textContent = messages.length;
+            tbody.innerHTML = '';
+            
+            if (messages.length === 0) {
+                const emptyRow = document.createElement('tr');
+                const emptyCell = document.createElement('td');
+                emptyCell.colSpan = queueType === 'main' ? 5 : 6;
+                emptyCell.className = 'empty-table';
+                emptyCell.innerHTML = `
+                    <div class="empty-table-icon">💭</div>
+                    <div>No messages in ${queueType} queue</div>
+                `;
+                emptyRow.appendChild(emptyCell);
+                tbody.appendChild(emptyRow);
+            } else {
+                messages.forEach(message => {
+                    tbody.appendChild(createTableRow(message, queueType));
+                });
+            }
+        }
+
+        function updateStats(data) {
+            document.getElementById('totalProcessed').textContent = data.metadata.totalProcessed;
+            document.getElementById('totalFailed').textContent = data.metadata.totalFailed;
+            document.getElementById('totalQueued').textContent = data.mainQueue.length;
+            document.getElementById('totalProcessing').textContent = data.processingQueue.length;
+        }
+
+        function showError(message) {
+            const errorContainer = document.getElementById('error-container');
+            errorContainer.innerHTML = `<div class="error">❌ ${message}</div>`;
+            setTimeout(() => {
+                errorContainer.innerHTML = '';
+            }, 5000);
+        }
+
+        async function refreshData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('dashboard').style.display = 'none';
+                
+                const data = await fetchQueueStatus();
+                
+                updateStats(data);
+                updateQueueTable('mainQueueBody', 'mainQueueBadge', data.mainQueue.messages, 'main');
+                updateQueueTable('processingQueueBody', 'processingQueueBadge', data.processingQueue.messages, 'processing');
+                updateQueueTable('deadQueueBody', 'deadQueueBadge', data.deadLetterQueue.messages, 'dead');
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                document.getElementById('lastUpdated').textContent = `Last updated: ${new Date().toLocaleString()}`;
+                
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                showError(`Failed to fetch queue data: ${error.message}`);
+            }
+        }
+
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+            
+            if (isAutoRefresh) {
+                clearInterval(autoRefreshInterval);
+                btn.textContent = '▶️ Auto Refresh (5s)';
+                btn.classList.remove('active');
+                isAutoRefresh = false;
+            } else {
+                autoRefreshInterval = setInterval(refreshData, 5000);
+                btn.textContent = '⏸️ Stop Auto Refresh';
+                btn.classList.add('active');
+                isAutoRefresh = true;
+            }
+        }
+
+        async function clearAllQueues() {
+            if (!confirm('Are you sure you want to clear all queues? This action cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                // This would need to be implemented as an API endpoint
+                showError('Clear queues functionality not yet implemented');
+            } catch (error) {
+                showError(`Failed to clear queues: ${error.message}`);
+            }
+        }
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshData();
+        });
+    </script>
+</body>
+</html>

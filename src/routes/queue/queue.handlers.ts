@@ -7,6 +7,7 @@ import type {
   HealthCheckRoute,
   RemoveMessagesByDateRangeRoute,
   GetMessagesByDateRangeRoute,
+  GetQueueStatusRoute,
   DequeuedMessage,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
@@ -18,6 +19,10 @@ interface QueueConfigI {
   redis_port: number;
   redis_db: number;
   redis_password: string | null | undefined;
+  queue_name: string;
+  processing_queue_name: string;
+  dead_letter_queue_name: string;
+  metadata_hash_name: string;
   ack_timeout_seconds: number;
   max_attempts: number;
   batch_size: number;
@@ -31,6 +36,10 @@ const queueConfig: QueueConfigI = {
   redis_port: env.REDIS_PORT,
   redis_db: env.REDIS_DB,
   redis_password: env.REDIS_PASSWORD,
+  queue_name: env.QUEUE_NAME,
+  processing_queue_name: env.PROCESSING_QUEUE_NAME,
+  dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
+  metadata_hash_name: env.METADATA_HASH_NAME,
   ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
   max_attempts: env.MAX_ATTEMPTS,
   batch_size: env.BATCH_SIZE,
@@ -129,4 +138,13 @@ export const getMessagesByDateRange: AppRouteHandler<
   );
 
   return c.json(messages, 200);
+};
+
+export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: any) => {
+  try {
+    const status = await queue.getQueueStatus();
+    return c.json(status, 200);
+  } catch (error) {
+    return c.json({ message: "Failed to get queue status" }, 500);
+  }
 };

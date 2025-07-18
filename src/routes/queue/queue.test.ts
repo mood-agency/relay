@@ -58,7 +58,7 @@ describe('Queue Routes - Integration Tests', () => {
     it('should return 400 for invalid message format', async () => {
       const invalidMessage = { invalidField: 'test' };
 
-      const res = await testClient(router).queue.message.$post({ json: invalidMessage });
+      const res = await testClient(router).queue.message.$post({ json: invalidMessage as any });
 
       expect(res.status).toBe(422);
     });
@@ -140,7 +140,7 @@ describe('Queue Routes - Integration Tests', () => {
     it('should return 422 for invalid batch format', async () => {
       const invalidBatch = [{ invalidField: 'test' }];
 
-      const res = await testClient(router).queue.batch.$post({ json: invalidBatch });
+      const res = await testClient(router).queue.batch.$post({ json: invalidBatch as any });
 
       expect(res.status).toBe(422);
     });

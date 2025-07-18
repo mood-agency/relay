@@ -22,6 +22,13 @@ export const EnvSchema = z.object({
   REDIS_PASSWORD: z.string().optional().nullable(),
   REDIS_DB: z.coerce.number().default(0),
   REDIS_POOL_SIZE: z.coerce.number().default(10),
+  
+  // Queue Configuration
+  QUEUE_NAME: z.string().default("queue"),
+  PROCESSING_QUEUE_NAME: z.string().default("queue_processing"),
+  DEAD_LETTER_QUEUE_NAME: z.string().default("queue_dlq"),
+  METADATA_HASH_NAME: z.string().default("queue_metadata"),
+  
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),
   MAX_ATTEMPTS: z.coerce.number().default(3),
   BATCH_SIZE: z.coerce.number().default(100),

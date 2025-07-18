@@ -204,3 +204,37 @@ export const getMessagesByDateRange = createRoute({
     ),
   },
 });
+
+export const getQueueStatus = createRoute({
+  path: "/queue/status",
+  method: "get",
+  tags,
+  responses: {
+    200: jsonContent(
+      z.object({
+        mainQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+        }),
+        processingQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+        }),
+        deadLetterQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+        }),
+        metadata: z.object({
+          totalProcessed: z.number(),
+          totalFailed: z.number(),
+        }),
+      }),
+      "Queue Status"
+    ),
+  },
+});
+
+export type GetQueueStatusRoute = typeof getQueueStatus;

@@ -9,6 +9,7 @@ const router = createRouter()
   .openapi(routes.acknowledgeMessage, handlers.acknowledgeMessage)
   .openapi(routes.metrics, handlers.metrics)
   .openapi(routes.healthCheck, handlers.healthCheck)
+  .openapi(routes.getQueueStatus, handlers.getQueueStatus)
   .openapi(
     routes.removeMessagesByDateRange,
     handlers.removeMessagesByDateRange

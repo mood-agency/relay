@@ -22,10 +22,10 @@ class QueueConfig {
     this.redis_db = parseInt(config.redis_db || "0", 10);
     this.redis_password = config.redis_password || null;
 
-    this.queue_name = "optimized_queue_js";
-    this.processing_queue_name = "optimized_queue_js_processing";
-    this.dead_letter_queue_name = "optimized_queue_js_dlq";
-    this.metadata_hash_name = "optimized_queue_js_metadata";
+    this.queue_name = config.queue_name || "queue";
+    this.processing_queue_name = config.processing_queue_name || "queue_processing";
+    this.dead_letter_queue_name = config.dead_letter_queue_name || "queue_dlq";
+    this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
@@ -801,6 +801,82 @@ class OptimizedRedisQueue {
         error: e.toString(),
         timestamp: Date.now() / 1000,
       };
+    }
+  }
+
+  async getQueueStatus() {
+    try {
+      const redis = this.redisManager.redis;
+      const pipeline = redis.pipeline();
+      
+      // Get queue lengths
+      pipeline.llen(this.config.queue_name);
+      pipeline.llen(this.config.processing_queue_name);
+      pipeline.llen(this.config.dead_letter_queue_name);
+      
+      // Get queue contents (limited to 100 items each)
+      pipeline.lrange(this.config.queue_name, 0, 99);
+      pipeline.lrange(this.config.processing_queue_name, 0, 99);
+      pipeline.lrange(this.config.dead_letter_queue_name, 0, 99);
+      
+      // Get metadata for processed/failed counts
+      pipeline.hgetall(this.config.metadata_hash_name);
+      
+      const results = await pipeline.exec();
+      
+      const [mainLen, procLen, dlqLen, mainMsgs, procMsgs, dlqMsgs, metadata] = results.map(r => r[1]);
+      
+      // Parse messages
+      const parseMessages = (messages) => {
+        return messages.map(msg => {
+          const parsed = this._deserializeMessage(msg);
+          return parsed || { error: 'Failed to parse message' };
+        });
+      };
+      
+      // Count processed and failed messages from metadata
+      let totalProcessed = 0;
+      let totalFailed = 0;
+      
+      if (metadata) {
+        Object.values(metadata).forEach(metaStr => {
+          try {
+            const meta = JSON.parse(metaStr);
+            if (meta.attempt_count >= this.config.max_attempts) {
+              totalFailed++;
+            } else if (meta.dequeued_at) {
+              totalProcessed++;
+            }
+          } catch (e) {
+            // Skip invalid metadata
+          }
+        });
+      }
+      
+      return {
+        mainQueue: {
+          name: this.config.queue_name,
+          length: mainLen || 0,
+          messages: parseMessages(mainMsgs || []),
+        },
+        processingQueue: {
+          name: this.config.processing_queue_name,
+          length: procLen || 0,
+          messages: parseMessages(procMsgs || []),
+        },
+        deadLetterQueue: {
+          name: this.config.dead_letter_queue_name,
+          length: dlqLen || 0,
+          messages: parseMessages(dlqMsgs || []),
+        },
+        metadata: {
+          totalProcessed,
+          totalFailed,
+        },
+      };
+    } catch (error) {
+      logger.error(`Error getting queue status: ${error.message}`);
+      throw error;
     }
   }
 
