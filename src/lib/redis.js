@@ -870,7 +870,7 @@ class OptimizedRedisQueue {
     }
   }
 
-  async getQueueStatus() {
+  async getQueueStatus(typeFilter = null) {
     try {
       const redis = this.redisManager.redis;
       const pipeline = redis.pipeline();
@@ -892,12 +892,22 @@ class OptimizedRedisQueue {
       
       const [mainLen, procLen, dlqLen, mainMsgs, procMsgs, dlqMsgs, metadata] = results.map(r => r[1]);
       
-      // Parse messages
+      // Parse messages and collect available types
+      const availableTypes = new Set();
       const parseMessages = (messages) => {
-        return messages.map(msg => {
-          const parsed = this._deserializeMessage(msg);
-          return parsed || { error: 'Failed to parse message' };
+        const parsed = messages.map(msg => {
+          const parsedMsg = this._deserializeMessage(msg);
+          if (parsedMsg && parsedMsg.type) {
+            availableTypes.add(parsedMsg.type);
+          }
+          return parsedMsg || { error: 'Failed to parse message' };
         });
+        
+        // Filter by type if specified
+        if (typeFilter) {
+          return parsed.filter(msg => msg.type === typeFilter);
+        }
+        return parsed;
       };
       
       // Count processed and failed messages from metadata
@@ -919,26 +929,31 @@ class OptimizedRedisQueue {
         });
       }
       
+      const mainMessages = parseMessages(mainMsgs || []);
+      const processingMessages = parseMessages(procMsgs || []);
+      const deadMessages = parseMessages(dlqMsgs || []);
+      
       return {
         mainQueue: {
           name: this.config.queue_name,
-          length: mainLen || 0,
-          messages: parseMessages(mainMsgs || []),
+          length: typeFilter ? mainMessages.length : (mainLen || 0),
+          messages: mainMessages,
         },
         processingQueue: {
           name: this.config.processing_queue_name,
-          length: procLen || 0,
-          messages: parseMessages(procMsgs || []),
+          length: typeFilter ? processingMessages.length : (procLen || 0),
+          messages: processingMessages,
         },
         deadLetterQueue: {
           name: this.config.dead_letter_queue_name,
-          length: dlqLen || 0,
-          messages: parseMessages(dlqMsgs || []),
+          length: typeFilter ? deadMessages.length : (dlqLen || 0),
+          messages: deadMessages,
         },
         metadata: {
           totalProcessed,
           totalFailed,
         },
+        availableTypes: Array.from(availableTypes).sort(),
       };
     } catch (error) {
       logger.error(`Error getting queue status: ${error.message}`);
