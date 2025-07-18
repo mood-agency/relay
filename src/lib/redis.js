@@ -804,6 +804,72 @@ class OptimizedRedisQueue {
     }
   }
 
+  async deleteMessage(messageId, queueType) {
+    try {
+      const redis = this.redisManager.redis;
+      let queueName;
+      
+      // Determine which queue to delete from
+      switch (queueType) {
+        case 'main':
+          queueName = this.config.queue_name;
+          break;
+        case 'processing':
+          queueName = this.config.processing_queue_name;
+          break;
+        case 'dead':
+          queueName = this.config.dead_letter_queue_name;
+          break;
+        default:
+          throw new Error(`Invalid queue type: ${queueType}`);
+      }
+      
+      // Get all messages from the queue
+      const messages = await redis.lrange(queueName, 0, -1);
+      
+      // Find the message to delete
+      let messageIndex = -1;
+      let messageToDelete = null;
+      
+      for (let i = 0; i < messages.length; i++) {
+        const parsed = this._deserializeMessage(messages[i]);
+        if (parsed && parsed.id === messageId) {
+          messageIndex = i;
+          messageToDelete = messages[i];
+          break;
+        }
+      }
+      
+      if (messageIndex === -1) {
+        throw new Error(`Message with ID ${messageId} not found in ${queueType} queue`);
+      }
+      
+      // Remove the message from the queue
+      // Use LREM to remove the specific message
+      const removed = await redis.lrem(queueName, 1, messageToDelete);
+      
+      if (removed === 0) {
+        throw new Error(`Failed to remove message ${messageId} from ${queueType} queue`);
+      }
+      
+      // Also remove from metadata if it exists
+      await redis.hdel(this.config.metadata_hash_name, messageId);
+      
+      logger.info(`Successfully deleted message ${messageId} from ${queueType} queue`);
+      
+      return {
+        success: true,
+        messageId,
+        queueType,
+        message: 'Message deleted successfully'
+      };
+      
+    } catch (error) {
+      logger.error(`Error deleting message ${messageId} from ${queueType} queue: ${error.message}`);
+      throw error;
+    }
+  }
+
   async getQueueStatus() {
     try {
       const redis = this.redisManager.redis;

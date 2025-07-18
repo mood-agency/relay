@@ -238,3 +238,36 @@ export const getQueueStatus = createRoute({
 });
 
 export type GetQueueStatusRoute = typeof getQueueStatus;
+
+export const deleteMessage = createRoute({
+  path: "/queue/message/:messageId",
+  method: "delete",
+  tags,
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        queueType: z.enum(["main", "processing", "dead"]),
+      }),
+      "Queue Type"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        messageId: z.string(),
+        queueType: z.string(),
+        message: z.string(),
+      }),
+      "Message Deleted"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    404: jsonContent(z.object({ message: z.string() }), "Message not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type DeleteMessageRoute = typeof deleteMessage;

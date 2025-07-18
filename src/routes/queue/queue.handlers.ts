@@ -148,3 +148,23 @@ export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: an
     return c.json({ message: "Failed to get queue status" }, 500);
   }
 };
+
+export const deleteMessage: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const { messageId } = c.req.param();
+    const { queueType } = await c.req.json();
+    
+    if (!messageId) {
+      return c.json({ message: "Message ID is required" }, 400);
+    }
+    
+    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
+      return c.json({ message: "Valid queue type is required (main, processing, dead)" }, 400);
+    }
+    
+    const result = await queue.deleteMessage(messageId, queueType);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to delete message" }, 500);
+  }
+};

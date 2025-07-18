@@ -17,6 +17,7 @@ const router = createRouter()
   .openapi(
     routes.getMessagesByDateRange,
     handlers.getMessagesByDateRange
-  );
+  )
+  .openapi(routes.deleteMessage, handlers.deleteMessage);
 
 export default router;
