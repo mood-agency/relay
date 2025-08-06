@@ -894,6 +894,83 @@ class OptimizedRedisQueue {
     }
   }
 
+  async clearQueue(queueType) {
+    try {
+      const redis = this.redisManager.redis;
+      let queueName;
+      
+      // Determine which queue to clear
+      switch (queueType) {
+        case 'main':
+          queueName = this.config.queue_name;
+          break;
+        case 'processing':
+          queueName = this.config.processing_queue_name;
+          break;
+        case 'dead':
+          queueName = this.config.dead_letter_queue_name;
+          break;
+        default:
+          throw new Error(`Invalid queue type: ${queueType}`);
+      }
+      
+      // Get the current queue length for reporting
+      const currentLength = await redis.llen(queueName);
+      
+      if (currentLength === 0) {
+        logger.info(`${queueType} queue is already empty`);
+        return {
+          success: true,
+          queueType,
+          clearedCount: 0,
+          message: `${queueType} queue was already empty`
+        };
+      }
+      
+      // For processing queue, we also need to clean up related metadata
+      if (queueType === 'processing') {
+        // Get all messages to extract their IDs for metadata cleanup
+        const messages = await redis.lrange(queueName, 0, -1);
+        const messageIds = [];
+        
+        for (const messageJson of messages) {
+          const parsed = this._deserializeMessage(messageJson);
+          if (parsed && parsed.id) {
+            messageIds.push(parsed.id);
+            messageIds.push(`${parsed.id}:original_json_string`); // Also remove the original JSON string field
+          }
+        }
+        
+        // Use pipeline for efficient cleanup
+        const pipeline = redis.pipeline();
+        pipeline.del(queueName); // Clear the queue
+        
+        // Remove metadata for all messages
+        if (messageIds.length > 0) {
+          pipeline.hdel(this.config.metadata_hash_name, ...messageIds);
+        }
+        
+        await pipeline.exec();
+      } else {
+        // For main and dead queues, just clear the queue
+        await redis.del(queueName);
+      }
+      
+      logger.info(`Successfully cleared ${queueType} queue (${currentLength} messages removed)`);
+      
+      return {
+        success: true,
+        queueType,
+        clearedCount: currentLength,
+        message: `${queueType} queue cleared successfully (${currentLength} messages removed)`
+      };
+      
+    } catch (error) {
+      logger.error(`Error clearing ${queueType} queue: ${error.message}`);
+      throw error;
+    }
+  }
+
   async getQueueStatus(typeFilter = null) {
     try {
       const redis = this.redisManager.redis;

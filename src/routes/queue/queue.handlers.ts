@@ -8,6 +8,7 @@ import type {
   RemoveMessagesByDateRangeRoute,
   GetMessagesByDateRangeRoute,
   GetQueueStatusRoute,
+  ClearQueueRoute,
   DequeuedMessage,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
@@ -166,5 +167,20 @@ export const deleteMessage: AppRouteHandler<any> = async (c: any) => {
     return c.json(result, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to delete message" }, 500);
+  }
+};
+
+export const clearQueue: AppRouteHandler<ClearQueueRoute> = async (c: any) => {
+  try {
+    const { queueType } = c.req.param();
+    
+    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
+      return c.json({ message: "Valid queue type is required (main, processing, dead)" }, 400);
+    }
+    
+    const result = await queue.clearQueue(queueType);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to clear queue" }, 500);
   }
 };

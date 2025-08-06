@@ -270,4 +270,29 @@ export const deleteMessage = createRoute({
   },
 });
 
+export const clearQueue = createRoute({
+  path: "/queue/:queueType/clear",
+  method: "delete",
+  tags,
+  request: {
+    params: z.object({
+      queueType: z.enum(["main", "processing", "dead"]),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        queueType: z.string(),
+        clearedCount: z.number(),
+        message: z.string(),
+      }),
+      "Queue Cleared"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type DeleteMessageRoute = typeof deleteMessage;
+export type ClearQueueRoute = typeof clearQueue;
