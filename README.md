@@ -2,6 +2,8 @@
 
 This is a simple Redis-based queue API built with Hono and TypeScript.
 
+Using wsl
+
 ## Installation
 
 1.  Clone the repository.
@@ -16,6 +18,11 @@ pnpm install
 Create a `.env` file in the root of the project and add the necessary environment variables. You can use `.env.example` as a template.
 
 ## Usage
+### Redis
+Make sure redis is running 
+``` bash
+service redis-server restart
+```
 
 ### Development
 

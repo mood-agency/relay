@@ -1,6 +1,5 @@
 import Redis from "ioredis";
 import crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
 
 // --- Improved Logging Configuration (Simple Console Logger) ---
 const logger = {
@@ -26,6 +25,7 @@ class QueueConfig {
     this.processing_queue_name = config.processing_queue_name || "queue_processing";
     this.dead_letter_queue_name = config.dead_letter_queue_name || "queue_dlq";
     this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
+    this.id_counter_key = config.id_counter_key || "queue_id_counter";
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
@@ -250,10 +250,30 @@ class OptimizedRedisQueue {
     }
   }
 
+  async _generateIncrementalId() {
+    try {
+      const id = await this.redisManager.redis.incr(this.config.id_counter_key);
+      return id.toString();
+    } catch (e) {
+      logger.error(`Error generating incremental ID: ${e}`);
+      throw e;
+    }
+  }
+
+  async setIdCounterStartValue(startValue) {
+    try {
+      await this.redisManager.redis.set(this.config.id_counter_key, startValue - 1);
+      logger.info(`ID counter start value set to ${startValue}`);
+    } catch (e) {
+      logger.error(`Error setting ID counter start value: ${e}`);
+      throw e;
+    }
+  }
+
   async enqueueMessage(messageData, priority = 0) {
     try {
       if (!messageData.id) {
-        messageData.id = uuidv4();
+        messageData.id = await this._generateIncrementalId();
       }
       if (typeof messageData.created_at === "undefined") {
         messageData.created_at = Date.now() / 1000; // seconds timestamp
@@ -289,11 +309,15 @@ class OptimizedRedisQueue {
     let successful = 0;
     if (!messages || messages.length === 0) return 0;
 
-    const pipeline = this.redisManager.pipeline();
+    // Generate IDs for messages that don't have them
     for (const msg of messages) {
       if (!msg.id) {
-        msg.id = uuidv4();
+        msg.id = await this._generateIncrementalId();
       }
+    }
+
+    const pipeline = this.redisManager.pipeline();
+    for (const msg of messages) {
       if (typeof msg.created_at === "undefined") {
         msg.created_at = Date.now() / 1000;
       }
@@ -980,6 +1004,7 @@ async function demoOptimizedQueue() {
     p.del(config.processing_queue_name);
     p.del(config.dead_letter_queue_name);
     p.del(config.metadata_hash_name);
+    p.del(config.id_counter_key);
     await p.exec();
     logger.info("Queues cleaned for demo.");
 
