@@ -227,10 +227,16 @@ export const getQueueStatus = createRoute({
           length: z.number(),
           messages: z.array(DequeuedMessageSchema),
         }),
+        archiveQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+        }),
         metadata: z.object({
           totalProcessed: z.number(),
           totalFailed: z.number(),
         }),
+        availableTypes: z.array(z.string()),
       }),
       "Queue Status"
     ),
@@ -249,7 +255,7 @@ export const deleteMessage = createRoute({
     }),
     body: jsonContentRequired(
       z.object({
-        queueType: z.enum(["main", "processing", "dead"]),
+        queueType: z.enum(["main", "processing", "dead", "archive"]),
       }),
       "Queue Type"
     ),
@@ -276,7 +282,7 @@ export const clearQueue = createRoute({
   tags,
   request: {
     params: z.object({
-      queueType: z.enum(["main", "processing", "dead"]),
+      queueType: z.enum(["main", "processing", "dead", "archive"]),
     }),
   },
   responses: {

@@ -23,6 +23,7 @@ interface QueueConfigI {
   queue_name: string;
   processing_queue_name: string;
   dead_letter_queue_name: string;
+  archive_queue_name: string;
   metadata_hash_name: string;
   ack_timeout_seconds: number;
   max_attempts: number;
@@ -40,6 +41,7 @@ const queueConfig: QueueConfigI = {
   queue_name: env.QUEUE_NAME,
   processing_queue_name: env.PROCESSING_QUEUE_NAME,
   dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
+  archive_queue_name: env.ARCHIVE_QUEUE_NAME,
   metadata_hash_name: env.METADATA_HASH_NAME,
   ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
   max_attempts: env.MAX_ATTEMPTS,
@@ -146,6 +148,7 @@ export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: an
     const status = await queue.getQueueStatus();
     return c.json(status, 200);
   } catch (error) {
+    console.error('Error in getQueueStatus handler:', error);
     return c.json({ message: "Failed to get queue status" }, 500);
   }
 };
@@ -159,8 +162,8 @@ export const deleteMessage: AppRouteHandler<any> = async (c: any) => {
       return c.json({ message: "Message ID is required" }, 400);
     }
     
-    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
-      return c.json({ message: "Valid queue type is required (main, processing, dead)" }, 400);
+    if (!queueType || !['main', 'processing', 'dead', 'archive'].includes(queueType)) {
+      return c.json({ message: "Valid queue type is required (main, processing, dead, archive)" }, 400);
     }
     
     const result = await queue.deleteMessage(messageId, queueType);
@@ -174,8 +177,8 @@ export const clearQueue: AppRouteHandler<ClearQueueRoute> = async (c: any) => {
   try {
     const { queueType } = c.req.param();
     
-    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
-      return c.json({ message: "Valid queue type is required (main, processing, dead)" }, 400);
+    if (!queueType || !['main', 'processing', 'dead', 'archive'].includes(queueType)) {
+      return c.json({ message: "Valid queue type is required (main, processing, dead, archive)" }, 400);
     }
     
     const result = await queue.clearQueue(queueType);

@@ -27,6 +27,7 @@ export const EnvSchema = z.object({
   QUEUE_NAME: z.string().default("queue"),
   PROCESSING_QUEUE_NAME: z.string().default("queue_processing"),
   DEAD_LETTER_QUEUE_NAME: z.string().default("queue_dlq"),
+  ARCHIVE_QUEUE_NAME: z.string().default("queue_archive"),
   METADATA_HASH_NAME: z.string().default("queue_metadata"),
   
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),

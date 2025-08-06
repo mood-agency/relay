@@ -729,6 +729,10 @@
                         <i data-lucide="alert-triangle"></i> Dead Letter Queue
                         <span class="tab-badge" id="deadQueueBadge">0</span>
                     </button>
+                    <button class="tab-button" onclick="switchTab('archive')">
+                        <i data-lucide="archive"></i> Archive Queue
+                        <span class="tab-badge" id="archiveQueueBadge">0</span>
+                    </button>
                 </div>
 
                 
@@ -863,6 +867,51 @@
                         </table>
                     </div>
                 </div>
+                
+                <div class="tab-content" id="archiveTab">
+                    <div class="pagination-controls" id="archivePagination">
+                        <div class="pagination-left">
+                            <button class="btn btn-destructive" id="archiveBulkDelete" onclick="bulkDeleteSelected('archive')" style="display: none;"><i data-lucide="trash-2"></i> Delete Selected</button>
+                            <button class="btn btn-destructive" onclick="clearQueue('archive')"><i data-lucide="trash-2"></i> Clear Archive Queue</button>
+                            <span>Type:</span>
+                            <select class="filter-select" id="archiveTypeFilter" onchange="filterByMessageType('archive', this.value)">
+                                <option value="all">All</option>
+                            </select>
+                            <span>Show:</span>
+                            <select class="page-size-select" onchange="changePageSize('archive', this.value)">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
+                            <span id="archivePaginationInfo">Showing 0-0 of 0</span>
+                        </div>
+                        <div class="pagination-right">
+                            <div class="pagination-nav" id="archivePaginationNav">
+                                <!-- Pagination buttons will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table class="queue-table" id="archiveQueueTable">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="archiveSelectAll" onchange="toggleSelectAll('archive')"></th>
+                                    <th>Message ID</th>
+                                    <th>Type</th>
+                                    <th>Priority</th>
+                                    <th>Payload</th>
+                                    <th>Archived At</th>
+                                    <th>Archived From</th>
+                                    <th>Reason</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="archiveQueueBody">
+                                <!-- Messages will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -877,7 +926,8 @@
         const paginationState = {
             main: { currentPage: 1, pageSize: 25, totalItems: 0, allMessages: [], filteredMessages: [], selectedType: 'all' },
             processing: { currentPage: 1, pageSize: 25, totalItems: 0, allMessages: [], filteredMessages: [], selectedType: 'all' },
-            dead: { currentPage: 1, pageSize: 25, totalItems: 0, allMessages: [], filteredMessages: [], selectedType: 'all' }
+            dead: { currentPage: 1, pageSize: 25, totalItems: 0, allMessages: [], filteredMessages: [], selectedType: 'all' },
+            archive: { currentPage: 1, pageSize: 25, totalItems: 0, allMessages: [], filteredMessages: [], selectedType: 'all' }
         };
 
         async function fetchQueueStatus() {
@@ -1118,6 +1168,18 @@
                     <td class="message-meta-cell">${message.error_message || 'Unknown error'}</td>
                     <td><button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}"><i data-lucide="trash-2"></i></button></td>
                 `;
+            } else if (queueType === 'archive') {
+                columns = `
+                    <td><input type="checkbox" class="message-checkbox" data-message-id="${fullMessageId}" onchange="updateBulkDeleteButton('${queueType}')"></td>
+                    <td class="message-id-cell">${truncatedId}</td>
+                    <td><span class="message-type-cell">${message.type || 'Unknown'}</span></td>
+                    <td><span class="priority-badge ${priorityClass}">${priority}</span></td>
+                    <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
+                    <td class="message-meta-cell">${formatTimestamp(message.archived_at)}</td>
+                    <td class="message-meta-cell">${message.archived_from || 'Unknown'}</td>
+                    <td class="message-meta-cell">${message.archive_reason || 'Unknown'}</td>
+                    <td><button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Permanently delete message ${fullMessageId}"><i data-lucide="trash-2"></i></button></td>
+                `;
             }
             
             row.innerHTML = columns;
@@ -1153,6 +1215,8 @@
             updatePaginatedTable(queueType);
         }
 
+
+
         function updateStats(data) {
             document.getElementById('totalProcessed').textContent = data.metadata.totalProcessed;
             document.getElementById('totalFailed').textContent = data.metadata.totalFailed;
@@ -1178,10 +1242,22 @@
 
                 const data = await fetchQueueStatus();
                 
+                console.log('Received queue status data:', data);
+                console.log('Archive queue exists:', !!data.archiveQueue);
+                
                 updateStats(data);
+                
                 updateQueueTable('main', 'mainQueueBadge', data.mainQueue.messages, 'main');
                 updateQueueTable('processing', 'processingQueueBadge', data.processingQueue.messages, 'processing');
                 updateQueueTable('dead', 'deadQueueBadge', data.deadLetterQueue.messages, 'dead');
+                
+                // Safely handle archive queue
+                if (data.archiveQueue && data.archiveQueue.messages) {
+                    updateQueueTable('archive', 'archiveQueueBadge', data.archiveQueue.messages, 'archive');
+                } else {
+                    console.error('Archive queue data is missing from API response');
+                    updateQueueTable('archive', 'archiveQueueBadge', [], 'archive');
+                }
                 
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
@@ -1391,12 +1467,20 @@
             const queueNames = {
                 'main': 'Main Queue',
                 'processing': 'Processing Queue',
-                'dead': 'Dead Letter Queue'
+                'dead': 'Dead Letter Queue',
+                'archive': 'Archive Queue'
             };
             
             const queueDisplayName = queueNames[queueType] || queueType;
             
-            if (!confirm(`Are you sure you want to clear the ${queueDisplayName}? This will permanently delete all messages in this queue. This action cannot be undone.`)) {
+            let confirmMessage;
+            if (queueType === 'archive') {
+                confirmMessage = `Are you sure you want to clear the ${queueDisplayName}? This will PERMANENTLY DELETE all archived messages. This action cannot be undone.`;
+            } else {
+                confirmMessage = `Are you sure you want to clear the ${queueDisplayName}? This will move all messages to the archive. This action cannot be undone.`;
+            }
+            
+            if (!confirm(confirmMessage)) {
                 return;
             }
             
@@ -1450,15 +1534,16 @@
         }
 
         async function clearAllQueues() {
-            if (!confirm('Are you sure you want to clear all queues? This action cannot be undone.')) {
+            if (!confirm('Are you sure you want to clear all queues? Main, Processing, and Dead Letter queues will be archived. Archive queue will be permanently deleted. This action cannot be undone.')) {
                 return;
             }
             
             try {
-                // Clear all three queues sequentially
+                // Clear all four queues sequentially
                 await clearQueue('main');
                 await clearQueue('processing'); 
                 await clearQueue('dead');
+                await clearQueue('archive');
             } catch (error) {
                 showError(`Failed to clear all queues: ${error.message}`);
             }
@@ -1482,7 +1567,7 @@
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', () => {
             // Ensure all bulk delete buttons are hidden initially
-            ['main', 'processing', 'dead'].forEach(queueType => {
+            ['main', 'processing', 'dead', 'archive'].forEach(queueType => {
                 const bulkDeleteBtn = document.getElementById(`${queueType}BulkDelete`);
                 if (bulkDeleteBtn) {
                     bulkDeleteBtn.style.display = 'none';

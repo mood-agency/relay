@@ -24,6 +24,7 @@ class QueueConfig {
     this.queue_name = config.queue_name || "queue";
     this.processing_queue_name = config.processing_queue_name || "queue_processing";
     this.dead_letter_queue_name = config.dead_letter_queue_name || "queue_dlq";
+    this.archive_queue_name = config.archive_queue_name || "queue_archive";
     this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
     this.id_counter_key = config.id_counter_key || "queue_id_counter";
 
@@ -894,6 +895,120 @@ class OptimizedRedisQueue {
     }
   }
 
+  async archiveMessage(messageJson, queueType, reason = 'archived') {
+    try {
+      const redis = this.redisManager.redis;
+      const messageData = this._deserializeMessage(messageJson);
+      
+      if (!messageData) {
+        throw new Error('Failed to deserialize message for archiving');
+      }
+      
+      // Add archive metadata
+      const archivedMessage = {
+        ...messageData,
+        archived_at: Date.now() / 1000,
+        archived_from: queueType,
+        archive_reason: reason
+      };
+      
+      // Serialize and add to archive queue
+      const archivedMessageJson = this._serializeMessage(archivedMessage);
+      await redis.rpush(this.config.archive_queue_name, archivedMessageJson);
+      
+      logger.info(`Message ${messageData.id} archived from ${queueType} queue (reason: ${reason})`);
+      
+      return {
+        success: true,
+        messageId: messageData.id,
+        queueType,
+        reason,
+        message: 'Message archived successfully'
+      };
+      
+    } catch (error) {
+      logger.error(`Error archiving message: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async deleteMessage(messageId, queueType) {
+    try {
+      const redis = this.redisManager.redis;
+      let queueName;
+      
+      // Determine which queue to delete from
+      switch (queueType) {
+        case 'main':
+          queueName = this.config.queue_name;
+          break;
+        case 'processing':
+          queueName = this.config.processing_queue_name;
+          break;
+        case 'dead':
+          queueName = this.config.dead_letter_queue_name;
+          break;
+        case 'archive':
+          queueName = this.config.archive_queue_name;
+          break;
+        default:
+          throw new Error(`Invalid queue type: ${queueType}`);
+      }
+      
+      // Get all messages from the queue
+      const messages = await redis.lrange(queueName, 0, -1);
+      
+      // Find the message to delete
+      let messageIndex = -1;
+      let messageToDelete = null;
+      
+      for (let i = 0; i < messages.length; i++) {
+        const parsed = this._deserializeMessage(messages[i]);
+        if (parsed && parsed.id === messageId) {
+          messageIndex = i;
+          messageToDelete = messages[i];
+          break;
+        }
+      }
+      
+      if (messageIndex === -1) {
+        throw new Error(`Message with ID ${messageId} not found in ${queueType} queue`);
+      }
+      
+      // For non-archive queues, move to archive first
+      if (queueType !== 'archive') {
+        await this.archiveMessage(messageToDelete, queueType, 'deleted');
+      }
+      
+      // Remove the message from the queue
+      const removed = await redis.lrem(queueName, 1, messageToDelete);
+      
+      if (removed === 0) {
+        throw new Error(`Failed to remove message ${messageId} from ${queueType} queue`);
+      }
+      
+      // Also remove from metadata if it exists (for processing queue)
+      if (queueType === 'processing') {
+        await redis.hdel(this.config.metadata_hash_name, messageId);
+        await redis.hdel(this.config.metadata_hash_name, `${messageId}:original_json_string`);
+      }
+      
+      const action = queueType === 'archive' ? 'permanently deleted' : 'archived';
+      logger.info(`Successfully ${action} message ${messageId} from ${queueType} queue`);
+      
+      return {
+        success: true,
+        messageId,
+        queueType,
+        message: `Message ${action} successfully`
+      };
+      
+    } catch (error) {
+      logger.error(`Error deleting message ${messageId} from ${queueType} queue: ${error.message}`);
+      throw error;
+    }
+  }
+
   async clearQueue(queueType) {
     try {
       const redis = this.redisManager.redis;
@@ -909,6 +1024,9 @@ class OptimizedRedisQueue {
           break;
         case 'dead':
           queueName = this.config.dead_letter_queue_name;
+          break;
+        case 'archive':
+          queueName = this.config.archive_queue_name;
           break;
         default:
           throw new Error(`Invalid queue type: ${queueType}`);
@@ -927,43 +1045,67 @@ class OptimizedRedisQueue {
         };
       }
       
-      // For processing queue, we also need to clean up related metadata
-      if (queueType === 'processing') {
-        // Get all messages to extract their IDs for metadata cleanup
+      // For non-archive queues, move messages to archive before clearing
+      if (queueType !== 'archive') {
         const messages = await redis.lrange(queueName, 0, -1);
-        const messageIds = [];
+        const pipeline = redis.pipeline();
         
+        // Archive all messages
         for (const messageJson of messages) {
-          const parsed = this._deserializeMessage(messageJson);
-          if (parsed && parsed.id) {
-            messageIds.push(parsed.id);
-            messageIds.push(`${parsed.id}:original_json_string`); // Also remove the original JSON string field
+          const messageData = this._deserializeMessage(messageJson);
+          if (messageData) {
+            const archivedMessage = {
+              ...messageData,
+              archived_at: Date.now() / 1000,
+              archived_from: queueType,
+              archive_reason: 'queue_cleared'
+            };
+            const archivedMessageJson = this._serializeMessage(archivedMessage);
+            pipeline.rpush(this.config.archive_queue_name, archivedMessageJson);
           }
         }
         
-        // Use pipeline for efficient cleanup
-        const pipeline = redis.pipeline();
-        pipeline.del(queueName); // Clear the queue
+        // Clear the original queue
+        pipeline.del(queueName);
         
-        // Remove metadata for all messages
-        if (messageIds.length > 0) {
-          pipeline.hdel(this.config.metadata_hash_name, ...messageIds);
+        // For processing queue, clean up metadata
+        if (queueType === 'processing') {
+          const messageIds = [];
+          for (const messageJson of messages) {
+            const parsed = this._deserializeMessage(messageJson);
+            if (parsed && parsed.id) {
+              messageIds.push(parsed.id);
+              messageIds.push(`${parsed.id}:original_json_string`);
+            }
+          }
+          if (messageIds.length > 0) {
+            pipeline.hdel(this.config.metadata_hash_name, ...messageIds);
+          }
         }
         
         await pipeline.exec();
+        
+        logger.info(`Successfully cleared ${queueType} queue and archived ${currentLength} messages`);
+        
+        return {
+          success: true,
+          queueType,
+          clearedCount: currentLength,
+          message: `${queueType} queue cleared successfully (${currentLength} messages archived)`
+        };
       } else {
-        // For main and dead queues, just clear the queue
+        // For archive queue, permanently delete messages
         await redis.del(queueName);
+        
+        logger.info(`Successfully permanently deleted ${currentLength} messages from archive queue`);
+        
+        return {
+          success: true,
+          queueType,
+          clearedCount: currentLength,
+          message: `Archive queue cleared successfully (${currentLength} messages permanently deleted)`
+        };
       }
-      
-      logger.info(`Successfully cleared ${queueType} queue (${currentLength} messages removed)`);
-      
-      return {
-        success: true,
-        queueType,
-        clearedCount: currentLength,
-        message: `${queueType} queue cleared successfully (${currentLength} messages removed)`
-      };
       
     } catch (error) {
       logger.error(`Error clearing ${queueType} queue: ${error.message}`);
@@ -980,18 +1122,20 @@ class OptimizedRedisQueue {
       pipeline.llen(this.config.queue_name);
       pipeline.llen(this.config.processing_queue_name);
       pipeline.llen(this.config.dead_letter_queue_name);
+      pipeline.llen(this.config.archive_queue_name);
       
-      // Get queue contents (limited to 100 items each)
-      pipeline.lrange(this.config.queue_name, 0, 99);
-      pipeline.lrange(this.config.processing_queue_name, 0, 99);
-      pipeline.lrange(this.config.dead_letter_queue_name, 0, 99);
+      // Get all queue contents (for proper pagination we need all messages)
+      pipeline.lrange(this.config.queue_name, 0, -1);
+      pipeline.lrange(this.config.processing_queue_name, 0, -1);
+      pipeline.lrange(this.config.dead_letter_queue_name, 0, -1);
+      pipeline.lrange(this.config.archive_queue_name, 0, -1);
       
       // Get metadata for processed/failed counts
       pipeline.hgetall(this.config.metadata_hash_name);
       
       const results = await pipeline.exec();
       
-      const [mainLen, procLen, dlqLen, mainMsgs, procMsgs, dlqMsgs, metadata] = results.map(r => r[1]);
+      const [mainLen, procLen, dlqLen, archiveLen, mainMsgs, procMsgs, dlqMsgs, archiveMsgs, metadata] = results.map(r => r[1]);
       
       // Parse messages and collect available types
       const availableTypes = new Set();
@@ -1033,6 +1177,7 @@ class OptimizedRedisQueue {
       const mainMessages = parseMessages(mainMsgs || []);
       const processingMessages = parseMessages(procMsgs || []);
       const deadMessages = parseMessages(dlqMsgs || []);
+      const archiveMessages = parseMessages(archiveMsgs || []);
       
       return {
         mainQueue: {
@@ -1050,6 +1195,12 @@ class OptimizedRedisQueue {
           length: typeFilter ? deadMessages.length : (dlqLen || 0),
           messages: deadMessages,
         },
+        archiveQueue: {
+          name: this.config.archive_queue_name,
+          length: typeFilter ? archiveMessages.length : (archiveLen || 0),
+          messages: archiveMessages,
+        },
+
         metadata: {
           totalProcessed,
           totalFailed,
@@ -1080,6 +1231,7 @@ async function demoOptimizedQueue() {
     p.del(config.queue_name);
     p.del(config.processing_queue_name);
     p.del(config.dead_letter_queue_name);
+    p.del(config.archive_queue_name);
     p.del(config.metadata_hash_name);
     p.del(config.id_counter_key);
     await p.exec();
