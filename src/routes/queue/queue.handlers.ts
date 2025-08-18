@@ -13,10 +13,10 @@ import type {
   UpdateConfigurationRoute,
   DequeuedMessage,
 } from "./queue.routes";
-import type { AppRouteHandler } from "../../config/types";
+import type { AppRouteHandler } from "@/config/types";
 
-import env from "../../config/env";
-import { OptimizedRedisQueue, QueueConfig } from "../../lib/redis.js";
+import env from "@/config/env";
+import { OptimizedRedisQueue, QueueConfig } from "@/lib/redis.js";
 interface QueueConfigI {
   redis_host: string;
   redis_port: number;
@@ -58,35 +58,29 @@ const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig));
 export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
   const { type, payload, priority, custom_ack_timeout } = c.req.valid("json");
 
-  const result = await queue.enqueueMessage({
+  const message = await queue.enqueueMessage({
     type,
     payload,
     priority,
-    custom_ack_timeout,
   }, priority, custom_ack_timeout);
 
-  if (!result || !result.success) {
+  if (!message) {
     return c.json({ message: "Message not added" }, 500);
   }
 
-  return c.json({ message: result.message }, 201);
+  return c.json({ message: "Message added successfully" }, 201);
 };
 
 export const addBatch: AppRouteHandler<AddBatchRoute> = async (c: any) => {
   const messages = c.req.valid("json");
   const { custom_ack_timeout } = c.req.valid("query");
-  const result = await queue.enqueueBatch(messages, custom_ack_timeout);
-  
-  // Type guard to ensure result is the expected object
-  if (typeof result !== 'object' || result === null) {
-    return c.json({ message: 'Unexpected error processing batch' }, 500);
-  }
-  
-  if (!result.success && result.enqueued_count === 0) {
-    return c.json({ message: result.message }, 500);
-  }
-  
-  return c.json({ message: result.message }, 201);
+  const batch = await queue.enqueueBatch(messages, custom_ack_timeout);
+  return c.json(
+    {
+      message: `Batch processed: ${batch}/${messages.length} messages enqueued`,
+    },
+    201
+  );
 };
 
 export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
@@ -219,25 +213,5 @@ export const updateConfiguration: AppRouteHandler<UpdateConfigurationRoute> = as
       return c.json({ message: error.message }, 400);
     }
     return c.json({ message: "Failed to update configuration" }, 500);
-  }
-};
-
-export const archiveMessage: AppRouteHandler<any> = async (c: any) => {
-  try {
-    const { messageId } = c.req.param();
-    const { queueType } = await c.req.json();
-    
-    if (!messageId) {
-      return c.json({ message: "Message ID is required" }, 400);
-    }
-    
-    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
-      return c.json({ message: "Valid source queue type is required (main, processing, dead)" }, 400);
-    }
-    
-    const result = await queue.archiveMessage(messageId, queueType);
-    return c.json(result, 200);
-  } catch (error: any) {
-    return c.json({ message: error.message || "Failed to archive message" }, 500);
   }
 };

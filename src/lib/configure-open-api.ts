@@ -1,4 +1,4 @@
-import type { AppOpenAPI } from "../config/types";
+import type { AppOpenAPI } from "@/config/types";
 import { apiReference } from "@scalar/hono-api-reference";
 export default function configureOpenApi(app: AppOpenAPI) {
   app.doc("/doc", {

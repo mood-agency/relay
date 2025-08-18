@@ -1,0 +1,296 @@
+lockVersion: 2.0.0
+id: 2a852076-444c-4983-8ff1-62860e0bc051
+management:
+  docChecksum: ab584c7710ae6c7a823de35a90bc4693
+  docVersion: 1.0.0
+  speakeasyVersion: 1.596.0
+  generationVersion: 2.672.0
+  releaseVersion: 0.0.4
+  configChecksum: 3e8b7ab8ed040df33a73d8d8e0cda4cc
+features:
+  python:
+    additionalDependencies: 1.0.0
+    core: 5.19.6
+    defaultEnabledRetries: 0.2.0
+    enumUnions: 0.1.0
+    envVarSecurityUsage: 0.3.2
+    flatRequests: 1.0.1
+    flattening: 3.1.1
+    globalSecurityCallbacks: 1.0.0
+    globalServerURLs: 3.1.1
+    methodArguments: 1.0.2
+    nullables: 1.0.1
+    responseFormat: 1.0.1
+    retries: 3.0.2
+    sdkHooks: 1.1.0
+    unions: 3.0.4
+generatedFiles:
+  - .gitattributes
+  - .vscode/settings.json
+  - USAGE.md
+  - docs/errors/deletequeuemessagemessageidbadrequesterror.md
+  - docs/errors/deletequeuemessagemessageidinternalservererror.md
+  - docs/errors/deletequeuemessagemessageidnotfounderror.md
+  - docs/errors/deletequeuemessagesunprocessableentityerror.md
+  - docs/errors/deletequeuequeuetypeclearbadrequesterror.md
+  - docs/errors/deletequeuequeuetypeclearinternalservererror.md
+  - docs/errors/gethealthinternalservererror.md
+  - docs/errors/getqueueconfiginternalservererror.md
+  - docs/errors/getqueuemessagenotfounderror.md
+  - docs/errors/getqueuemessagesunprocessableentityerror.md
+  - docs/errors/getqueuemessageunprocessableentityerror.md
+  - docs/errors/postqueueackbadrequesterror.md
+  - docs/errors/postqueueackunprocessableentityerror.md
+  - docs/errors/postqueuebatchunprocessableentityerror.md
+  - docs/errors/postqueuemessageinternalservererror.md
+  - docs/errors/postqueuemessageunprocessableentityerror.md
+  - docs/errors/putqueueconfigbadrequesterror.md
+  - docs/errors/putqueueconfiginternalservererror.md
+  - docs/models/archivequeue.md
+  - docs/models/archivequeuemessage.md
+  - docs/models/deadletterqueue.md
+  - docs/models/deadletterqueuemessage.md
+  - docs/models/deletequeuemessagemessageidqueuetype.md
+  - docs/models/deletequeuemessagemessageidrequest.md
+  - docs/models/deletequeuemessagemessageidrequestbody.md
+  - docs/models/deletequeuemessagemessageidresponse.md
+  - docs/models/deletequeuemessageserror.md
+  - docs/models/deletequeuemessagesissue.md
+  - docs/models/deletequeuemessagespath.md
+  - docs/models/deletequeuemessagesrequest.md
+  - docs/models/deletequeuemessagesresponse.md
+  - docs/models/deletequeuequeuetypeclearqueuetype.md
+  - docs/models/deletequeuequeuetypeclearrequest.md
+  - docs/models/deletequeuequeuetypeclearresponse.md
+  - docs/models/gethealthresponse.md
+  - docs/models/getqueueconfigresponse.md
+  - docs/models/getqueuemessageerror.md
+  - docs/models/getqueuemessageissue.md
+  - docs/models/getqueuemessagepath.md
+  - docs/models/getqueuemessagerequest.md
+  - docs/models/getqueuemessageresponse.md
+  - docs/models/getqueuemessageserror.md
+  - docs/models/getqueuemessagesissue.md
+  - docs/models/getqueuemessagespath.md
+  - docs/models/getqueuemessagesrequest.md
+  - docs/models/getqueuemessagesresponse.md
+  - docs/models/getqueuemetricsresponse.md
+  - docs/models/getqueuestatusresponse.md
+  - docs/models/mainqueue.md
+  - docs/models/mainqueuemessage.md
+  - docs/models/metadata.md
+  - docs/models/postqueueackerror.md
+  - docs/models/postqueueackissue.md
+  - docs/models/postqueueackpath.md
+  - docs/models/postqueueackrequest.md
+  - docs/models/postqueueackresponse.md
+  - docs/models/postqueuebatcherror.md
+  - docs/models/postqueuebatchissue.md
+  - docs/models/postqueuebatchpath.md
+  - docs/models/postqueuebatchrequest.md
+  - docs/models/postqueuebatchresponse.md
+  - docs/models/postqueuemessageerror.md
+  - docs/models/postqueuemessageissue.md
+  - docs/models/postqueuemessagepath.md
+  - docs/models/postqueuemessagerequest.md
+  - docs/models/postqueuemessageresponse.md
+  - docs/models/processingqueue.md
+  - docs/models/processingqueuemessage.md
+  - docs/models/putqueueconfigrequest.md
+  - docs/models/putqueueconfigresponse.md
+  - docs/models/requestbody.md
+  - docs/models/utils/retryconfig.md
+  - docs/sdks/queue/README.md
+  - docs/sdks/sdk/README.md
+  - poetry.toml
+  - py.typed
+  - pylintrc
+  - pyproject.toml
+  - scripts/publish.sh
+  - src/openapi/__init__.py
+  - src/openapi/_hooks/__init__.py
+  - src/openapi/_hooks/sdkhooks.py
+  - src/openapi/_hooks/types.py
+  - src/openapi/_version.py
+  - src/openapi/basesdk.py
+  - src/openapi/errors/__init__.py
+  - src/openapi/errors/apierror.py
+  - src/openapi/errors/delete_queue_message_messageid_op.py
+  - src/openapi/errors/delete_queue_messagesop.py
+  - src/openapi/errors/delete_queue_queuetype_clearop.py
+  - src/openapi/errors/get_healthop.py
+  - src/openapi/errors/get_queue_configop.py
+  - src/openapi/errors/get_queue_messageop.py
+  - src/openapi/errors/get_queue_messagesop.py
+  - src/openapi/errors/no_response_error.py
+  - src/openapi/errors/post_queue_ackop.py
+  - src/openapi/errors/post_queue_batchop.py
+  - src/openapi/errors/post_queue_messageop.py
+  - src/openapi/errors/put_queue_configop.py
+  - src/openapi/errors/responsevalidationerror.py
+  - src/openapi/errors/sdkerror.py
+  - src/openapi/httpclient.py
+  - src/openapi/models/__init__.py
+  - src/openapi/models/delete_queue_message_messageid_op.py
+  - src/openapi/models/delete_queue_messagesop.py
+  - src/openapi/models/delete_queue_queuetype_clearop.py
+  - src/openapi/models/get_healthop.py
+  - src/openapi/models/get_queue_configop.py
+  - src/openapi/models/get_queue_messageop.py
+  - src/openapi/models/get_queue_messagesop.py
+  - src/openapi/models/get_queue_metricsop.py
+  - src/openapi/models/get_queue_statusop.py
+  - src/openapi/models/post_queue_ackop.py
+  - src/openapi/models/post_queue_batchop.py
+  - src/openapi/models/post_queue_messageop.py
+  - src/openapi/models/put_queue_configop.py
+  - src/openapi/py.typed
+  - src/openapi/queue.py
+  - src/openapi/sdk.py
+  - src/openapi/sdkconfiguration.py
+  - src/openapi/types/__init__.py
+  - src/openapi/types/basemodel.py
+  - src/openapi/utils/__init__.py
+  - src/openapi/utils/annotations.py
+  - src/openapi/utils/datetimes.py
+  - src/openapi/utils/enums.py
+  - src/openapi/utils/eventstreaming.py
+  - src/openapi/utils/forms.py
+  - src/openapi/utils/headers.py
+  - src/openapi/utils/logger.py
+  - src/openapi/utils/metadata.py
+  - src/openapi/utils/queryparams.py
+  - src/openapi/utils/requestbodies.py
+  - src/openapi/utils/retries.py
+  - src/openapi/utils/security.py
+  - src/openapi/utils/serializers.py
+  - src/openapi/utils/unmarshal_json_response.py
+  - src/openapi/utils/url.py
+  - src/openapi/utils/values.py
+examples:
+  get_/queue/message:
+    speakeasy-default-get-/queue/message:
+      responses:
+        "200":
+          application/json: {"id": "<id>", "type": "<value>", "created_at": 5734.29, "attempt_count": 5705.67, "dequeued_at": 1768.03, "last_error": null, "processing_duration": 302.4}
+        "404":
+          application/json: {"message": "<value>"}
+        "422":
+          application/json: {"success": false, "error": {"issues": [], "name": "<value>"}}
+  post_/queue/message:
+    speakeasy-default-post-/queue/message:
+      requestBody:
+        application/json: {"type": "<value>"}
+      responses:
+        "201":
+          application/json: {"message": "<value>"}
+        "422":
+          application/json: {"success": false, "error": {"issues": [{"code": "invalid_type", "path": ["type"], "message": "Required"}], "name": "ZodError"}}
+        "500":
+          application/json: {"message": "<value>"}
+  post_/queue/batch:
+    speakeasy-default-post-/queue/batch:
+      requestBody:
+        application/json: []
+      responses:
+        "201":
+          application/json: {"message": "<value>"}
+        "422":
+          application/json: {"success": false, "error": {"issues": [], "name": "<value>"}}
+  post_/queue/ack:
+    speakeasy-default-post-/queue/ack:
+      requestBody:
+        application/json: {"id": "<id>"}
+      responses:
+        "200":
+          application/json: {"message": "<value>"}
+        "400":
+          application/json: {"message": "<value>"}
+        "422":
+          application/json: {"success": false, "error": {"issues": [{"code": "invalid_type", "path": ["id"], "message": "Required"}], "name": "ZodError"}}
+  get_/queue/metrics:
+    speakeasy-default-get-/queue/metrics:
+      responses:
+        "200":
+          application/json: {"totalMessages": 3617.97, "totalMessagesProcessed": 8725.53, "totalMessagesFailed": 4582.86, "totalMessagesAcknowledged": 2994.51, "totalMessagesRequeued": 6402.24}
+  get_/health:
+    speakeasy-default-get-/health:
+      responses:
+        "200":
+          application/json: {"status": "<value>"}
+        "500":
+          application/json: {"status": "<value>"}
+  get_/queue/status:
+    speakeasy-default-get-/queue/status:
+      responses:
+        "200":
+          application/json: {"mainQueue": {"name": "<value>", "length": 8259.86, "messages": [{"id": "<id>", "type": "<value>", "created_at": 1129.26, "attempt_count": 9367.16, "dequeued_at": 953.01, "last_error": "<value>", "processing_duration": 5143.2}]}, "processingQueue": {"name": "<value>", "length": 2948.52, "messages": []}, "deadLetterQueue": {"name": "<value>", "length": 6386.22, "messages": [{"id": "<id>", "type": "<value>", "created_at": 5276.18, "attempt_count": 945.83, "dequeued_at": 5621.58, "last_error": "<value>", "processing_duration": 2195.06}]}, "archiveQueue": {"name": "<value>", "length": 7015.47, "messages": []}, "metadata": {"totalProcessed": 7726.31, "totalFailed": 3049.06}, "availableTypes": ["<value 1>"]}
+  get_/queue/messages:
+    speakeasy-default-get-/queue/messages:
+      parameters:
+        query:
+          startTimestamp: "<value>"
+          endTimestamp: "<value>"
+      responses:
+        "200":
+          application/json: [{"id": "<id>", "type": "<value>", "created_at": 9262.11, "attempt_count": 9258.67, "dequeued_at": 425.06, "last_error": "<value>", "processing_duration": 5642.07}]
+        "422":
+          application/json: {"success": false, "error": {"issues": [{"code": "invalid_type", "path": ["startTimestamp"], "message": "Required"}, {"code": "invalid_type", "path": ["endTimestamp"], "message": "Required"}], "name": "ZodError"}}
+  delete_/queue/messages:
+    speakeasy-default-delete-/queue/messages:
+      parameters:
+        query:
+          startTimestamp: "<value>"
+          endTimestamp: "<value>"
+      responses:
+        "200":
+          application/json: {"message": "<value>"}
+        "422":
+          application/json: {"success": false, "error": {"issues": [{"code": "invalid_type", "path": ["startTimestamp"], "message": "Required"}, {"code": "invalid_type", "path": ["endTimestamp"], "message": "Required"}], "name": "ZodError"}}
+  delete_/queue/message/{messageId}:
+    speakeasy-default-delete-/queue/message/{message-id}:
+      parameters:
+        path:
+          messageId: "<id>"
+      requestBody:
+        application/json: {"queueType": "archive"}
+      responses:
+        "200":
+          application/json: {"success": false, "messageId": "<id>", "queueType": "<value>", "message": "<value>"}
+        "400":
+          application/json: {"message": "<value>"}
+        "404":
+          application/json: {"message": "<value>"}
+        "500":
+          application/json: {"message": "<value>"}
+  delete_/queue/{queueType}/clear:
+    speakeasy-default-delete-/queue/{queue-type}/clear:
+      parameters:
+        path:
+          queueType: "dead"
+      responses:
+        "200":
+          application/json: {"success": true, "queueType": "<value>", "clearedCount": 1732.1, "message": "<value>"}
+        "400":
+          application/json: {"message": "<value>"}
+        "500":
+          application/json: {"message": "<value>"}
+  get_/queue/config:
+    speakeasy-default-get-/queue/config:
+      responses:
+        "200":
+          application/json: {"ack_timeout_seconds": 5856.53, "max_attempts": 4998.12, "batch_size": 5691.25, "enable_message_encryption": false, "queue_name": "<value>", "processing_queue_name": "<value>", "dead_letter_queue_name": "<value>", "archive_queue_name": "<value>", "metadata_hash_name": "<value>", "id_counter_key": "<value>"}
+        "500":
+          application/json: {"message": "<value>"}
+  put_/queue/config:
+    speakeasy-default-put-/queue/config:
+      requestBody:
+        application/json: {}
+      responses:
+        "200":
+          application/json: {"ack_timeout_seconds": 6863.99, "max_attempts": 8792.28, "batch_size": 7725.66, "enable_message_encryption": true, "queue_name": "<value>", "processing_queue_name": "<value>", "dead_letter_queue_name": "<value>", "archive_queue_name": "<value>", "metadata_hash_name": "<value>", "id_counter_key": "<value>"}
+        "400":
+          application/json: {"message": "<value>"}
+        "500":
+          application/json: {"message": "<value>"}
+examplesVersion: 1.0.2

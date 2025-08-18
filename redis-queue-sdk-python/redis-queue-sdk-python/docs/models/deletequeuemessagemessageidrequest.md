@@ -1,0 +1,9 @@
+# DeleteQueueMessageMessageIDRequest
+
+
+## Fields
+
+| Field                                                                                                | Type                                                                                                 | Required                                                                                             | Description                                                                                          |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `message_id`                                                                                         | *str*                                                                                                | :heavy_check_mark:                                                                                   | N/A                                                                                                  |
+| `request_body`                                                                                       | [models.DeleteQueueMessageMessageIDRequestBody](../models/deletequeuemessagemessageidrequestbody.md) | :heavy_check_mark:                                                                                   | Queue Type                                                                                           |

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc && node scripts/build.js",
-    "start": "npm run build && node dist/index.js",
+    "start": "npm run build && tsx dist/index.js",
     "test": "vitest"
   },
   "keywords": [],
