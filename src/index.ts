@@ -23,7 +23,7 @@ const testRedisConnection = async () => {
     await redis.ping();
     logger.info("Redis connection successful");
   } catch (error) {
-    logger.error("Redis connection failed:", error);
+    logger.error(`Redis connection failed: ${(error as Error).message}`);
     process.exit(1);
   } finally {
     await redis.quit();

@@ -8,8 +8,9 @@
     "rootDir": "./src",
     "allowJs": true,
     "skipLibCheck": true,
+    "baseUrl": "./src",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./*"]
     }
   },
   "include": ["src/**/*"],

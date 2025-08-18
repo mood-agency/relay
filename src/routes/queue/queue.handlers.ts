@@ -13,10 +13,10 @@ import type {
   UpdateConfigurationRoute,
   DequeuedMessage,
 } from "./queue.routes";
-import type { AppRouteHandler } from "@/config/types";
+import type { AppRouteHandler } from "../../config/types";
 
-import env from "@/config/env";
-import { OptimizedRedisQueue, QueueConfig } from "@/lib/redis.js";
+import env from "../../config/env";
+import { OptimizedRedisQueue, QueueConfig } from "../../lib/redis.js";
 interface QueueConfigI {
   redis_host: string;
   redis_port: number;
