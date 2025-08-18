@@ -25,7 +25,8 @@ class QueueTester:
                     "id": f"task_{i+1}",
                     "user_id": f"user_{random.randint(1, 100)}",
                     "data": f"Sample data for task {i+1}",
-                    "timestamp": time.time()
+                    "timestamp": time.time(),
+                    "custom_ack_timeout": random.randint(100, 300)
                 },
                 "priority": random.choice([0, 0, 0, 1, 2])  # Mostly priority 0, some higher
             }

@@ -407,6 +407,31 @@
             transform: scale(0.95);
         }
 
+        .archive-btn {
+            background: transparent;
+            border: none;
+            color: hsl(var(--muted-foreground));
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: calc(var(--radius) - 2px);
+            transition: all 0.15s ease-in-out;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.5rem;
+            height: 1.5rem;
+            margin-right: 0.25rem;
+        }
+
+        .archive-btn:hover {
+            background: hsl(var(--primary) / 0.1);
+            color: hsl(var(--primary));
+        }
+
+        .archive-btn:active {
+            transform: scale(0.95);
+        }
+
         .empty-table {
             text-align: center;
             padding: 60px 20px;
@@ -437,35 +462,9 @@
             /* margin-bottom: 2rem; */
         }
 
-        .stats-card {
-            background: hsl(var(--card));
-            border: 1px solid hsl(var(--border));
-            border-radius: var(--radius);
-            padding: 1.5rem;
-            text-align: center;
-            /* box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); */
-            margin-bottom: 1rem;
-        }
 
-        .stat-item {
-            text-align: center;
-        }
 
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: hsl(var(--foreground));
-            margin-bottom: 0.5rem;
-            line-height: 1;
-        }
 
-        .stat-label {
-            font-size: 0.75rem;
-            color: hsl(var(--muted-foreground));
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.025em;
-        }
 
         .loading {
             text-align: center;
@@ -674,6 +673,241 @@
         .animate-spin {
             animation: spin 1s linear infinite;
         }
+
+        /* Timeout status styles */
+        .timeout-normal {
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        .timeout-warning {
+            color: #f59e0b;
+            font-weight: 600;
+        }
+
+        .timeout-urgent {
+            color: #ef4444;
+            font-weight: 700;
+            animation: pulse 1s infinite;
+        }
+
+        .timeout-expired {
+            color: #dc2626;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+        }
+
+        .timeout-loading {
+            color: #6b7280;
+            font-style: italic;
+            font-weight: 500;
+        }
+
+        .timeout-error {
+            color: #dc2626;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: hsl(var(--background));
+            border: 1px solid hsl(var(--border));
+            border-radius: var(--radius);
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid hsl(var(--border));
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: hsl(var(--foreground));
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: hsl(var(--muted-foreground));
+            padding: 4px;
+            border-radius: var(--radius);
+        }
+
+        .modal-close:hover {
+            background: hsl(var(--muted));
+            color: hsl(var(--foreground));
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        /* Configuration Styles */
+        .config-section {
+            padding: 0;
+        }
+
+        .config-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .config-card h4 {
+            margin: 0 0 20px 0;
+            color: #333;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .config-item label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #374151;
+        }
+
+        .config-item input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .config-item small {
+            display: block;
+            color: #6b7280;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .config-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-start;
+        }
+
+
+
+        .message-form {
+            max-width: 600px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #374151;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .form-group small {
+            color: #6b7280;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .timeout-presets {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .config-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .modal-content {
+                width: 95%;
+                max-height: 90vh;
+            }
+            
+            .modal-header {
+                padding: 15px;
+            }
+            
+            .modal-body {
+                padding: 15px;
+            }
+        }
     </style>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 </head>
@@ -685,6 +919,7 @@
                 <button class="btn btn-primary" onclick="refreshData()" aria-label="Refresh queue data"><i data-lucide="refresh-cw"></i> Refresh Now</button>
                 <button class="btn btn-secondary" id="autoRefreshBtn" onclick="toggleAutoRefresh()" aria-label="Toggle auto-refresh"><i data-lucide="play"></i> Auto Refresh (5s)</button>
                 <button class="btn btn-outline" onclick="clearAllQueues()" aria-label="Clear all queues"><i data-lucide="trash-2"></i> Clear All Queues</button>
+                <button class="btn btn-secondary" onclick="openConfigModal()" aria-label="Open configuration"><i data-lucide="settings"></i> Config</button>
             </div>
         </div>
 
@@ -692,28 +927,7 @@
         <div id="loading" class="loading">Loading queue data...</div>
 
         <div id="dashboard" style="display: none;">
-            <div class="stats-card">
-               <div class="stats-grid">
-                   
-                 
-                    <div class="stat-item">
-                        <div class="stat-value" id="totalQueued">0</div>
-                        <div class="stat-label">Currently Queued</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="totalProcessing">0</div>
-                        <div class="stat-label">Currently Processing</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="totalProcessed">0</div>
-                        <div class="stat-label">Total Processed</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="totalFailed">0</div>
-                        <div class="stat-label">Total Failed</div>
-                    </div>
-                </div>
-            </div>
+
 
             <div class="tabs-container">
                 <div class="tabs-header">
@@ -733,6 +947,7 @@
                         <i data-lucide="archive"></i> Archive Queue
                         <span class="tab-badge" id="archiveQueueBadge">0</span>
                     </button>
+
                 </div>
 
                 
@@ -768,7 +983,7 @@
                                     <th>Type</th>
                                     <th>Priority</th>
                                     <th>Payload</th>
-                                    <th>Created</th>
+                                    <th>Addded At</th>
                                     <th>Attempts</th>
                                     <th>Actions</th>
                                 </tr>
@@ -812,8 +1027,9 @@
                                     <th>Type</th>
                                     <th>Priority</th>
                                     <th>Payload</th>
-                                    <th>Processing Since</th>
+                                    <th>Added At</th>
                                     <th>Attempts</th>
+                                    <th>Timeout In</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -912,15 +1128,103 @@
                         </table>
                     </div>
                 </div>
+
+
             </div>
         </div>
 
         <div class="last-updated" id="lastUpdated"></div>
     </div>
 
+    <!-- Configuration Modal -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i data-lucide="settings"></i> Queue Configuration</h3>
+                <button class="modal-close" onclick="closeConfigModal()" aria-label="Close modal">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="config-section">
+                    <!-- Global Configuration -->
+                    <div class="config-card">
+                        <h4>Global Settings</h4>
+                        <div class="config-grid">
+                            <div class="config-item">
+                                <label for="ackTimeout">ACK Timeout (seconds)</label>
+                                <input type="number" id="ackTimeout" min="1" max="3600" placeholder="30">
+                                <small>How long to wait for message acknowledgment</small>
+                            </div>
+                            <div class="config-item">
+                                <label for="maxAttempts">Max Attempts</label>
+                                <input type="number" id="maxAttempts" min="1" max="10" placeholder="3">
+                                <small>Maximum retry attempts before dead letter queue</small>
+                            </div>
+                            <div class="config-item">
+                                <label for="batchSize">Batch Size</label>
+                                <input type="number" id="batchSize" min="1" max="1000" placeholder="100">
+                                <small>Default batch processing size</small>
+                            </div>
+                        </div>
+                        <div class="config-actions">
+                            <button class="btn btn-primary" onclick="saveGlobalConfig()">
+                                <i data-lucide="save"></i> Save Configuration
+                            </button>
+                            <button class="btn btn-secondary" onclick="loadCurrentConfig()">
+                                <i data-lucide="refresh-cw"></i> Reload
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Add Message with Custom Timeout -->
+                    <div class="config-card">
+                        <h4>Add Message with Custom Timeout</h4>
+                        <div class="message-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="messageType">Message Type</label>
+                                    <input type="text" id="messageType" placeholder="e.g., email_send" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="messagePriority">Priority</label>
+                                    <select id="messagePriority">
+                                        <option value="0">Normal (0)</option>
+                                        <option value="1">High (1)</option>
+                                        <option value="2">Critical (2)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="customTimeout">Custom Timeout (seconds)</label>
+                                    <input type="number" id="customTimeout" min="1" max="3600" placeholder="Use global default">
+                                    <small>Leave empty to use global timeout</small>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="messagePayload">Payload (JSON)</label>
+                                <textarea id="messagePayload" rows="4" placeholder='{"key": "value"}'></textarea>
+                            </div>
+                            <div class="form-actions">
+                                <button class="btn btn-primary" onclick="addCustomMessage()">
+                                    <i data-lucide="plus"></i> Add Message
+                                </button>
+                                <button class="btn btn-secondary" onclick="clearMessageForm()">
+                                    <i data-lucide="x"></i> Clear
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let autoRefreshInterval = null;
         let isAutoRefresh = false;
+        let currentConfig = null; // Store current queue configuration
         
         // Pagination state
         const paginationState = {
@@ -1128,7 +1432,7 @@
 
         function createTableRow(message, queueType) {
             const row = document.createElement('tr');
-            const truncatedId = message.id ? message.id.substring(0, 12) + '...' : 'N/A';
+            const truncatedId = message.id ? message.id.substring(0, 12) : 'N/A';
             const priority = message.priority || 0;
             const priorityClass = priority === 0 ? 'priority-0' : priority === 1 ? 'priority-1' : 'priority-2';
             const fullMessageId = message.id || 'unknown';
@@ -1144,18 +1448,27 @@
                     <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
                     <td class="message-meta-cell">${formatTimestamp(message.created_at)}</td>
                     <td class="message-meta-cell">${message.attempt_count || 0}</td>
-                    <td><button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}"><i data-lucide="trash-2"></i></button></td>
+                    <td>
+                        <button class="archive-btn" onclick="archiveMessage('${fullMessageId}', '${queueType}')" aria-label="Archive message ${fullMessageId}" title="Archive message"><i data-lucide="archive"></i></button>
+                        <button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}" title="Delete message"><i data-lucide="trash-2"></i></button>
+                    </td>
                 `;
             } else if (queueType === 'processing') {
+                console.log(message)
+                const timeoutRemaining = calculateTimeoutRemaining(message);
                 columns = `
                     <td><input type="checkbox" class="message-checkbox" data-message-id="${fullMessageId}" onchange="updateBulkDeleteButton('${queueType}')"></td>
                     <td class="message-id-cell">${truncatedId}</td>
                     <td><span class="message-type-cell">${message.type || 'Unknown'}</span></td>
                     <td><span class="priority-badge ${priorityClass}">${priority}</span></td>
                     <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
-                    <td class="message-meta-cell">${formatTimestamp(message.processing_started_at || message.created_at)}</td>
+                    <td class="message-meta-cell">${formatTimestamp(message.dequeued_at || message.created_at)}</td>
                     <td class="message-meta-cell">${message.attempt_count || 0}</td>
-                    <td><button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}"><i data-lucide="trash-2"></i></button></td>
+                    <td class="message-meta-cell">${timeoutRemaining}</td>
+                    <td>
+                        <button class="archive-btn" onclick="archiveMessage('${fullMessageId}', '${queueType}')" aria-label="Archive message ${fullMessageId}" title="Archive message"><i data-lucide="archive"></i></button>
+                        <button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}" title="Delete message"><i data-lucide="trash-2"></i></button>
+                    </td>
                 `;
             } else if (queueType === 'dead') {
                 columns = `
@@ -1166,7 +1479,10 @@
                     <td class="message-payload-cell">${formatPayload(message.payload || {})}</td>
                     <td class="message-meta-cell">${formatTimestamp(message.failed_at || message.created_at)}</td>
                     <td class="message-meta-cell">${message.error_message || 'Unknown error'}</td>
-                    <td><button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}"><i data-lucide="trash-2"></i></button></td>
+                    <td>
+                        <button class="archive-btn" onclick="archiveMessage('${fullMessageId}', '${queueType}')" aria-label="Archive message ${fullMessageId}" title="Archive message"><i data-lucide="archive"></i></button>
+                        <button class="delete-btn" onclick="deleteMessage('${fullMessageId}', '${queueType}')" aria-label="Delete message ${fullMessageId}" title="Delete message"><i data-lucide="trash-2"></i></button>
+                    </td>
                 `;
             } else if (queueType === 'archive') {
                 columns = `
@@ -1217,12 +1533,7 @@
 
 
 
-        function updateStats(data) {
-            document.getElementById('totalProcessed').textContent = data.metadata.totalProcessed;
-            document.getElementById('totalFailed').textContent = data.metadata.totalFailed;
-            document.getElementById('totalQueued').textContent = data.mainQueue.length;
-            document.getElementById('totalProcessing').textContent = data.processingQueue.length;
-        }
+
 
         function showError(message) {
             const errorContainer = document.getElementById('error-container');
@@ -1240,12 +1551,25 @@
                 document.getElementById('loading').style.display = 'block';
                 document.getElementById('dashboard').style.display = 'none';
 
+                // Always try to load configuration to ensure it's available for timeout calculations
+                try {
+                    const configResponse = await fetch('/api/queue/config');
+                    if (configResponse.ok) {
+                        currentConfig = await configResponse.json();
+                        console.log('Configuration loaded:', currentConfig);
+                    } else {
+                        console.warn('Failed to load configuration:', configResponse.status);
+                    }
+                } catch (error) {
+                    console.warn('Could not load configuration for timeout calculations:', error);
+                }
+
                 const data = await fetchQueueStatus();
                 
                 console.log('Received queue status data:', data);
                 console.log('Archive queue exists:', !!data.archiveQueue);
                 
-                updateStats(data);
+
                 
                 updateQueueTable('main', 'mainQueueBadge', data.mainQueue.messages, 'main');
                 updateQueueTable('processing', 'processingQueueBadge', data.processingQueue.messages, 'processing');
@@ -1339,6 +1663,58 @@
                 showError(`Failed to delete message: ${error.message}`);
             } finally {
                 restoreButtonState(deleteBtn);
+            }
+        }
+
+        async function archiveMessage(messageId, queueType) {
+            const archiveBtn = document.querySelector(`button[onclick="archiveMessage('${messageId}', '${queueType}')"]`);
+            if (!confirm(`Are you sure you want to archive this message from the ${queueType} queue?`)) {
+                return;
+            }
+
+            setButtonLoading(archiveBtn, 'Archiving...');
+            
+            try {
+                const response = await fetch(`/api/queue/message/${messageId}/archive`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ queueType })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    // Show success message briefly
+                    const successDiv = document.createElement('div');
+                    successDiv.style.cssText = `
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        background: hsl(var(--primary));
+                        color: hsl(var(--primary-foreground));
+                        padding: 1rem 1.5rem;
+                        border-radius: var(--radius);
+                        z-index: 1000;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    `;
+                    successDiv.textContent = `📁 Message archived successfully`;
+                    document.body.appendChild(successDiv);
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(successDiv);
+                    }, 3000);
+                    
+                    // Refresh the data to show updated queues
+                    await refreshData();
+                } else {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to archive message');
+                }
+            } catch (error) {
+                showError(`Failed to archive message: ${error.message}`);
+            } finally {
+                restoreButtonState(archiveBtn);
             }
         }
 
@@ -1564,6 +1940,231 @@
             lucide.createIcons();
         }
 
+        // Timeout calculation functions
+        function calculateTimeoutRemaining(message) {
+            // Check if configuration is available
+            if (!currentConfig) {
+                console.warn('Configuration not loaded yet for timeout calculation');
+                return '<span class="timeout-loading">Loading...</span>';
+            }
+            
+            // Check if message has dequeued_at timestamp
+            if (!message.dequeued_at) {
+                console.warn('Message missing dequeued_at timestamp:', message);
+                return '<span class="timeout-error">No timestamp</span>';
+            }
+            
+            // Use custom timeout if available, otherwise use global timeout
+            // Check both message.custom_ack_timeout and message.payload.custom_ack_timeout
+            const customTimeout = message.custom_ack_timeout || (message.payload && message.payload.custom_ack_timeout);
+            const ackTimeout = customTimeout || currentConfig.ack_timeout_seconds;
+            console.log("Custom timeout found:", customTimeout)
+            
+            if (!ackTimeout) {
+                console.warn('No timeout configuration available');
+                return '<span class="timeout-error">No timeout config</span>';
+            }
+            
+            const dequeuedAt = message.dequeued_at * 1000; // Convert to milliseconds
+            const timeoutAt = dequeuedAt + (ackTimeout * 1000);
+            const now = Date.now();
+            const remainingMs = timeoutAt - now;
+            
+            if (remainingMs <= 0) {
+                return '<span class="timeout-expired">Expired</span>';
+            }
+            
+            const remainingSeconds = Math.floor(remainingMs / 1000);
+            const minutes = Math.floor(remainingSeconds / 60);
+            const seconds = remainingSeconds % 60;
+            
+            if (minutes > 0) {
+                return `${minutes}m ${seconds}s`;
+            } else {
+                const urgencyClass = remainingSeconds <= 30 ? 'timeout-urgent' : remainingSeconds <= 120 ? 'timeout-warning' : 'timeout-normal';
+                return `<span class="${urgencyClass}">${seconds}s</span>`;
+            }
+        }
+
+        // Modal functions
+        function openConfigModal() {
+            const modal = document.getElementById('configModal');
+            modal.classList.add('show');
+            // Load current configuration when modal opens
+            loadCurrentConfig();
+        }
+
+        function closeConfigModal() {
+            const modal = document.getElementById('configModal');
+            modal.classList.remove('show');
+        }
+
+        // Close modal when clicking outside
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('configModal');
+            if (event.target === modal) {
+                closeConfigModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeConfigModal();
+            }
+        });
+
+        // Update timeout displays every 5 seconds for processing queue
+        setInterval(() => {
+            const processingRows = document.querySelectorAll('#processingQueueBody tr');
+            processingRows.forEach(row => {
+                const timeoutCell = row.cells[7]; // Timeout column is index 7
+                if (timeoutCell && currentConfig) {
+                    // Extract message data from the row to recalculate timeout
+                    const messageId = row.querySelector('.message-checkbox')?.dataset.messageId;
+                    if (messageId) {
+                        // Find the message in our stored data
+                        const processingState = paginationState.processing;
+                        const message = processingState.allMessages.find(msg => msg.id === messageId);
+                        if (message) {
+                            const newTimeout = calculateTimeoutRemaining(message);
+                            timeoutCell.innerHTML = newTimeout;
+                        }
+                    }
+                }
+            });
+        }, 1000); // Update every 5 seconds
+
+        // Configuration functions
+        async function loadCurrentConfig() {
+            try {
+                const response = await fetch('/api/queue/config');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const config = await response.json();
+                currentConfig = config; // Update global config for timeout calculations
+                
+                document.getElementById('ackTimeout').value = config.ack_timeout_seconds;
+                document.getElementById('maxAttempts').value = config.max_attempts;
+                document.getElementById('batchSize').value = config.batch_size;
+                
+
+            } catch (error) {
+                showError(`Failed to load configuration: ${error.message}`);
+            }
+        }
+
+        async function saveGlobalConfig() {
+            try {
+                const ackTimeout = parseInt(document.getElementById('ackTimeout').value);
+                const maxAttempts = parseInt(document.getElementById('maxAttempts').value);
+                const batchSize = parseInt(document.getElementById('batchSize').value);
+
+                if (!ackTimeout || !maxAttempts || !batchSize) {
+                    showError('Please fill in all configuration fields');
+                    return;
+                }
+
+                const updates = {
+                    ack_timeout_seconds: ackTimeout,
+                    max_attempts: maxAttempts,
+                    batch_size: batchSize
+                };
+
+                const response = await fetch('/api/queue/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(updates)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || `HTTP ${response.status}`);
+                }
+
+                showSuccess('Configuration saved successfully');
+            } catch (error) {
+                showError(`Failed to save configuration: ${error.message}`);
+            }
+        }
+
+
+
+        function setCustomTimeout(seconds) {
+            document.getElementById('customTimeout').value = seconds;
+        }
+
+        async function addCustomMessage() {
+            try {
+                const messageType = document.getElementById('messageType').value;
+                const messagePriority = parseInt(document.getElementById('messagePriority').value);
+                const customTimeout = document.getElementById('customTimeout').value;
+                const messagePayload = document.getElementById('messagePayload').value;
+
+                if (!messageType) {
+                    showError('Message type is required');
+                    return;
+                }
+
+                let payload = {};
+                if (messagePayload) {
+                    try {
+                        payload = JSON.parse(messagePayload);
+                    } catch (e) {
+                        showError('Invalid JSON in payload');
+                        return;
+                    }
+                }
+
+                const message = {
+                    type: messageType,
+                    payload: payload,
+                    priority: messagePriority
+                };
+
+                if (customTimeout) {
+                    message.custom_ack_timeout = parseInt(customTimeout);
+                }
+
+                const response = await fetch('/api/queue/message', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(message)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || `HTTP ${response.status}`);
+                }
+
+                showSuccess(`Message added successfully${customTimeout ? ` with ${customTimeout}s timeout` : ''}`);
+                clearMessageForm();
+                refreshData(); // Refresh the dashboard to show the new message
+            } catch (error) {
+                showError(`Failed to add message: ${error.message}`);
+            }
+        }
+
+        function clearMessageForm() {
+            document.getElementById('messageType').value = '';
+            document.getElementById('messagePriority').value = '0';
+            document.getElementById('customTimeout').value = '';
+            document.getElementById('messagePayload').value = '';
+        }
+
+        function showSuccess(message) {
+            const errorContainer = document.getElementById('error-container');
+            errorContainer.innerHTML = `<div style="color: green; padding: 10px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; margin: 10px 0;">✅ ${message}</div>`;
+            setTimeout(() => {
+                errorContainer.innerHTML = '';
+            }, 5000);
+        }
+
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', () => {
             // Ensure all bulk delete buttons are hidden initially
@@ -1575,6 +2176,9 @@
             });
             
             refreshData();
+            
+
+            
             // Initialize Lucide icons
             lucide.createIcons();
         });

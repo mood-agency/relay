@@ -23,6 +23,7 @@ export const QueueMessageSchema = z.object({
   type: z.string(),
   payload: z.any(),
   priority: z.number().optional(),
+  custom_ack_timeout: z.number().positive().optional(),
 });
 
 export type QueueMessage = z.infer<typeof QueueMessageSchema>;
@@ -73,6 +74,9 @@ export const addBatch = createRoute({
   method: "post",
   tags,
   request: {
+    query: z.object({
+      custom_ack_timeout: z.coerce.number().positive().optional(),
+    }),
     body: jsonContentRequired(z.array(QueueMessageSchema), "Queue Message"),
   },
   responses: {
@@ -246,7 +250,7 @@ export const getQueueStatus = createRoute({
 export type GetQueueStatusRoute = typeof getQueueStatus;
 
 export const deleteMessage = createRoute({
-  path: "/queue/message/:messageId",
+  path: "/queue/message/{messageId}",
   method: "delete",
   tags,
   request: {
@@ -277,7 +281,7 @@ export const deleteMessage = createRoute({
 });
 
 export const clearQueue = createRoute({
-  path: "/queue/:queueType/clear",
+  path: "/queue/{queueType}/clear",
   method: "delete",
   tags,
   request: {
@@ -300,5 +304,103 @@ export const clearQueue = createRoute({
   },
 });
 
+export const getConfiguration = createRoute({
+  path: "/queue/config",
+  method: "get",
+  tags,
+  responses: {
+    200: jsonContent(
+      z.object({
+        ack_timeout_seconds: z.number(),
+        max_attempts: z.number(),
+        batch_size: z.number(),
+        enable_message_encryption: z.boolean(),
+        queue_name: z.string(),
+        processing_queue_name: z.string(),
+        dead_letter_queue_name: z.string(),
+        archive_queue_name: z.string(),
+        metadata_hash_name: z.string(),
+        id_counter_key: z.string(),
+      }),
+      "Queue Configuration"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const updateConfiguration = createRoute({
+  path: "/queue/config",
+  method: "put",
+  tags,
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            ack_timeout_seconds: z.number().positive().optional(),
+            max_attempts: z.number().positive().optional(),
+            batch_size: z.number().positive().optional(),
+          }),
+        },
+      },
+      description: "Configuration Updates",
+      required: true,
+    },
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        ack_timeout_seconds: z.number(),
+        max_attempts: z.number(),
+        batch_size: z.number(),
+        enable_message_encryption: z.boolean(),
+        queue_name: z.string(),
+        processing_queue_name: z.string(),
+        dead_letter_queue_name: z.string(),
+        archive_queue_name: z.string(),
+        metadata_hash_name: z.string(),
+        id_counter_key: z.string(),
+      }),
+      "Updated Configuration"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Validation Error"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const archiveMessage = createRoute({
+  path: "/queue/message/{messageId}/archive",
+  method: "post",
+  tags,
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        queueType: z.enum(["main", "processing", "dead"]),
+      }),
+      "Source Queue Type"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        messageId: z.string(),
+        sourceQueue: z.string(),
+        message: z.string(),
+      }),
+      "Message Archived"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    404: jsonContent(z.object({ message: z.string() }), "Message not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type DeleteMessageRoute = typeof deleteMessage;
 export type ClearQueueRoute = typeof clearQueue;
+export type GetConfigurationRoute = typeof getConfiguration;
+export type UpdateConfigurationRoute = typeof updateConfiguration;
+export type ArchiveMessageRoute = typeof archiveMessage;

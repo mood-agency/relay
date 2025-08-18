@@ -21,16 +21,40 @@ const mainApp = createApp();
 // Serve static files from public directory
 mainApp.use('/public/*', serveStatic({ root: './' }));
 
-// Dashboard route
-mainApp.get('/dashboard', (c) => {
+// Dashboard route handler
+const serveDashboard = (c: any) => {
   try {
-    const dashboardPath = join(process.cwd(), 'public', 'dashboard.html');
-    const dashboardContent = readFileSync(dashboardPath, 'utf-8');
+    // Try multiple possible paths for the dashboard file
+    const possiblePaths = [
+      join(process.cwd(), 'public', 'dashboard.html'),  // Development
+      join(__dirname, '..', 'public', 'dashboard.html'), // Production (dist folder)
+      join(process.cwd(), 'dist', 'public', 'dashboard.html'), // Alternative production path
+    ];
+    
+    let dashboardContent = '';
+    
+    for (const path of possiblePaths) {
+      try {
+        dashboardContent = readFileSync(path, 'utf-8');
+        break;
+      } catch (err) {
+        // Continue to next path
+      }
+    }
+    
+    if (!dashboardContent) {
+      return c.text('Dashboard file not found. Tried paths: ' + possiblePaths.join(', '), 404);
+    }
+    
     return c.html(dashboardContent);
   } catch (error) {
-    return c.text('Dashboard not found', 404);
+    return c.text('Dashboard error: ' + (error as Error).message, 500);
   }
-});
+};
+
+// Dashboard routes - handle both /dashboard and /dashboard.html
+mainApp.get('/dashboard', serveDashboard);
+mainApp.get('/dashboard.html', serveDashboard);
 
 // Root redirect to dashboard
 mainApp.get('/', (c) => {

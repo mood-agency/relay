@@ -62,13 +62,15 @@ class MessageMetadata {
     dequeued_at = null,
     created_at = 0.0,
     last_error = null,
-    processing_duration = 0.0
+    processing_duration = 0.0,
+    custom_ack_timeout = null
   ) {
     this.attempt_count = attempt_count;
     this.dequeued_at = dequeued_at; // timestamp in seconds
     this.created_at = created_at; // timestamp in seconds
     this.last_error = last_error;
     this.processing_duration = processing_duration;
+    this.custom_ack_timeout = custom_ack_timeout; // custom timeout in seconds
   }
 
   static fromObject(data) {
@@ -77,7 +79,8 @@ class MessageMetadata {
       data.dequeued_at,
       data.created_at,
       data.last_error,
-      data.processing_duration
+      data.processing_duration,
+      data.custom_ack_timeout
     );
   }
 }
@@ -211,6 +214,7 @@ class RedisConnectionManager {
       logger.info("Disconnected from Redis.");
     }
   }
+
 }
 
 // --- Optimized Queue System ---
@@ -225,6 +229,10 @@ class OptimizedRedisQueue {
       failed: 0,
       requeued: 0,
     };
+    // Periodically check for and requeue failed messages
+    this.requeueInterval = setInterval(() => {
+      this.requeueFailedMessages().catch(err => logger.error(`Failed to requeue messages: ${err}`));
+    }, this.config.ack_timeout_seconds * 1000);
   }
 
   _serializeMessage(message) {
@@ -271,7 +279,8 @@ class OptimizedRedisQueue {
     }
   }
 
-  async enqueueMessage(messageData, priority = 0) {
+  async enqueueMessage(messageData, priority = 0, customAckTimeout = null) {
+    customAckTimeout = messageData.custom_ack_timeout || customAckTimeout;
     try {
       if (!messageData.id) {
         messageData.id = await this._generateIncrementalId();
@@ -280,6 +289,27 @@ class OptimizedRedisQueue {
         messageData.created_at = Date.now() / 1000; // seconds timestamp
       }
       messageData.priority = priority;
+
+      // Store custom timeout in message metadata if provided
+      if (customAckTimeout !== null && customAckTimeout > 0) {
+        const messageId = messageData.id;
+        const metadata = new MessageMetadata(
+          0, // attempt_count
+          null, // dequeued_at
+          messageData.created_at, // created_at
+          null, // last_error
+          0.0, // processing_duration
+          customAckTimeout // custom_ack_timeout
+        );
+        
+        await this.redisManager.redis.hset(
+          this.config.metadata_hash_name,
+          messageId,
+          JSON.stringify(metadata)
+        );
+        
+        logger.info(`Message ${messageId} enqueued with custom timeout: ${customAckTimeout}s`);
+      }
 
       const messageJson = this._serializeMessage(messageData);
 
@@ -299,14 +329,18 @@ class OptimizedRedisQueue {
       logger.info(
         `Message enqueued: ${messageData.id} (priority: ${priority})`
       );
-      return true;
+      return {
+        success: true,
+        id: messageData.id,
+        message: `Message enqueued successfully with ID: ${messageData.id}`
+      };
     } catch (e) {
       logger.error(`Error enqueuing message ${messageData.id || "N/A"}: ${e}`);
       return false;
     }
   }
 
-  async enqueueBatch(messages) {
+  async enqueueBatch(messages, customAckTimeout = null) {
     let successful = 0;
     if (!messages || messages.length === 0) return 0;
 
@@ -318,10 +352,32 @@ class OptimizedRedisQueue {
     }
 
     const pipeline = this.redisManager.pipeline();
+    const metadataPipeline = this.redisManager.pipeline();
+    
     for (const msg of messages) {
       if (typeof msg.created_at === "undefined") {
         msg.created_at = Date.now() / 1000;
       }
+      
+      // Handle per-message or batch-level custom timeout
+      const messageTimeout = msg.custom_ack_timeout || customAckTimeout;
+      if (messageTimeout !== null && messageTimeout > 0) {
+        const metadata = new MessageMetadata(
+          0, // attempt_count
+          null, // dequeued_at
+          msg.created_at, // created_at
+          null, // last_error
+          0.0, // processing_duration
+          messageTimeout // custom_ack_timeout
+        );
+        
+        metadataPipeline.hset(
+          this.config.metadata_hash_name,
+          msg.id,
+          JSON.stringify(metadata)
+        );
+      }
+      
       const messageJson = this._serializeMessage(msg);
       const priority = msg.priority || 0;
 
@@ -333,6 +389,11 @@ class OptimizedRedisQueue {
     }
 
     try {
+      // Execute metadata pipeline first, then message pipeline
+      if (metadataPipeline.length > 0) {
+        await metadataPipeline.exec();
+      }
+      
       const results = await pipeline.exec();
       // Each successful push command in ioredis pipeline returns the new length of the list.
       // We count how many operations were successful (didn't throw an error in the result array).
@@ -344,13 +405,32 @@ class OptimizedRedisQueue {
       });
 
       this._stats.enqueued += successful;
-      logger.info(
-        `Batch processed: ${successful}/${messages.length} messages enqueued`
-      );
-      return successful;
+      
+      const customTimeoutCount = messages.filter(msg => 
+        msg.custom_ack_timeout || customAckTimeout
+      ).length;
+      
+      if (customTimeoutCount > 0) {
+        logger.info(`Batch processed: ${successful}/${messages.length} messages enqueued (${customTimeoutCount} with custom timeout)`);
+      } else {
+        logger.info(`Batch processed: ${successful}/${messages.length} messages enqueued`);
+      }
+      
+      return {
+        success: true,
+        enqueued_count: successful,
+        total_count: messages.length,
+        message: `Batch processed: ${successful}/${messages.length} messages enqueued successfully`
+      };
     } catch (e) {
       logger.error(`Error in batch enqueue: ${e}`);
-      return successful; // return count of those that might have succeeded before error
+      return {
+        success: false,
+        enqueued_count: successful,
+        total_count: messages.length,
+        message: `Batch partially processed: ${successful}/${messages.length} messages enqueued before error`,
+        error: e.message
+      };
     }
   }
 
@@ -369,7 +449,6 @@ class OptimizedRedisQueue {
       const messageData = this._deserializeMessage(messageJson);
       if (!messageData) {
         // Potentially move to DLQ or log an error if deserialization fails after signature check
-        // For now, just returning null as the Python version implies
         await this.redisManager.redis.lrem(
           this.config.processing_queue_name,
           1,
@@ -405,9 +484,13 @@ class OptimizedRedisQueue {
           messageData.created_at || currentTime
         );
       }
+      
+      console.log("metadata", metadata);
 
       metadata.dequeued_at = currentTime;
       metadata.attempt_count += 1;
+
+      console.log("metadata", metadata);
 
       // Store both the metadata and the original JSON string for acknowledgment
       const originalJsonStringField = `${messageId}:original_json_string`;
@@ -426,7 +509,15 @@ class OptimizedRedisQueue {
       logger.info(
         `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count})`
       );
-      return messageData;
+      
+      // Return the complete message with metadata to match DequeuedMessageSchema
+      return {
+        ...messageData,
+        attempt_count: metadata.attempt_count,
+        dequeued_at: metadata.dequeued_at,
+        last_error: metadata.last_error,
+        processing_duration: metadata.processing_duration
+      };
     } catch (e) {
       logger.error(`Error dequeuing message: ${e}`);
       return null;
@@ -521,19 +612,27 @@ class OptimizedRedisQueue {
     let movedToDlqCount = 0;
 
     try {
+      // Fetch messages from the processing queue up to batch_size limit
+      // These are messages that were dequeued but not yet acknowledged
       const processingMessagesJson = await this.redisManager.redis.lrange(
         this.config.processing_queue_name,
         0,
         this.config.batch_size - 1
       );
 
+      logger.info(`Found ${processingMessagesJson ? processingMessagesJson.length : 0} messages in processing queue`);
+
+      // Early return if no messages to process
       if (!processingMessagesJson || processingMessagesJson.length === 0) {
         return 0;
       }
 
+      // Use Redis pipeline for batch operations to improve performance
       const pipeline = this.redisManager.pipeline();
 
+      // Process each message in the processing queue
       for (const messageJson of processingMessagesJson) {
+        // Attempt to deserialize the message data
         const messageData = this._deserializeMessage(messageJson);
         if (!messageData) {
           logger.warn(
@@ -542,10 +641,12 @@ class OptimizedRedisQueue {
               50
             )}... removing.`
           );
+          // Remove corrupted messages that can't be deserialized
           pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
           continue;
         }
 
+        // Validate that the message has a required ID
         const messageId = messageData.id;
         if (!messageId) {
           logger.warn(
@@ -553,10 +654,13 @@ class OptimizedRedisQueue {
               messageData
             )}. Removing.`
           );
+          // Remove messages without IDs as they can't be tracked
           pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
           continue;
         }
 
+        // Retrieve message metadata from Redis hash
+        // Metadata tracks attempt count, dequeue time, and custom timeouts
         const metadataJson = await this.redisManager.redis.hget(
           this.config.metadata_hash_name,
           messageId
@@ -564,11 +668,13 @@ class OptimizedRedisQueue {
         let metadata;
         if (metadataJson) {
           try {
+            // Parse existing metadata
             metadata = MessageMetadata.fromObject(JSON.parse(metadataJson));
           } catch (parseError) {
             logger.warn(
               `Could not parse metadata for ${messageId}, assuming new: ${parseError}`
             );
+            // Create default metadata for corrupted metadata
             metadata = new MessageMetadata(
               0,
               null,
@@ -577,70 +683,84 @@ class OptimizedRedisQueue {
             );
           }
         } else {
-          // No metadata, might be an orphaned message. Requeue with attempt 1 or DLQ.
+          // Handle orphaned messages (messages without metadata)
+          // This can happen if metadata was accidentally deleted or corrupted
           logger.warn(
             `No metadata for ${messageId}, assuming first attempt for requeue logic.`
           );
           metadata = new MessageMetadata(
             0,
-            currentTime,
+            currentTime, // Set dequeued_at to current time for immediate timeout check
             messageData.created_at || currentTime,
             "Missing metadata"
           );
-          // Ensure dequeued_at is set for timeout check logic to apply immediately if it's old
         }
 
+        // Determine the timeout to use: custom timeout from message payload or global default
+        const effectiveTimeout = (messageData.payload && messageData.payload.custom_ack_timeout) || this.config.ack_timeout_seconds;
+        const timeSinceDequeue = metadata.dequeued_at ? currentTime - metadata.dequeued_at : 0;
+        
+        logger.debug(`Message ${messageId}: dequeued_at=${metadata.dequeued_at}, timeSinceDequeue=${timeSinceDequeue}, effectiveTimeout=${effectiveTimeout}, attempts=${metadata.attempt_count}`);
+        
+        // Check if the message has timed out (exceeded acknowledgment timeout)
         if (
           metadata.dequeued_at &&
-          currentTime - metadata.dequeued_at > this.config.ack_timeout_seconds
+          currentTime - metadata.dequeued_at > effectiveTimeout
         ) {
+          // Check if message has exceeded maximum retry attempts
           if (metadata.attempt_count >= this.config.max_attempts) {
             logger.warn(
               `Message ${messageId} exceeded max attempts (${metadata.attempt_count}), moving to DLQ.`
             );
+            // Move message to Dead Letter Queue (DLQ) - final destination for failed messages
             pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
             pipeline.rpush(this.config.dead_letter_queue_name, messageJson);
-            pipeline.hdel(this.config.metadata_hash_name, messageId); // Clean metadata for DLQ'd message
+            pipeline.hdel(this.config.metadata_hash_name, messageId); // Clean up metadata
             movedToDlqCount++;
           } else {
+            // Message timed out but still has retry attempts remaining
+            const nextAttempt = metadata.attempt_count + 1;
             logger.info(
-              `Message ${messageId} timed out, requeueing (attempt ${
-                metadata.attempt_count + 1
-              }).`
+              `Message ${messageId} timed out after attempt ${metadata.attempt_count}, requeueing for attempt ${nextAttempt}.`
             );
+            // Move message back to the main queue for retry
             pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
-            pipeline.rpush(this.config.queue_name, messageJson); // Requeue to main queue
+            pipeline.rpush(this.config.queue_name, messageJson);
 
-            // Reset dequeued_at, keep attempt_count (it's incremented on dequeue)
-            // The Python version resets metadata, here we'll update for next dequeue
-            // metadata.dequeued_at = null; // Will be set on next dequeue
-            // metadata.attempt_count is already incremented by dequeue. If requeueing, it means this attempt failed.
-            // The next dequeue will increment it again. So, we don't modify attempt_count here.
-            // The Python code creates new metadata with the old attempt count. Here, we let dequeue handle it.
-            // For consistency with Python's logic of resetting metadata upon requeue:
+            // Create new metadata for the requeued message
+            // Note: attempt_count tracks completed attempts, dequeueMessage will increment for next attempt
             const newRequeueMetadata = new MessageMetadata(
-              metadata.attempt_count,
-              null,
-              metadata.created_at,
-              "Requeued due to timeout"
+              metadata.attempt_count, // Keep current completed attempt count
+              null, // Reset dequeued_at - will be set when message is dequeued again
+              metadata.created_at, // Preserve original creation time
+              "Requeued due to timeout",
+              0.0,
+              (messageData.payload && messageData.payload.custom_ack_timeout) || metadata.custom_ack_timeout // Preserve custom timeout from payload or metadata
             );
+
+            // Update metadata in Redis
+            const newMetadataJson = JSON.stringify(newRequeueMetadata);
+            logger.debug(`Updating metadata for ${messageId}: ${newMetadataJson}`);
             pipeline.hset(
               this.config.metadata_hash_name,
               messageId,
-              JSON.stringify(newRequeueMetadata)
+              newMetadataJson
             );
             requeuedCount++;
           }
         }
       }
 
+      // Execute all queued Redis operations in a single batch for efficiency
       if (pipeline.length > 0) {
         await pipeline.exec();
       }
 
+      // Update internal statistics
       this._stats.requeued += requeuedCount;
       this._stats.failed += movedToDlqCount;
 
+      // Log summary of operations performed
       if (requeuedCount > 0) logger.info(`Requeued ${requeuedCount} messages.`);
       if (movedToDlqCount > 0)
         logger.warn(`Moved ${movedToDlqCount} messages to DLQ.`);
@@ -1138,13 +1258,34 @@ class OptimizedRedisQueue {
       const [mainLen, procLen, dlqLen, archiveLen, mainMsgs, procMsgs, dlqMsgs, archiveMsgs, metadata] = results.map(r => r[1]);
       
       // Parse messages and collect available types
-      const availableTypes = new Set();
-      const parseMessages = (messages) => {
+        const availableTypes = new Set();
+      const parseMessages = (messages, enrich = false) => {
         const parsed = messages.map(msg => {
           const parsedMsg = this._deserializeMessage(msg);
           if (parsedMsg && parsedMsg.type) {
             availableTypes.add(parsedMsg.type);
           }
+          
+          // For processing queue, enrich with metadata
+          if (enrich && parsedMsg && parsedMsg.id && metadata) {
+            const metadataKey = parsedMsg.id;
+            const metadataJson = metadata[metadataKey];
+            if (metadataJson) {
+              try {
+                const meta = JSON.parse(metadataJson);
+                return {
+                  ...parsedMsg,
+                  attempt_count: meta.attempt_count || 0,
+                  dequeued_at: meta.dequeued_at || null,
+                  last_error: meta.last_error || null,
+                  processing_duration: meta.processing_duration || 0
+                };
+              } catch (e) {
+                logger.warn(`Failed to parse metadata for message ${parsedMsg.id}`);
+              }
+            }
+          }
+          
           return parsedMsg || { error: 'Failed to parse message' };
         });
         
@@ -1174,8 +1315,8 @@ class OptimizedRedisQueue {
         });
       }
       
-      const mainMessages = parseMessages(mainMsgs || []);
-      const processingMessages = parseMessages(procMsgs || []);
+      const mainMessages = parseMessages(mainMsgs || [], true);
+      const processingMessages = parseMessages(procMsgs || [], true); // true for isProcessingQueue
       const deadMessages = parseMessages(dlqMsgs || []);
       const archiveMessages = parseMessages(archiveMsgs || []);
       
@@ -1213,7 +1354,80 @@ class OptimizedRedisQueue {
     }
   }
 
+  async getConfiguration() {
+    return {
+      ack_timeout_seconds: this.config.ack_timeout_seconds,
+      max_attempts: this.config.max_attempts,
+      batch_size: this.config.batch_size,
+      enable_message_encryption: this.config.enable_message_encryption,
+      queue_name: this.config.queue_name,
+      processing_queue_name: this.config.processing_queue_name,
+      dead_letter_queue_name: this.config.dead_letter_queue_name,
+      archive_queue_name: this.config.archive_queue_name,
+      metadata_hash_name: this.config.metadata_hash_name,
+      id_counter_key: this.config.id_counter_key
+    };
+  }
+
+  async updateConfiguration(updates) {
+    try {
+      // Validate updates
+      const validKeys = [
+        'ack_timeout_seconds', 
+        'max_attempts', 
+        'batch_size'
+      ];
+      
+      const invalidKeys = Object.keys(updates).filter(key => !validKeys.includes(key));
+      if (invalidKeys.length > 0) {
+        throw new Error(`Invalid configuration keys: ${invalidKeys.join(', ')}`);
+      }
+
+      // Validate values
+      if (updates.ack_timeout_seconds !== undefined) {
+        const timeout = parseInt(updates.ack_timeout_seconds, 10);
+        if (isNaN(timeout) || timeout <= 0) {
+          throw new Error('ack_timeout_seconds must be a positive number');
+        }
+        this.config.ack_timeout_seconds = timeout;
+        logger.info(`Updated ack_timeout_seconds to ${timeout}`);
+      }
+
+      if (updates.max_attempts !== undefined) {
+        const attempts = parseInt(updates.max_attempts, 10);
+        if (isNaN(attempts) || attempts <= 0) {
+          throw new Error('max_attempts must be a positive number');
+        }
+        this.config.max_attempts = attempts;
+        logger.info(`Updated max_attempts to ${attempts}`);
+      }
+
+      if (updates.batch_size !== undefined) {
+        const batchSize = parseInt(updates.batch_size, 10);
+        if (isNaN(batchSize) || batchSize <= 0) {
+          throw new Error('batch_size must be a positive number');
+        }
+        this.config.batch_size = batchSize;
+        logger.info(`Updated batch_size to ${batchSize}`);
+      }
+
+      return this.getConfiguration();
+    } catch (error) {
+      logger.error(`Error updating configuration: ${error.message}`);
+      throw error;
+    }
+  }
+
+  cleanup() {
+    if (this.requeueInterval) {
+      clearInterval(this.requeueInterval);
+      this.requeueInterval = null;
+      logger.info("Cleared requeue interval.");
+    }
+  }
+
   async disconnect() {
+    this.cleanup();
     await this.redisManager.disconnect();
   }
 }

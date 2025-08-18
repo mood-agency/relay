@@ -199,3 +199,8 @@ METADATA_HASH_NAME=my_custom_queue_metadata
 -   `build`: Compiles the TypeScript code.
 -   `start`: Builds and starts the application in production mode.
 -   `test`: Runs the test suite.
+
+## Create API client
+```bash
+speakeasy generate sdk --schema http://localhost:3000/api/doc --lang python --out ./redis-queue-sdk-python
+```                                                     
