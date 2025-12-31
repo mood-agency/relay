@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
     RefreshCw,
     Play,
@@ -10,7 +10,6 @@ import {
     XCircle,
     CheckCircle2,
     Filter,
-    Settings2,
     ChevronLeft,
     ChevronRight,
     ChevronsLeft,
@@ -152,7 +151,7 @@ export default function Dashboard() {
     const [filterAttempts, setFilterAttempts] = useState("")
     const [startDate, setStartDate] = useState<Date | undefined>()
     const [endDate, setEndDate] = useState<Date | undefined>()
-    const [pageSize, setPageSize] = useState("10")
+    const [pageSize, setPageSize] = useState("25")
     const [currentPage, setCurrentPage] = useState(1)
     const [sortBy, setSortBy] = useState("created_at")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -431,10 +430,10 @@ export default function Dashboard() {
     }
 
     return (
-        <div className="container mx-auto py-6 px-4 max-w-[1600px] animate-in fade-in duration-500">
-            <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8 items-start">
+        <div className="container mx-auto py-6 px-4 max-w-[1600px] h-screen max-h-screen overflow-hidden flex flex-col animate-in fade-in duration-500">
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8 items-stretch">
                 {/* Left Sidebar */}
-                <div className="space-y-6 lg:sticky lg:top-6">
+                <div className="space-y-6 lg:sticky lg:top-6 self-start">
                     {/* Header */}
                     <div className="flex items-center gap-3 px-2">
                         <div>
@@ -443,6 +442,42 @@ export default function Dashboard() {
                     </div>
 
                     <div className="space-y-6">
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 px-2">
+                            <Button
+                                onClick={handleRefresh}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Refresh"
+                                aria-label="Refresh"
+                            >
+                                <RefreshCw className={cn("h-3.5 w-3.5", (loadingMessages || loadingStatus) && "animate-spin")} />
+                            </Button>
+                            <Button
+                                onClick={() => setAutoRefresh(!autoRefresh)}
+                                variant="ghost"
+                                size="icon"
+                                className={cn("h-8 w-8", autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
+                                title={autoRefresh ? "Auto refresh on" : "Auto refresh off"}
+                                aria-label={autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
+                            >
+                                {autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                            </Button>
+                            <Button
+                                onClick={handleClearAll}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                title="Clear all queues"
+                                aria-label="Clear all queues"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+
+                        <div className="h-px bg-border/50" />
+
                         {/* Queue Navigation */}
                         <div className="space-y-1">
                             <h3 className="text-xs font-semibold text-muted-foreground px-2 pb-2 uppercase tracking-wider">Queues</h3>
@@ -575,33 +610,6 @@ export default function Dashboard() {
 
                         <div className="h-px bg-border/50" />
 
-                        {/* Actions */}
-                        <div className="space-y-4">
-                            <h3 className="text-xs font-semibold text-muted-foreground px-2 uppercase tracking-wider flex items-center gap-2">
-                                <Settings2 className="h-3 w-3" /> Actions
-                            </h3>
-                            <div className="grid grid-cols-2 gap-2 px-1">
-                                <Button onClick={handleRefresh} variant="outline" className="w-full justify-start h-9 px-2" title="Refresh">
-                                    <RefreshCw className={`h-3.5 w-3.5 mr-2 ${loadingMessages || loadingStatus ? 'animate-spin' : ''}`} />
-                                    <span className="text-xs">Refresh</span>
-                                </Button>
-                                <Button
-                                    onClick={() => setAutoRefresh(!autoRefresh)}
-                                    variant={autoRefresh ? "secondary" : "outline"}
-                                    className="w-full justify-start h-9 px-2"
-                                >
-                                    {autoRefresh ? <Pause className="h-3.5 w-3.5 mr-2" /> : <Play className="h-3.5 w-3.5 mr-2" />}
-                                    <span className="text-xs">{autoRefresh ? "Auto On" : "Auto Off"}</span>
-                                </Button>
-                            </div>
-                            <div className="px-1 space-y-2">
-                                <Button onClick={handleClearAll} variant="destructive" className="w-full justify-start h-9 px-2">
-                                    <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                    <span className="text-xs">Clear All Queues</span>
-                                </Button>
-                            </div>
-                        </div>
-
                         <div className="text-[10px] text-muted-foreground px-2 pt-2">
                             Last updated: {lastUpdated}
                         </div>
@@ -609,7 +617,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Main Content Area */}
-                <div className="min-w-0 space-y-4">
+                <div className="min-w-0 flex flex-col min-h-0 gap-4">
                     {error && (
                         <Card className="border-destructive/50 bg-destructive/10">
                             <CardContent className="pt-6 flex items-center gap-3 text-destructive">
@@ -619,7 +627,7 @@ export default function Dashboard() {
                         </Card>
                     )}
 
-                    <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                         <div>
                             <div className="flex items-center gap-3">
                                 <h2 className="text-lg font-semibold tracking-tight">
@@ -677,7 +685,7 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
+                    <div className="relative flex flex-col flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
                         {/* Unified Table Loading State */}
                         {loadingMessages && (
                             <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
@@ -874,7 +882,7 @@ function PaginationFooter({
     totalItems: number
 }) {
     return (
-        <div className="flex items-center justify-between px-4 py-4 border-t bg-muted/5">
+        <div className="shrink-0 flex items-center justify-between px-4 py-4 border-t bg-muted/5">
             <div className="flex items-center space-x-2">
                 <p className="text-sm font-medium text-muted-foreground">Rows per page</p>
                 <Select value={pageSize} onValueChange={setPageSize}>
@@ -882,7 +890,7 @@ function PaginationFooter({
                         <SelectValue placeholder={pageSize} />
                     </SelectTrigger>
                     <SelectContent side="top">
-                        {[10, 20, 30, 40, 50].map((pageSize) => (
+                        {[25, 50, 100, 250, 500, 1000].map((pageSize) => (
                             <SelectItem key={pageSize} value={`${pageSize}`}>
                                 {pageSize}
                             </SelectItem>
@@ -940,7 +948,7 @@ function PaginationFooter({
 
 function SortableHeader({ label, field, currentSort, currentOrder, onSort }: { label: string, field: string, currentSort: string, currentOrder: string, onSort: (f: string) => void }) {
     return (
-        <TableHead className="font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => onSort(field)}>
+        <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => onSort(field)}>
             <div className="flex items-center gap-1">
                 {label}
                 {currentSort === field ? (
@@ -951,6 +959,45 @@ function SortableHeader({ label, field, currentSort, currentOrder, onSort }: { l
             </div>
         </TableHead>
     )
+}
+
+function useElementHeight(elementRef: { current: HTMLElement | null }) {
+    const [height, setHeight] = useState(0)
+
+    useEffect(() => {
+        let rafId = 0
+        let cleanup = () => {}
+
+        const attach = () => {
+            const element = elementRef.current
+            if (!element) {
+                rafId = window.requestAnimationFrame(attach)
+                return
+            }
+
+            const update = () => setHeight(element.getBoundingClientRect().height)
+            update()
+
+            if (typeof ResizeObserver === "undefined") {
+                window.addEventListener("resize", update)
+                cleanup = () => window.removeEventListener("resize", update)
+                return
+            }
+
+            const observer = new ResizeObserver(update)
+            observer.observe(element)
+            cleanup = () => observer.disconnect()
+        }
+
+        attach()
+
+        return () => {
+            if (rafId) window.cancelAnimationFrame(rafId)
+            cleanup()
+        }
+    }, [])
+
+    return height
 }
 
 function QueueTable({ 
@@ -1023,13 +1070,48 @@ function QueueTable({
         </span>
     )
 
+    const shouldVirtualize = messages.length >= 100
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+    const viewportHeight = useElementHeight(scrollContainerRef)
+    const [scrollTop, setScrollTop] = useState(0)
+
+    useEffect(() => {
+        setScrollTop(0)
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
+    }, [queueType, messages])
+
+    const virtual = useMemo(() => {
+        if (!shouldVirtualize) return null
+
+        const rowHeight = 44
+        const overscan = 8
+        const viewportPx = Math.max(viewportHeight, 320)
+        const total = messages.length
+
+        const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
+        const endIndex = Math.min(total, Math.ceil((scrollTop + viewportPx) / rowHeight) + overscan)
+
+        return {
+            rowHeight,
+            startIndex,
+            endIndex,
+            topSpacerHeight: startIndex * rowHeight,
+            bottomSpacerHeight: (total - endIndex) * rowHeight,
+            visibleMessages: messages.slice(startIndex, endIndex),
+        }
+    }, [messages, scrollTop, shouldVirtualize, viewportHeight])
+
     return (
-        <div>
-            <div className="relative overflow-x-auto">
+        <div className="flex flex-col flex-1 min-h-0">
+            <div
+                ref={scrollContainerRef}
+                className="relative flex-1 min-h-0 overflow-auto"
+                onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+            >
                 <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="w-[40px]">
+                            <TableHead className="sticky top-0 z-20 bg-card w-[40px]">
                                 <input 
                                     type="checkbox" 
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
@@ -1043,7 +1125,7 @@ function QueueTable({
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <TableHead className="text-right font-semibold text-foreground pr-6">Actions</TableHead>
+                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1053,8 +1135,91 @@ function QueueTable({
                                     No messages found.
                                 </TableCell>
                             </TableRow>
+                        ) : shouldVirtualize && virtual ? (
+                            <>
+                                {virtual.topSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableCell colSpan={8} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                    </TableRow>
+                                )}
+                                {virtual.visibleMessages.map((msg) => {
+                                    const payloadText = JSON.stringify(msg.payload)
+                                    return (
+                                        <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                            <TableCell>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                                    checked={selectedIds.includes(msg.id)}
+                                                    onChange={(e) => {
+                                                        e.stopPropagation()
+                                                        onToggleSelect(msg.id)
+                                                    }}
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                <span className="text-sm text-foreground font-mono" title={msg.id}>
+                                                    {msg.id?.substring(0, 8)}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
+                                            <TableCell className="max-w-[300px]">
+                                                <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                                    {payloadText}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                {formatTime(getTimeValue(msg))}
+                                            </TableCell>
+                                            <TableCell>
+                                                <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || (queueType === 'main' ? 0 : 1)}</span>
+                                            </TableCell>
+                                            <TableCell className="text-right pr-6">
+                                                <div className="flex justify-end gap-1">
+                                                    {onEdit && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                onEdit(msg)
+                                                            }}
+                                                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                                                            title="Edit Message"
+                                                        >
+                                                            <Pencil className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            onDelete(msg.id)
+                                                        }}
+                                                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
+                                                        title="Delete Message"
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    )
+                                })}
+                                {virtual.bottomSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                    </TableRow>
+                                )}
+                            </>
                         ) : (
-                            messages.map((msg) => (
+                            messages.map((msg) => {
+                                const payloadText = JSON.stringify(msg.payload)
+                                return (
                                 <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
                                     <TableCell>
                                         <input 
@@ -1075,15 +1240,15 @@ function QueueTable({
                                     <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
                                     <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
                                     <TableCell className="max-w-[300px]">
-                                        <div className="truncate text-sm text-muted-foreground" title={JSON.stringify(msg.payload)}>
-                                            {JSON.stringify(msg.payload)}
+                                        <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                            {payloadText}
                                         </div>
                                     </TableCell>
                                     <TableCell className="text-sm text-foreground whitespace-nowrap">
                                         {formatTime(getTimeValue(msg))}
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || 0}</span>
+                                        <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || (queueType === 'main' ? 0 : 1)}</span>
                                     </TableCell>
                                     <TableCell className="text-right pr-6">
                                         <div className="flex justify-end gap-1">
@@ -1118,7 +1283,8 @@ function QueueTable({
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                            ))
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>
@@ -1286,13 +1452,54 @@ function DeadLetterTable({
 }) {
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
 
+    const getPriorityBadge = (p: number) => (
+        <span className="text-sm text-foreground">
+            {p ?? 0}
+        </span>
+    )
+
+    const shouldVirtualize = messages.length >= 100
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+    const viewportHeight = useElementHeight(scrollContainerRef)
+    const [scrollTop, setScrollTop] = useState(0)
+
+    useEffect(() => {
+        setScrollTop(0)
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
+    }, [messages])
+
+    const virtual = useMemo(() => {
+        if (!shouldVirtualize) return null
+
+        const rowHeight = 44
+        const overscan = 8
+        const viewportPx = Math.max(viewportHeight, 320)
+        const total = messages.length
+
+        const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
+        const endIndex = Math.min(total, Math.ceil((scrollTop + viewportPx) / rowHeight) + overscan)
+
+        return {
+            rowHeight,
+            startIndex,
+            endIndex,
+            topSpacerHeight: startIndex * rowHeight,
+            bottomSpacerHeight: (total - endIndex) * rowHeight,
+            visibleMessages: messages.slice(startIndex, endIndex),
+        }
+    }, [messages, scrollTop, shouldVirtualize, viewportHeight])
+
     return (
-        <div>
-            <div className="relative overflow-x-auto">
+        <div className="flex flex-col flex-1 min-h-0">
+            <div
+                ref={scrollContainerRef}
+                className="relative flex-1 min-h-0 overflow-auto"
+                onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+            >
                 <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="w-[40px]">
+                            <TableHead className="sticky top-0 z-20 bg-card w-[40px]">
                                 <input 
                                     type="checkbox" 
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
@@ -1302,22 +1509,114 @@ function DeadLetterTable({
                             </TableHead>
                             <SortableHeader label="ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             {/* Use processing_started_at as 'Failed At' if failed_at is missing, assuming it's the last attempt time */}
                             <SortableHeader label="Failed At" field="failed_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <TableHead className="text-right font-semibold text-foreground pr-6">Actions</TableHead>
+                            <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground opacity-50 italic">
+                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic">
                                     No failed messages found.
                                 </TableCell>
                             </TableRow>
+                        ) : shouldVirtualize && virtual ? (
+                            <>
+                                {virtual.topSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                    </TableRow>
+                                )}
+                                {virtual.visibleMessages.map((msg) => {
+                                    const payloadText = JSON.stringify(msg.payload)
+                                    const errorText = msg.error_message || msg.last_error || "Unknown error"
+                                    return (
+                                        <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                            <TableCell>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                                    checked={selectedIds.includes(msg.id)}
+                                                    onChange={(e) => {
+                                                        e.stopPropagation()
+                                                        onToggleSelect(msg.id)
+                                                    }}
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                <span className="text-sm text-foreground font-mono">
+                                                    {msg.id?.substring(0, 8)}...
+                                                </span>
+                                            </TableCell>
+                                            <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
+                                            <TableCell className="max-w-[300px]">
+                                                <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                                    {payloadText}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                {formatTime(msg.failed_at || msg.processing_started_at)}
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="text-sm font-medium max-w-[300px] truncate" title={errorText}>
+                                                    {errorText}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || 1}</span>
+                                            </TableCell>
+                                            <TableCell className="text-right pr-6">
+                                                <div className="flex justify-end gap-1">
+                                                    {onEdit && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                onEdit(msg)
+                                                            }}
+                                                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                                                            title="Edit Message"
+                                                        >
+                                                            <Pencil className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            onDelete(msg.id)
+                                                        }}
+                                                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
+                                                        title="Delete Message"
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    )
+                                })}
+                                {virtual.bottomSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                    </TableRow>
+                                )}
+                            </>
                         ) : (
-                            messages.map((msg) => (
+                            messages.map((msg) => {
+                                const payloadText = JSON.stringify(msg.payload)
+                                const errorText = msg.error_message || msg.last_error || "Unknown error"
+                                return (
                                 <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
                                     <TableCell>
                                         <input 
@@ -1336,18 +1635,22 @@ function DeadLetterTable({
                                         </span>
                                     </TableCell>
                                     <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+                                    <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
                                     <TableCell className="max-w-[300px]">
-                                        <div className="truncate text-sm text-muted-foreground" title={JSON.stringify(msg.payload)}>
-                                            {JSON.stringify(msg.payload)}
+                                        <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                            {payloadText}
                                         </div>
                                     </TableCell>
                                     <TableCell className="text-sm text-foreground whitespace-nowrap">
                                         {formatTime(msg.failed_at || msg.processing_started_at)}
                                     </TableCell>
                                     <TableCell>
-                                        <div className="text-sm font-medium text-destructive bg-destructive/5 p-2 rounded border border-destructive/20 max-w-[300px] truncate" title={msg.error_message || msg.last_error}>
-                                            {msg.error_message || msg.last_error || "Unknown error"}
+                                        <div className="text-sm font-medium max-w-[300px] truncate" title={errorText}>
+                                            {errorText}
                                         </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || 1}</span>
                                     </TableCell>
                                     <TableCell className="text-right pr-6">
                                         <div className="flex justify-end gap-1">
@@ -1382,7 +1685,8 @@ function DeadLetterTable({
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                            ))
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>

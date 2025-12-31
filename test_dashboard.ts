@@ -119,6 +119,67 @@ class QueueTester {
         }
     }
 
+    async moveSomeMessagesToDeadLetter(count: number = 2) {
+        console.log(`\n💀 Moving ${count} messages from main queue to dead letter queue...`);
+
+        try {
+            const params = new URLSearchParams({
+                page: "1",
+                limit: String(Math.max(count, 1)),
+                sortBy: "created_at",
+                sortOrder: "desc",
+            });
+            const listResponse = await fetch(
+                `${this.apiBase}/queue/main/messages?${params.toString()}`
+            );
+
+            if (listResponse.status !== 200) {
+                console.log(`❌ Failed to fetch main queue messages: ${listResponse.status}`);
+                return 0;
+            }
+
+            const listData = (await listResponse.json()) as any;
+            const messages = Array.isArray(listData?.messages) ? listData.messages : [];
+            const toMove = messages.slice(0, count);
+
+            if (toMove.length === 0) {
+                console.log(`❌ No messages available in main queue to move`);
+                return 0;
+            }
+
+            const moveResponse = await fetch(`${this.apiBase}/queue/move`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    messages: toMove,
+                    fromQueue: "main",
+                    toQueue: "dead",
+                }),
+            });
+
+            if (moveResponse.status !== 200) {
+                console.log(`❌ Failed to move messages to DLQ: ${moveResponse.status}`);
+                return 0;
+            }
+
+            const result = (await moveResponse.json()) as any;
+            const movedCount = result?.movedCount ?? toMove.length;
+
+            toMove.forEach((m: any) => {
+                console.log(
+                    `☠️  Moved to DLQ: ${m.type || "unknown"} (ID: ${(m.id || "N/A").slice(0, 8)}...)`
+                );
+            });
+
+            return movedCount;
+        } catch (e) {
+            console.log(`❌ Error moving messages to DLQ: ${e}`);
+            return 0;
+        }
+    }
+
     async testDashboardAccess() {
         console.log(`\n🌐 Testing dashboard access...`);
 
@@ -149,6 +210,9 @@ class QueueTester {
 
         // Check initial status
         await this.checkQueueStatus();
+
+        // Move some messages to DLQ (demo)
+        await this.moveSomeMessagesToDeadLetter(2);
 
         // Dequeue some messages
         const dequeued = await this.dequeueSomeMessages(5);
@@ -219,7 +283,7 @@ class QueueTester {
 const main = async () => {
     const args = process.argv.slice(2);
     let url = "http://localhost:3000";
-    let messages_number = 55;
+    let messages_number = 500;
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === "--url" && args[i + 1]) {

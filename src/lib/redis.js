@@ -559,6 +559,7 @@ class OptimizedRedisQueue {
               fullMessageData = {
                 ...metadata._original_message,
                 id: messageId,
+                attempt_count: metadata.attempt_count,
               };
               logger.debug(`Recovered full message data from metadata for ${messageId}`);
             }
@@ -907,6 +908,31 @@ class OptimizedRedisQueue {
     queuesToCheck.push({ name: this.config.dead_letter_queue_name, type: "DLQ" });
     queuesToCheck.push({ name: this.config.acknowledged_queue_name, type: "acknowledged" });
 
+    // Helper to enrich messages with metadata
+    const enrichMessages = async (msgs) => {
+        if (!msgs || msgs.length === 0) return msgs;
+        try {
+            const ids = msgs.map(m => m.id);
+            const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...ids);
+            
+            for (let i = 0; i < msgs.length; i++) {
+                if (metadataJsons[i]) {
+                    try {
+                        const meta = JSON.parse(metadataJsons[i]);
+                        if (meta) {
+                            msgs[i].attempt_count = meta.attempt_count;
+                            msgs[i].last_error = meta.last_error;
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        } catch (e) {
+            logger.warn(`Failed to fetch metadata: ${e.message}`);
+        }
+        return msgs;
+    };
+
+    outerLoop:
     for (const queue of queuesToCheck) {
       // All queues now use Streams
       const stream = await this.redisManager.redis.xrange(queue.name, "-", "+");
@@ -925,7 +951,7 @@ class OptimizedRedisQueue {
           if (messageTimestamp >= startTimestamp && messageTimestamp <= endTimestamp) {
             messages.push(messageData);
             if (messages.length >= limit) {
-              return messages;
+              break outerLoop;
             }
           }
         } catch (e) {
@@ -934,7 +960,7 @@ class OptimizedRedisQueue {
       }
     }
 
-    return messages;
+    return await enrichMessages(messages);
   }
 
   async removeMessagesByDateRange(startTimestamp, endTimestamp) {
