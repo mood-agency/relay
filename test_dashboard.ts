@@ -24,7 +24,7 @@ class QueueTester {
         ];
 
         for (let i = 0; i < count; i++) {
-            const priorities = [0, 0, 0, 1, 2];
+            const priorities = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
             const message = {
                 type: messageTypes[Math.floor(Math.random() * messageTypes.length)],
                 payload: {
@@ -193,7 +193,11 @@ class QueueTester {
                     headers: {
                         "Content-Type": "application/json",
                     },
-                    body: JSON.stringify({ id: message.id }),
+                    body: JSON.stringify({
+                        id: message.id,
+                        _stream_id: message._stream_id,
+                        _stream_name: message._stream_name
+                    }),
                 });
 
                 if (response.status === 200) {
@@ -215,20 +219,20 @@ class QueueTester {
 const main = async () => {
     const args = process.argv.slice(2);
     let url = "http://localhost:3000";
-    let messages = 35;
+    let messages_number = 55;
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === "--url" && args[i + 1]) {
             url = args[i + 1];
             i++;
         } else if (args[i] === "--messages" && args[i + 1]) {
-            messages = parseInt(args[i + 1], 10);
+            messages_number = parseInt(args[i + 1], 10);
             i++;
         }
     }
 
     const tester = new QueueTester(url);
-    await tester.runDemo(messages);
+    await tester.runDemo(messages_number);
 };
 
 main().catch(console.error);

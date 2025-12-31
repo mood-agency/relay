@@ -19,7 +19,8 @@ import {
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
-    Search
+    Search,
+    Move
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -122,6 +123,14 @@ export default function Dashboard() {
         isOpen: false,
         message: null,
         queueType: "",
+    });
+
+    const [moveDialog, setMoveDialog] = useState<{
+        isOpen: boolean;
+        targetQueue: string;
+    }>({
+        isOpen: false,
+        targetQueue: "main",
     });
 
     // System Status (Counts)
@@ -306,6 +315,37 @@ export default function Dashboard() {
             }
         } catch (err) {
             alert("Failed to update message")
+        }
+    }
+
+    const handleMoveMessages = async () => {
+        if (!selectedIds.length) return;
+        
+        const selectedMessages = messagesData?.messages.filter(m => selectedIds.includes(m.id)) || [];
+        if (selectedMessages.length === 0) return;
+
+        try {
+            const response = await fetch('/api/queue/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: selectedMessages,
+                    fromQueue: activeTab,
+                    toQueue: moveDialog.targetQueue
+                })
+            });
+            
+            if (response.ok) {
+                const res = await response.json();
+                setMoveDialog(prev => ({ ...prev, isOpen: false }));
+                setSelectedIds([]);
+                fetchAll();
+            } else {
+                const err = await response.json();
+                alert(`Error: ${err.message}`);
+            }
+        } catch (e) {
+            alert("Failed to move messages");
         }
     }
 
@@ -588,12 +628,7 @@ export default function Dashboard() {
                                     {activeTab === 'dead' && 'Dead Letter Queue'}
                                     {activeTab === 'acknowledged' && 'Acknowledged Messages'}
                                 </h2>
-                                <Badge variant="secondary" className="font-mono text-xs">
-                                    {activeTab === 'main' && (statusData?.mainQueue?.length || 0)}
-                                    {activeTab === 'processing' && (statusData?.processingQueue?.length || 0)}
-                                    {activeTab === 'dead' && (statusData?.deadLetterQueue?.length || 0)}
-                                    {activeTab === 'acknowledged' && (statusData?.acknowledgedQueue?.length || 0)}
-                                </Badge>
+                               
                             </div>
                             <p className="text-sm text-muted-foreground">
                                 {activeTab === 'main' && 'Messages waiting to be processed.'}
@@ -604,15 +639,31 @@ export default function Dashboard() {
                         </div>
                         <div className="flex items-center gap-2">
                             {selectedIds.length > 0 && (
-                                <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={handleBulkDelete}
-                                    className="h-8 animate-in fade-in zoom-in duration-200"
-                                >
-                                    <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                    Delete Selected ({selectedIds.length})
-                                </Button>
+                                <>
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => {
+                                            // Set default target to first queue that isn't the current one
+                                            const queues = ['main', 'dead', 'acknowledged'];
+                                            const defaultTarget = queues.find(q => q !== activeTab) || 'main';
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }));
+                                        }}
+                                        className="h-8 animate-in fade-in zoom-in duration-200"
+                                    >
+                                        <Move className="h-3.5 w-3.5 mr-2" />
+                                        Move Selected ({selectedIds.length})
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={handleBulkDelete}
+                                        className="h-8 animate-in fade-in zoom-in duration-200"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                        Delete Selected ({selectedIds.length})
+                                    </Button>
+                                </>
                             )}
                             <Button 
                                 variant="outline" 
@@ -704,7 +755,78 @@ export default function Dashboard() {
                 message={editDialog.message}
                 queueType={editDialog.queueType}
             />
+
+            <MoveMessageDialog
+                isOpen={moveDialog.isOpen}
+                onClose={() => setMoveDialog(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={handleMoveMessages}
+                targetQueue={moveDialog.targetQueue}
+                setTargetQueue={(q) => setMoveDialog(prev => ({ ...prev, targetQueue: q }))}
+                count={selectedIds.length}
+                currentQueue={activeTab}
+            />
         </div>
+    )
+}
+
+function MoveMessageDialog({
+    isOpen,
+    onClose,
+    onConfirm,
+    targetQueue,
+    setTargetQueue,
+    count,
+    currentQueue
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onConfirm: () => Promise<void>;
+    targetQueue: string;
+    setTargetQueue: (q: string) => void;
+    count: number;
+    currentQueue: string;
+}) {
+    const allQueues = [
+        { value: "main", label: "Main Queue" },
+        { value: "dead", label: "Dead Letter Queue" },
+        { value: "acknowledged", label: "Acknowledged Queue" },
+    ];
+    
+    // Filter out the current queue from available options
+    const availableQueues = allQueues.filter(q => q.value !== currentQueue);
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Move Messages</DialogTitle>
+                    <DialogDescription>
+                        Move {count} selected messages to another queue.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="targetQueue" className="text-right text-sm font-medium">
+                            To Queue
+                        </label>
+                        <Select value={targetQueue} onValueChange={setTargetQueue}>
+                            <SelectTrigger className="col-span-3">
+                                <SelectValue placeholder="Select queue" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {availableQueues.map(q => (
+                                    <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose}>Cancel</Button>
+                    <Button onClick={onConfirm}>Move Messages</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     )
 }
 
@@ -770,7 +892,7 @@ function PaginationFooter({
             </div>
             
             <div className="flex items-center space-x-6 lg:space-x-8">
-                <div className="flex w-[100px] items-center justify-center text-sm font-medium text-muted-foreground">
+                <div className="flex w-[200px] items-center justify-center text-sm font-medium">
                     Page {currentPage} of {totalPages} ({totalItems} items)
                 </div>
                 <div className="flex items-center space-x-2">

@@ -38,6 +38,8 @@ export const DequeuedMessageSchema = z.object({
   last_error: z.string().nullable(),
   processing_duration: z.number(),
   acknowledged_at: z.number().optional(),
+  _stream_id: z.string().optional(),
+  _stream_name: z.string().optional(),
 });
 
 export type DequeuedMessage = z.infer<typeof DequeuedMessageSchema>;
@@ -45,6 +47,8 @@ export type DequeuedMessage = z.infer<typeof DequeuedMessageSchema>;
 export const AcknowledgedMessageSchema =
   DequeuedMessageSchema.partial().required({
     id: true,
+    _stream_id: true,
+    _stream_name: true,
   });
 
 export type AcknowledgedMessage = z.infer<typeof AcknowledgedMessageSchema>;
@@ -280,6 +284,34 @@ export const getMessages = createRoute({
 });
 
 export type GetMessagesRoute = typeof getMessages;
+
+export const moveMessages = createRoute({
+  path: "/queue/move",
+  method: "post",
+  tags,
+  request: {
+    body: jsonContentRequired(
+      z.object({
+        messages: z.array(z.any()),
+        fromQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
+        toQueue: z.enum(["main", "dead", "acknowledged"]),
+      }),
+      "Move Messages Request"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        movedCount: z.number(),
+      }),
+      "Messages Moved"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type MoveMessagesRoute = typeof moveMessages;
 
 export const deleteMessage = createRoute({
   path: "/queue/message/:messageId",

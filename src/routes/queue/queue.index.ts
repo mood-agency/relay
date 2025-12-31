@@ -21,6 +21,7 @@ const router = createRouter()
   .openapi(routes.deleteMessage, handlers.deleteMessage)
   .openapi(routes.updateMessage, handlers.updateMessage)
   .openapi(routes.getMessages, handlers.getMessages)
+  .openapi(routes.moveMessages, handlers.moveMessages)
   .openapi(routes.clearQueue, handlers.clearQueue)
   .openapi(routes.clearAllQueues, handlers.clearAllQueues);
 

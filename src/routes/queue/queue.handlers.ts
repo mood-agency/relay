@@ -8,6 +8,8 @@ import type {
   RemoveMessagesByDateRangeRoute,
   GetMessagesByDateRangeRoute,
   GetQueueStatusRoute,
+  GetMessagesRoute,
+  MoveMessagesRoute,
   DequeuedMessage,
   ClearAllQueuesRoute,
   ClearQueueRoute,
@@ -28,6 +30,7 @@ interface QueueConfigI {
   ack_timeout_seconds: number;
   max_attempts: number;
   batch_size: number;
+  max_priority_levels: number;
   redis_pool_size: number;
   enable_message_encryption: string;
   secret_key: string | null | undefined;
@@ -45,6 +48,7 @@ const queueConfig: QueueConfigI = {
   ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
   max_attempts: env.MAX_ATTEMPTS,
   batch_size: env.BATCH_SIZE,
+  max_priority_levels: env.MAX_PRIORITY_LEVELS,
   redis_pool_size: env.REDIS_POOL_SIZE,
   enable_message_encryption: env.ENABLE_ENCRYPTION,
   secret_key: env.SECRET_KEY,
@@ -159,6 +163,19 @@ export const getMessages: AppRouteHandler<GetMessagesRoute> = async (c: any) => 
     return c.json(result, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to get queue messages" }, 500);
+  }
+};
+
+export const moveMessages: AppRouteHandler<MoveMessagesRoute> = async (c: any) => {
+  try {
+    const { messages, fromQueue, toQueue } = c.req.valid("json");
+    const movedCount = await queue.moveMessages(messages, fromQueue, toQueue);
+    return c.json(
+      { message: `${movedCount} messages moved successfully`, movedCount },
+      200
+    );
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to move messages" }, 500);
   }
 };
 

@@ -29,12 +29,19 @@ class QueueConfig {
     this.total_acknowledged_key = config.total_acknowledged_key || "queue:stats:total_acknowledged";
     this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
     this.acknowledged_queue_name = config.acknowledged_queue_name || "queue_acknowledged";
+    
+    // Stream-specific configuration
+    this.consumer_group_name = config.consumer_group_name || "queue_group";
+    this.consumer_name = config.consumer_name || `consumer-${uuidv4()}`;
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
     this.batch_size = parseInt(config.batch_size || "100", 10);
     this.max_acknowledged_history = parseInt(config.max_acknowledged_history || "100", 10);
-    this.connection_pool_size = parseInt(config.redis_pool_size || "10", 10); // ioredis handles pooling differently, this is more for reference
+    this.connection_pool_size = parseInt(config.redis_pool_size || "10", 10);
+    
+    // Priority configuration (0-9 = 10 levels, higher number = higher priority)
+    this.max_priority_levels = parseInt(config.max_priority_levels || "10", 10);
 
     this.enable_message_encryption =
       (config.enable_message_encryption || "false").toLowerCase() === "true";
@@ -230,6 +237,30 @@ class OptimizedRedisQueue {
     };
   }
 
+  // Get stream name for a specific priority level
+  _getPriorityStreamName(priority) {
+    const maxPriority = this.config.max_priority_levels - 1;
+    const clampedPriority = Math.max(0, Math.min(priority, maxPriority));
+    if (clampedPriority === 0) {
+      return this.config.queue_name; // Base queue for priority 0
+    }
+    return `${this.config.queue_name}_p${clampedPriority}`;
+  }
+
+  // Get all priority stream names (highest priority first for reading)
+  _getAllPriorityStreams() {
+    const streams = [];
+    for (let p = this.config.max_priority_levels - 1; p >= 0; p--) {
+      streams.push(this._getPriorityStreamName(p));
+    }
+    return streams;
+  }
+
+  // Get all main queue streams (for operations that need all of them)
+  _getAllMainQueueStreams() {
+    return this._getAllPriorityStreams();
+  }
+
   _serializeMessage(message) {
     let messageJson = JSON.stringify(message);
     if (this.redisManager.security) {
@@ -254,6 +285,22 @@ class OptimizedRedisQueue {
     }
   }
 
+  async _ensureConsumerGroup(queueName) {
+    try {
+      await this.redisManager.redis.xgroup(
+        "CREATE",
+        queueName,
+        this.config.consumer_group_name,
+        "0",
+        "MKSTREAM"
+      );
+    } catch (e) {
+      if (!e.message.includes("BUSYGROUP")) {
+        throw e;
+      }
+    }
+  }
+
   async enqueueMessage(messageData, priority = 0) {
     try {
       if (!messageData.id) {
@@ -265,22 +312,13 @@ class OptimizedRedisQueue {
       messageData.priority = priority;
 
       const messageJson = this._serializeMessage(messageData);
+      const queueName = this._getPriorityStreamName(priority);
 
-      if (priority > 0) {
-        await this.redisManager.redis.lpush(
-          this.config.queue_name,
-          messageJson
-        );
-      } else {
-        await this.redisManager.redis.rpush(
-          this.config.queue_name,
-          messageJson
-        );
-      }
+      await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
 
       this._stats.enqueued++;
       logger.info(
-        `Message enqueued: ${messageData.id} (priority: ${priority})`
+        `Message enqueued to stream ${queueName}: ${messageData.id} (priority: ${priority})`
       );
       return true;
     } catch (e) {
@@ -303,68 +341,131 @@ class OptimizedRedisQueue {
       }
       const messageJson = this._serializeMessage(msg);
       const priority = msg.priority || 0;
+      const queueName = this._getPriorityStreamName(priority);
 
-      if (priority > 0) {
-        pipeline.lpush(this.config.queue_name, messageJson);
-      } else {
-        pipeline.rpush(this.config.queue_name, messageJson);
-      }
+      pipeline.xadd(queueName, "*", "data", messageJson);
     }
 
     try {
       const results = await pipeline.exec();
-      // Each successful push command in ioredis pipeline returns the new length of the list.
-      // We count how many operations were successful (didn't throw an error in the result array).
       results.forEach((result) => {
         if (!result[0]) {
-          // result[0] is error, result[1] is value
           successful++;
         }
       });
 
       this._stats.enqueued += successful;
       logger.info(
-        `Batch processed: ${successful}/${messages.length} messages enqueued`
+        `Batch processed: ${successful}/${messages.length} messages enqueued to streams`
       );
       return successful;
     } catch (e) {
       logger.error(`Error in batch enqueue: ${e}`);
-      return successful; // return count of those that might have succeeded before error
+      return successful;
     }
   }
 
   async dequeueMessage(timeout = 0) {
+    const priorityStreams = this._getAllPriorityStreams(); // Highest priority first
+    const timeoutMs = Math.max(0, Math.floor(timeout * 1000));
+
     try {
-      const messageJson = await this.redisManager.redis.brpoplpush(
-        this.config.queue_name,
-        this.config.processing_queue_name,
-        timeout
-      );
+      const redis = this.redisManager.redis;
+      const deadlineMs = Date.now() + timeoutMs;
+      const baseSleepMs = 50;
+
+      const readOne = async (streamName) => {
+        const args = [
+          "GROUP",
+          this.config.consumer_group_name,
+          this.config.consumer_name,
+          "COUNT",
+          1,
+        ];
+
+        const results = await redis.xreadgroup(
+          ...args,
+          "STREAMS",
+          streamName,
+          ">"
+        );
+
+        if (!results || results.length === 0) return null;
+        const [, messages] = results[0] || [];
+        if (!messages || messages.length === 0) return null;
+
+        const [streamId, fields] = messages[0];
+        return { streamName, streamId, fields };
+      };
+
+      const readOneWithGroupEnsure = async (streamName) => {
+        try {
+          return await readOne(streamName);
+        } catch (e) {
+          if (e?.message && e.message.includes("NOGROUP")) {
+            await this._ensureConsumerGroup(streamName);
+            return await readOne(streamName);
+          }
+          throw e;
+        }
+      };
+
+      let readResult = null;
+
+      for (const streamName of priorityStreams) {
+        readResult = await readOneWithGroupEnsure(streamName);
+        if (readResult) break;
+      }
+
+      let sleepMs = baseSleepMs;
+      while (!readResult && Date.now() < deadlineMs) {
+        for (const streamName of priorityStreams) {
+          readResult = await readOneWithGroupEnsure(streamName);
+          if (readResult) break;
+        }
+
+        if (readResult) break;
+
+        const remainingMs = deadlineMs - Date.now();
+        if (remainingMs <= 0) break;
+        const waitMs = Math.min(sleepMs, remainingMs);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        sleepMs = Math.min(250, Math.floor(sleepMs * 1.5));
+      }
+
+      if (!readResult) {
+        return null;
+      }
+
+      const { streamName, streamId, fields } = readResult;
+
+      let messageJson = null;
+      for (let i = 0; i < fields.length; i += 2) {
+        if (fields[i] === "data") {
+          messageJson = fields[i + 1];
+          break;
+        }
+      }
 
       if (!messageJson) {
+        // Corrupt message, ack and remove
+        await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
+        await this.redisManager.redis.xdel(streamName, streamId);
         return null;
       }
 
       const messageData = this._deserializeMessage(messageJson);
       if (!messageData) {
-        // Potentially move to DLQ or log an error if deserialization fails after signature check
-        // For now, just returning null as the Python version implies
-        await this.redisManager.redis.lrem(
-          this.config.processing_queue_name,
-          1,
-          messageJson
-        ); // Clean up bad message
-        logger.warn(
-          "Failed to deserialize message from processing queue, removed."
-        );
+        await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
+        await this.redisManager.redis.xdel(streamName, streamId);
+        logger.warn("Failed to deserialize message from stream, removed.");
         return null;
       }
 
       const messageId = messageData.id;
-      if (!messageId) {
-        logger.warn("Message without ID found in processing queue");
-        return messageData; // Or handle differently
-      }
+      // Attach stream metadata for acknowledgment
+      messageData._stream_id = streamId;
+      messageData._stream_name = streamName;
 
       const currentTime = Date.now() / 1000;
       const metadataKey = messageId;
@@ -388,290 +489,438 @@ class OptimizedRedisQueue {
       metadata.dequeued_at = currentTime;
       metadata.attempt_count += 1;
 
-      // Store both the metadata and the original JSON string for acknowledgment
-      const originalJsonStringField = `${messageId}:original_json_string`;
+      // Update metadata (include the full message data for acknowledgment)
+      const metadataWithMessage = {
+        ...metadata,
+        _original_message: {
+          type: messageData.type,
+          payload: messageData.payload,
+          priority: messageData.priority,
+          created_at: messageData.created_at,
+          encryption: messageData.encryption,
+          signature: messageData.signature,
+        }
+      };
+      
       await this.redisManager.redis.hset(
         this.config.metadata_hash_name,
         metadataKey,
-        JSON.stringify(metadata)
-      );
-      await this.redisManager.redis.hset(
-        this.config.metadata_hash_name,
-        originalJsonStringField,
-        messageJson
+        JSON.stringify(metadataWithMessage)
       );
 
       this._stats.dequeued++;
       logger.info(
-        `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count})`
+        `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
       );
       return messageData;
+
     } catch (e) {
+      if (e.message && e.message.includes("NOGROUP")) {
+        // Ensure consumer groups exist for all priority streams
+        for (const stream of priorityStreams) {
+          await this._ensureConsumerGroup(stream);
+        }
+        return this.dequeueMessage(timeout);
+      }
       logger.error(`Error dequeuing message: ${e}`);
       return null;
     }
   }
 
-  async acknowledgeMessage(ackPayload) { // ackPayload is e.g., { id: "message-uuid" }
+  async acknowledgeMessage(ackPayload) {
     const messageId = ackPayload.id;
-    if (!messageId) {
-      // Ensure 'logger' is available in this scope (e.g., this.logger or imported)
-      // For now, using console.warn as a placeholder if logger is not this.logger
+    const streamId = ackPayload._stream_id;
+    const streamName = ackPayload._stream_name;
+
+    if (!messageId || !streamId || !streamName) {
       const logger = this.logger || console;
-      logger.warn("Cannot acknowledge message: ID is missing in payload.", { payload: ackPayload });
+      logger.warn("Cannot acknowledge message: Missing ID or Stream metadata.", { payload: ackPayload });
       return false;
     }
 
-    const logger = this.logger || console; // Use this.logger if available, else console
+    const logger = this.logger || console;
 
     try {
-      // STEP 1: Retrieve the original serialized message string.
-      // This is THE MOST CRITICAL part and depends on your dequeue logic.
-      //
-      // HYPOTHETICAL: Assume that when a message is dequeued and added to the
-      // `processing_queue_name`, its original exact serialized string is ALSO stored
-      // in the metadata hash (this.config.metadata_hash_name) under a specific field.
-      // For this example, let's call this field `${messageId}:original_json_string`.
-      // YOU MUST VERIFY OR IMPLEMENT THIS STORAGE LOGIC IN YOUR DEQUEUE PROCESS.
-
-      const originalJsonStringField = `${messageId}:original_json_string`; // Example field name
-      const originalMessageJson = await this.redisManager.redis.hget(this.config.metadata_hash_name, originalJsonStringField);
-
-      if (!originalMessageJson) {
-        logger.warn(
-          `Original serialized message JSON not found in metadata for ID ${messageId} (field: ${originalJsonStringField}). ` +
-          `Cannot perform LREM. Message might be already processed, timed out, or field not stored.`,
-          { messageId }
-        );
-        // Attempt to clean up any potentially orphaned main metadata entry for this ID.
-        await this.redisManager.redis.hdel(this.config.metadata_hash_name, messageId);
-        return false; // Acknowledgment cannot proceed as intended.
+      // Fetch the full message data - try metadata first, then stream as fallback
+      let fullMessageData = { ...ackPayload };
+      
+      // If the payload is missing type or payload, try to recover it
+      if (!ackPayload.type || !ackPayload.payload) {
+        // First, try to get from metadata (stored during dequeue)
+        try {
+          const metadataJson = await this.redisManager.redis.hget(
+            this.config.metadata_hash_name,
+            messageId
+          );
+          
+          if (metadataJson) {
+            const metadata = JSON.parse(metadataJson);
+            if (metadata._original_message) {
+              fullMessageData = {
+                ...metadata._original_message,
+                id: messageId,
+              };
+              logger.debug(`Recovered full message data from metadata for ${messageId}`);
+            }
+          }
+        } catch (metaError) {
+          logger.warn(`Could not fetch message from metadata for ${messageId}: ${metaError.message}`);
+        }
+        
+        // If still missing, try XRANGE as fallback
+        if (!fullMessageData.type || !fullMessageData.payload) {
+          try {
+            const range = await this.redisManager.redis.xrange(streamName, streamId, streamId);
+            if (range && range.length > 0) {
+              const [, fields] = range[0];
+              let messageJson = null;
+              for (let i = 0; i < fields.length; i += 2) {
+                if (fields[i] === "data") {
+                  messageJson = fields[i + 1];
+                  break;
+                }
+              }
+              if (messageJson) {
+                const parsedMessage = this._deserializeMessage(messageJson);
+                if (parsedMessage) {
+                  fullMessageData = { ...parsedMessage, id: messageId };
+                  logger.debug(`Recovered full message data from stream for ${messageId}`);
+                }
+              }
+            }
+          } catch (fetchError) {
+            logger.warn(`Could not fetch full message data from stream for ${messageId}: ${fetchError.message}`);
+          }
+        }
       }
 
-      // STEP 2: Perform the removal using the retrieved original serialized message.
       const pipeline = this.redisManager.pipeline();
 
-      // Add to Acknowledged Queue and cleanup
+      // 1. Acknowledge in Stream
+      pipeline.xack(streamName, this.config.consumer_group_name, streamId);
+      
+      // 2. Remove from Stream (optional, mimics queue behavior)
+      pipeline.xdel(streamName, streamId);
+
+      // 3. Add to Acknowledged Queue (Stream) for history
       try {
-        const ackMsgData = this._deserializeMessage(originalMessageJson);
-        if (ackMsgData) {
-          ackMsgData.acknowledged_at = Date.now() / 1000;
-          const ackMsgJson = this._serializeMessage(ackMsgData);
-          pipeline.lpush(this.config.acknowledged_queue_name, ackMsgJson);
-          pipeline.ltrim(this.config.acknowledged_queue_name, 0, this.config.max_acknowledged_history - 1);
-          pipeline.incr(this.config.total_acknowledged_key);
-        } else {
-          // Fallback if deserialization fails (shouldn't happen if original is valid)
-          pipeline.lpush(this.config.acknowledged_queue_name, originalMessageJson);
-          pipeline.ltrim(this.config.acknowledged_queue_name, 0, this.config.max_acknowledged_history - 1);
-          pipeline.incr(this.config.total_acknowledged_key);
-        }
+        const ackMsgData = { ...fullMessageData, acknowledged_at: Date.now() / 1000 };
+        // Remove internal fields before saving to history
+        delete ackMsgData._stream_id;
+        delete ackMsgData._stream_name;
+        
+        const ackMsgJson = this._serializeMessage(ackMsgData);
+        pipeline.xadd(this.config.acknowledged_queue_name, "*", "data", ackMsgJson);
+        pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
+        pipeline.incr(this.config.total_acknowledged_key);
       } catch (e) {
         logger.warn(`Failed to process message for acknowledged queue: ${e.message}`);
-        // Ensure we still try to move something to ack queue even if processing fails
-        pipeline.lpush(this.config.acknowledged_queue_name, originalMessageJson);
       }
 
-      // Command 1: Remove the message from the processing queue using its exact original string
-      pipeline.lrem(this.config.processing_queue_name, 1, originalMessageJson);
-      // Command 2: Remove the main metadata entry for the message ID
+      // 4. Cleanup Metadata
       pipeline.hdel(this.config.metadata_hash_name, messageId);
-      // Command 3: Remove the field that stored the original JSON string from metadata
-      pipeline.hdel(this.config.metadata_hash_name, originalJsonStringField);
+      // Also cleanup original_json_string field if it exists (legacy cleanup)
+      pipeline.hdel(this.config.metadata_hash_name, `${messageId}:original_json_string`);
 
       const results = await pipeline.exec();
-
-      // Check LREM result (first command in pipeline)
-      // results is an array of [error, data] tuples for each command
-      const lremCmdResult = results[0];
-      const lremError = lremCmdResult[0];
-      const removedCount = lremCmdResult[1];
-
-      if (lremError) {
-        logger.error(`Error in LREM command for message ${messageId}: ${lremError.message || lremError}`, { messageId, error: lremError });
-        return false;
+      
+      // Check XACK result (first command)
+      const xackResult = results[0];
+      if (xackResult[0]) {
+         logger.error(`Error in XACK for ${messageId}: ${xackResult[0]}`);
+         return false;
       }
 
-      if (removedCount > 0) {
-        if (this._stats && typeof this._stats.acknowledged === 'number') {
-          this._stats.acknowledged++;
-        }
-        logger.info(`Message acknowledged successfully: ${messageId}`, { messageId });
-        return true;
-      } else {
-        logger.warn(
-          `Message ${messageId} (original JSON found) was not present in processing queue for LREM. ` +
-          `It might have been processed/timed out concurrently. Metadata (id: ${messageId}, field: ${originalJsonStringField}) was targeted for cleanup.`,
-          { messageId }
-        );
-        return false;
+      if (this._stats && typeof this._stats.acknowledged === 'number') {
+        this._stats.acknowledged++;
       }
+      logger.info(`Message acknowledged successfully: ${messageId}`);
+      return true;
+
     } catch (error) {
-      logger.error(`Critical error during message acknowledgment for ID ${messageId}: ${error.message}`, {
-        messageId,
-        error: { message: error.message, stack: error.stack },
-      });
+      logger.error(`Critical error during message acknowledgment for ID ${messageId}: ${error.message}`);
       return false;
     }
   }
 
   async requeueFailedMessages() {
     logger.info("Verifying failed messages...");
-    const currentTime = Date.now() / 1000;
+    const queues = this._getAllPriorityStreams();
     let requeuedCount = 0;
     let movedToDlqCount = 0;
+    const currentTime = Date.now() / 1000;
 
-    try {
-      const processingMessagesJson = await this.redisManager.redis.lrange(
-        this.config.processing_queue_name,
-        0,
-        this.config.batch_size - 1
-      );
-
-      if (!processingMessagesJson || processingMessagesJson.length === 0) {
-        return 0;
-      }
-
-      const pipeline = this.redisManager.pipeline();
-
-      for (const messageJson of processingMessagesJson) {
-        const messageData = this._deserializeMessage(messageJson);
-        if (!messageData) {
-          logger.warn(
-            `Could not deserialize message for requeue check: ${messageJson.substring(
-              0,
-              50
-            )}... removing.`
-          );
-          pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
-          continue;
-        }
-
-        const messageId = messageData.id;
-        if (!messageId) {
-          logger.warn(
-            `Message without ID found during requeue check: ${JSON.stringify(
-              messageData
-            )}. Removing.`
-          );
-          pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
-          continue;
-        }
-
-        const metadataJson = await this.redisManager.redis.hget(
-          this.config.metadata_hash_name,
-          messageId
+    for (const queueName of queues) {
+      try {
+        // Check for pending messages (limit 100 for batch processing)
+        const pending = await this.redisManager.redis.xpending(
+          queueName,
+          this.config.consumer_group_name,
+          "-",
+          "+",
+          100
         );
-        let metadata;
-        if (metadataJson) {
-          try {
-            metadata = MessageMetadata.fromObject(JSON.parse(metadataJson));
-          } catch (parseError) {
-            logger.warn(
-              `Could not parse metadata for ${messageId}, assuming new: ${parseError}`
-            );
-            metadata = new MessageMetadata(
-              0,
-              null,
-              messageData.created_at || currentTime,
-              "Metadata parse error"
-            );
+
+        if (!pending || pending.length === 0) continue;
+
+        for (const [msgId, consumer, idleMs, deliveryCount] of pending) {
+          if (idleMs < this.config.ack_timeout_seconds * 1000) continue;
+
+          // Message timed out. Retrieve full message details.
+          const range = await this.redisManager.redis.xrange(queueName, msgId, msgId);
+          if (!range || range.length === 0) {
+            // Message in PEL but not in Stream (likely deleted). Clean up PEL.
+            await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+            continue;
           }
-        } else {
-          // No metadata, might be an orphaned message. Requeue with attempt 1 or DLQ.
-          logger.warn(
-            `No metadata for ${messageId}, assuming first attempt for requeue logic.`
-          );
-          metadata = new MessageMetadata(
-            0,
-            currentTime,
-            messageData.created_at || currentTime,
-            "Missing metadata"
-          );
-          // Ensure dequeued_at is set for timeout check logic to apply immediately if it's old
-        }
 
-        if (
-          metadata.dequeued_at &&
-          currentTime - metadata.dequeued_at > this.config.ack_timeout_seconds
-        ) {
+          const [streamId, fields] = range[0];
+          let messageJson = null;
+          for (let i = 0; i < fields.length; i += 2) {
+            if (fields[i] === "data") {
+              messageJson = fields[i + 1];
+              break;
+            }
+          }
+
+          if (!messageJson) {
+             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+             await this.redisManager.redis.xdel(queueName, msgId);
+             continue;
+          }
+
+          const messageData = this._deserializeMessage(messageJson);
+          if (!messageData || !messageData.id) {
+             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+             await this.redisManager.redis.xdel(queueName, msgId);
+             continue;
+          }
+
+          // Check metadata
+          const metadataJson = await this.redisManager.redis.hget(
+            this.config.metadata_hash_name,
+            messageData.id
+          );
+          
+          let metadata;
+          if (metadataJson) {
+             metadata = JSON.parse(metadataJson);
+          } else {
+             metadata = { attempt_count: 0, created_at: messageData.created_at };
+          }
+
+          // Use deliveryCount from Stream or metadata, whichever is higher/safer
+          // Metadata attempt_count is incremented on dequeue.
+          // If we are here, it means it wasn't ACKed.
+          
           if (metadata.attempt_count >= this.config.max_attempts) {
-            logger.warn(
-              `Message ${messageId} exceeded max attempts (${metadata.attempt_count}), moving to DLQ.`
-            );
-            // Enrich message with failure details before moving to DLQ
-            const dlqMessage = { ...messageData };
-            dlqMessage.failed_at = currentTime;
-            dlqMessage.attempt_count = metadata.attempt_count;
-            dlqMessage.last_error = "Max attempts exceeded";
-            const dlqMessageJson = this._serializeMessage(dlqMessage);
+            // Move to DLQ
+            logger.warn(`Message ${messageData.id} exceeded max attempts, moving to DLQ.`);
+            
+            // Enrich with error info
+            messageData.failed_at = currentTime;
+            messageData.last_error = "Max attempts exceeded (Stream)";
+            const dlqJson = this._serializeMessage(messageData);
 
-            pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
-            pipeline.rpush(this.config.dead_letter_queue_name, dlqMessageJson);
-            pipeline.hdel(this.config.metadata_hash_name, messageId); // Clean metadata for DLQ'd message
+            await this.redisManager.redis.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
+            await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+            await this.redisManager.redis.xdel(queueName, msgId);
+            await this.redisManager.redis.hdel(this.config.metadata_hash_name, messageData.id);
             movedToDlqCount++;
           } else {
-            logger.info(
-              `Message ${messageId} timed out, requeueing (attempt ${metadata.attempt_count + 1
-              }).`
-            );
-            pipeline.lrem(this.config.processing_queue_name, 1, messageJson);
-            pipeline.rpush(this.config.queue_name, messageJson); // Requeue to main queue
-
-            // Reset dequeued_at, keep attempt_count (it's incremented on dequeue)
-            // The Python version resets metadata, here we'll update for next dequeue
-            // metadata.dequeued_at = null; // Will be set on next dequeue
-            // metadata.attempt_count is already incremented by dequeue. If requeueing, it means this attempt failed.
-            // The next dequeue will increment it again. So, we don't modify attempt_count here.
-            // The Python code creates new metadata with the old attempt count. Here, we let dequeue handle it.
-            // For consistency with Python's logic of resetting metadata upon requeue:
-            const newRequeueMetadata = new MessageMetadata(
-              metadata.attempt_count,
-              null,
-              metadata.created_at,
-              "Requeued due to timeout"
-            );
-            pipeline.hset(
-              this.config.metadata_hash_name,
-              messageId,
-              JSON.stringify(newRequeueMetadata)
-            );
+            // Requeue (Re-add to stream to be picked up as new)
+            logger.info(`Requeuing timed-out message ${messageData.id}`);
+            
+            // We don't increment attempt_count here; it will be incremented on next dequeue.
+            // But we might want to note the timeout.
+            
+            await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
+            await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+            await this.redisManager.redis.xdel(queueName, msgId);
+            
+            // Update metadata to reflect requeue?
+            // Existing logic didn't do much except reset dequeued_at implicitly.
+            // We'll leave metadata as is, it will be updated on next dequeue.
+            
             requeuedCount++;
           }
         }
+      } catch (e) {
+        logger.error(`Error processing pending messages for ${queueName}: ${e}`);
       }
-
-      if (pipeline.length > 0) {
-        await pipeline.exec();
-      }
-
-      this._stats.requeued += requeuedCount;
-      this._stats.failed += movedToDlqCount;
-
-      if (requeuedCount > 0) logger.info(`Requeued ${requeuedCount} messages.`);
-      if (movedToDlqCount > 0)
-        logger.warn(`Moved ${movedToDlqCount} messages to DLQ.`);
-
-      return requeuedCount;
-    } catch (e) {
-      logger.error(`Error in requeueFailedMessages: ${e}`);
-      return 0;
     }
+
+    this._stats.requeued += requeuedCount;
+    this._stats.failed += movedToDlqCount;
+    return requeuedCount;
+  }
+
+  async _ensureFullMessage(msg, queueType) {
+    if (msg.payload && msg.type) return msg;
+
+    try {
+      const getQueueName = (type, priority = 0) => {
+        if (type === 'main') return this._getPriorityStreamName(priority);
+        if (type === 'dead') return this.config.dead_letter_queue_name;
+        if (type === 'acknowledged') return this.config.acknowledged_queue_name;
+        if (type === 'processing') return this._getPriorityStreamName(priority);
+        return this.config.queue_name;
+      };
+
+      if (queueType === 'acknowledged') {
+        const stream = await this.redisManager.redis.xrange(this.config.acknowledged_queue_name, "-", "+");
+        for (const [id, fields] of stream) {
+          let json = null;
+          for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+          const parsed = this._deserializeMessage(json);
+          if (parsed && parsed.id === msg.id) {
+            return { ...parsed, ...msg, _stream_id: id, _stream_name: this.config.acknowledged_queue_name };
+          }
+        }
+      } else {
+        const streamId = msg._stream_id;
+        if (streamId) {
+          const streamName = msg._stream_name || getQueueName(queueType, msg.priority);
+          if (streamName) {
+            const range = await this.redisManager.redis.xrange(streamName, streamId, streamId);
+            if (range && range.length > 0) {
+              const [id, fields] = range[0];
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const fullMsg = this._deserializeMessage(json);
+              if (fullMsg) {
+                return { ...fullMsg, ...msg, _stream_id: id, _stream_name: streamName };
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore errors, return original message
+    }
+    return msg;
+  }
+
+  async moveMessages(messages, fromQueue, toQueue) {
+    if (toQueue === 'processing') {
+      throw new Error("Cannot move messages directly to 'processing' state. Move to 'main' to re-process.");
+    }
+    
+    // Fetch full messages if missing payload/type (e.g. from partial UI selection)
+    const enrichedMessages = await Promise.all(messages.map(m => this._ensureFullMessage(m, fromQueue)));
+    
+    // Helper to get queue name by type
+    const getQueueName = (type, priority = 0) => {
+        if (type === 'main') return this._getPriorityStreamName(priority);
+        if (type === 'dead') return this.config.dead_letter_queue_name;
+        if (type === 'acknowledged') return this.config.acknowledged_queue_name;
+        if (type === 'processing') return this._getPriorityStreamName(priority);
+        return this.config.queue_name;
+    };
+
+    let movedCount = 0;
+    const pipeline = this.redisManager.pipeline();
+
+    for (const msg of enrichedMessages) {
+        if (!msg || !msg.id) continue;
+        
+        // 1. Remove from Source
+        if (fromQueue === 'acknowledged') {
+            // For acknowledged queue (Stream), use _stream_id if available
+            const streamId = msg._stream_id;
+            if (streamId) {
+                pipeline.xdel(this.config.acknowledged_queue_name, streamId);
+            } else {
+                logger.warn(`Missing _stream_id for message ${msg.id} in acknowledged queue, skipping removal`);
+            }
+        } else {
+            // Stream Source
+            const streamId = msg._stream_id;
+            if (streamId) {
+                const qName = (fromQueue === 'processing') ? this._getPriorityStreamName(msg.priority || 0) : getQueueName(fromQueue, msg.priority);
+                // For processing, we use _stream_name if available, otherwise use priority-based stream name
+                const actualStreamName = msg._stream_name || qName;
+
+                if (fromQueue === 'processing') {
+                    // For processing, we must ACK to remove from PEL, and DEL to remove from Stream.
+                    // Wait, usually moving from processing means we want to re-process or fail.
+                    // If we move to Main, we are effectively re-queuing.
+                    // If we move to DLQ, we are failing.
+                    pipeline.xack(actualStreamName, this.config.consumer_group_name, streamId);
+                }
+                pipeline.xdel(actualStreamName, streamId);
+            } else {
+                logger.warn(`Missing _stream_id for message ${msg.id}, skipping removal from ${fromQueue}`);
+            }
+        }
+
+        // 2. Add to Destination
+        const newMsg = { ...msg };
+        // Cleanup internal fields
+        delete newMsg._stream_id;
+        delete newMsg._stream_name;
+        
+        // Update metadata based on destination
+        if (toQueue === 'main') {
+            // Reset processing info if requeuing
+            delete newMsg.dequeued_at;
+            delete newMsg.processing_started_at;
+            // Optionally reset attempt_count? Users usually want retry.
+            // But if we reset attempt_count, it might loop forever.
+            // Let's keep attempt_count but maybe update it?
+            // Actually, if we move to main, we are treating it as a new enqueue but with history.
+        } else if (toQueue === 'acknowledged') {
+            newMsg.acknowledged_at = Date.now() / 1000;
+        } else if (toQueue === 'dead') {
+             newMsg.failed_at = Date.now() / 1000;
+             newMsg.last_error = newMsg.last_error || "Manually moved to DLQ";
+        }
+
+        const msgJson = this._serializeMessage(newMsg);
+        
+        // All destinations now use Streams
+        const destQueue = getQueueName(toQueue, newMsg.priority);
+        pipeline.xadd(destQueue, "*", "data", msgJson);
+        
+        if (toQueue === 'acknowledged') {
+            pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
+            pipeline.incr(this.config.total_acknowledged_key);
+            // Cleanup metadata hash
+            pipeline.hdel(this.config.metadata_hash_name, newMsg.id);
+        }
+        
+        movedCount++;
+    }
+
+    await pipeline.exec();
+    return movedCount;
   }
 
   async getMessagesByDateRange(startTimestamp, endTimestamp, limit) {
     const messages = [];
-    const queuesToCheck = [
-      { name: this.config.queue_name, type: "main" },
-      { name: this.config.processing_queue_name, type: "processing" },
-      { name: this.config.dead_letter_queue_name, type: "DLQ" },
-    ];
+    
+    // Build list of all queues to check (all priority streams + DLQ + acknowledged)
+    const queuesToCheck = this._getAllPriorityStreams().map((name, index) => ({
+      name,
+      type: index === this.config.max_priority_levels - 1 ? "main" : `priority_${this.config.max_priority_levels - 1 - index}`
+    }));
+    queuesToCheck.push({ name: this.config.dead_letter_queue_name, type: "DLQ" });
+    queuesToCheck.push({ name: this.config.acknowledged_queue_name, type: "acknowledged" });
 
     for (const queue of queuesToCheck) {
-      const allMessages = await this.redisManager.redis.lrange(queue.name, 0, -1);
+      // All queues now use Streams
+      const stream = await this.redisManager.redis.xrange(queue.name, "-", "+");
+      const allMessages = stream.map(([id, fields]) => {
+          let json = null;
+          for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+          return json;
+      });
+
       for (const messageJson of allMessages) {
+        if (!messageJson) continue;
         try {
-          const messageData = JSON.parse(messageJson);
+          const messageData = this._deserializeMessage(messageJson);
+          if (!messageData) continue;
           const messageTimestamp = messageData.created_at * 1000; // Convert to milliseconds
           if (messageTimestamp >= startTimestamp && messageTimestamp <= endTimestamp) {
             messages.push(messageData);
@@ -690,104 +939,51 @@ class OptimizedRedisQueue {
 
   async removeMessagesByDateRange(startTimestamp, endTimestamp) {
     let totalRemovedCount = 0;
-    const queuesToCheck = [
-      { name: this.config.queue_name, type: "main" },
-      { name: this.config.processing_queue_name, type: "processing" },
-      { name: this.config.dead_letter_queue_name, type: "DLQ" },
-    ];
+    
+    // Build list of all queues to check (all priority streams + DLQ + acknowledged)
+    const queuesToCheck = this._getAllPriorityStreams().map((name, index) => ({
+      name,
+      type: index === this.config.max_priority_levels - 1 ? "main" : `priority_${this.config.max_priority_levels - 1 - index}`
+    }));
+    queuesToCheck.push({ name: this.config.dead_letter_queue_name, type: "DLQ" });
+    queuesToCheck.push({ name: this.config.acknowledged_queue_name, type: "acknowledged" });
 
     for (const queueInfo of queuesToCheck) {
       logger.info(
-        `Verifying queue ${queueInfo.type
-        } for deletion by date range (${new Date(
-          startTimestamp * 1000
-        ).toISOString()} - ${new Date(endTimestamp * 1000).toISOString()})`
+        `Verifying queue ${queueInfo.type} for deletion by date range`
       );
+      
       let removedFromCurrentQueue = 0;
-      let offset = 0;
-      try {
-        while (true) {
-          const messagesJson = await this.redisManager.redis.lrange(
-            queueInfo.name,
-            offset,
-            offset + this.config.batch_size - 1
-          );
-
-          if (!messagesJson || messagesJson.length === 0) {
-            break; // No more messages or end of list for non-blocking lrange behavior
-          }
-
-          const pipeline = this.redisManager.pipeline();
-          let foundInBatch = 0;
-
-          for (const messageJson of messagesJson) {
-            const messageData = this._deserializeMessage(messageJson);
-            if (!messageData) {
-              // If message is undecipherable, can't check date. Decide if to remove or skip.
-              // For safety, skipping undecipherable messages in date range removal.
-              offset++; // If not removing, increment offset to avoid infinite loop on bad message
-              continue;
-            }
-            foundInBatch++;
-
-            const createdAt = messageData.created_at; // Assuming this is in seconds
-            if (
-              createdAt &&
-              createdAt >= startTimestamp &&
-              createdAt <= endTimestamp
-            ) {
-              pipeline.lrem(queueInfo.name, 1, messageJson);
-              if (
-                messageData.id &&
-                queueInfo.name === this.config.processing_queue_name
-              ) {
-                pipeline.hdel(this.config.metadata_hash_name, messageData.id);
+      
+      // All queues now use Streams
+      const stream = await this.redisManager.redis.xrange(queueInfo.name, "-", "+");
+      const pipeline = this.redisManager.pipeline();
+      
+      for (const [id, fields] of stream) {
+          let json = null;
+          for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+          const messageData = this._deserializeMessage(json);
+          if (messageData) {
+               const createdAt = messageData.created_at * 1000;
+               if (createdAt && createdAt >= startTimestamp && createdAt <= endTimestamp) {
+                   pipeline.xdel(queueInfo.name, id);
+                   // Only XACK for main queues (acknowledged queue doesn't use consumer groups)
+                   if (queueInfo.type !== 'acknowledged') {
+                       pipeline.xack(queueInfo.name, this.config.consumer_group_name, id);
+                   }
+                   if (messageData.id) {
+                       pipeline.hdel(this.config.metadata_hash_name, messageData.id);
+                   }
+                   removedFromCurrentQueue++;
               }
-              removedFromCurrentQueue++;
-            } else {
-              // If not removing this specific message, and lrange is used with static offsets,
-              // we need to increment the offset for the next batch correctly.
-              // However, lrem shifts indices, so processing in batches and re-fetching is safer.
-            }
           }
-
-          if (pipeline.length > 0) {
-            await pipeline.exec();
-          }
-
-          // If we processed messages but didn't remove all of them,
-          // the next offset should be based on what's left.
-          // Simplest for lrange is to just fetch next batch from current 'offset'.
-          // If all messages in the fetched batch were removed, offset effectively stays same for next fetch.
-          // If some were not removed, they are now at earlier indices.
-          // A more robust way is to iterate with LLEN and LINDEX/LPOP if order matters and changes are frequent.
-          // Given LREM, the list shrinks. Iterating with a fixed offset and batch size is okay if we expect removals.
-          // If no messages were found in the batch that matched, we must advance the offset.
-          if (foundInBatch === 0 && messagesJson.length > 0) {
-            // Processed a batch, but nothing matched criteria to remove
-            offset += messagesJson.length;
-          } else if (messagesJson.length < this.config.batch_size) {
-            break; // Reached end of list
-          }
-          // If items were removed, the list is shorter. The next lrange from the same offset will get new items.
-          // If no items were removed from the current batch, and it was a full batch, advance offset.
-          else if (
-            pipeline.length === 0 &&
-            messagesJson.length === this.config.batch_size
-          ) {
-            offset += this.config.batch_size;
-          }
-          // If pipeline.length > 0, items were removed, so the next lrange(queue, offset, ...) will correctly fetch.
-        }
-        if (removedFromCurrentQueue > 0) {
-          logger.info(
-            `Removed ${removedFromCurrentQueue} messages from ${queueInfo.type}`
-          );
-        }
-        totalRemovedCount += removedFromCurrentQueue;
-      } catch (e) {
-        logger.error(`Error removing messages from ${queueInfo.type}: ${e}`);
       }
+      if (pipeline.length > 0) await pipeline.exec();
+
+      if (removedFromCurrentQueue > 0) {
+        logger.info(`Removed ${removedFromCurrentQueue} messages from ${queueInfo.type}`);
+      }
+      totalRemovedCount += removedFromCurrentQueue;
     }
     return totalRemovedCount;
   }
@@ -795,23 +991,68 @@ class OptimizedRedisQueue {
   async getMetrics() {
     try {
       const pipeline = this.redisManager.pipeline();
-      pipeline.llen(this.config.queue_name);
-      pipeline.llen(this.config.processing_queue_name);
-      pipeline.llen(this.config.dead_letter_queue_name);
-      pipeline.llen(this.config.acknowledged_queue_name);
+      const priorityStreams = this._getAllPriorityStreams();
+      
+      // Queue lengths for all priority streams
+      for (const stream of priorityStreams) {
+        pipeline.xlen(stream);
+      }
+      
+      // DLQ and Acknowledged queue lengths
+      pipeline.xlen(this.config.dead_letter_queue_name);
+      pipeline.xlen(this.config.acknowledged_queue_name);
+      
+      // Stats
       pipeline.get(this.config.total_acknowledged_key);
       pipeline.hlen(this.config.metadata_hash_name);
+      
+      // Pending (Processing) Counts for all priority streams
+      for (const stream of priorityStreams) {
+        pipeline.xpending(stream, this.config.consumer_group_name);
+      }
+
       const results = await pipeline.exec();
+      
+      // Parse priority stream lengths
+      let totalMainQueueSize = 0;
+      let totalProcessingSize = 0;
+      const priorityDetails = {};
+      const priorityCount = priorityStreams.length;
+      
+      for (let i = 0; i < priorityCount; i++) {
+        const len = results[i][1] || 0;
+        const priority = priorityCount - 1 - i; // Reverse because streams are highest-first
+        priorityDetails[`priority_${priority}_queued`] = len;
+        totalMainQueueSize += len;
+      }
+      
+      // DLQ and Acknowledged
+      const dlqLen = results[priorityCount][1] || 0;
+      const ackLen = results[priorityCount + 1][1] || 0;
+      const totalAck = parseInt(results[priorityCount + 2][1] || '0', 10);
+      const metadataCount = results[priorityCount + 3][1] || 0;
+      
+      // Parse pending counts for all priority streams
+      for (let i = 0; i < priorityCount; i++) {
+        const pendingResult = results[priorityCount + 4 + i][1];
+        const pendingCount = pendingResult ? pendingResult[0] : 0;
+        const priority = priorityCount - 1 - i;
+        priorityDetails[`priority_${priority}_processing`] = pendingCount;
+        totalProcessingSize += pendingCount;
+      }
 
       const queueMetrics = {
-        main_queue_size: results[0][1],
-        processing_queue_size: results[1][1],
-        dead_letter_queue_size: results[2][1],
-        acknowledged_queue_size: results[3][1],
-        total_acknowledged: parseInt(results[4][1] || '0', 10),
-        metadata_count: results[5][1],
+        main_queue_size: totalMainQueueSize,
+        processing_queue_size: totalProcessingSize,
+        dead_letter_queue_size: dlqLen,
+        acknowledged_queue_size: ackLen,
+        total_acknowledged: totalAck,
+        metadata_count: metadataCount,
+        priority_levels: this.config.max_priority_levels,
+        // Detailed breakdown by priority
+        details: priorityDetails
       };
-      return { ...queueMetrics, stats: { ...this._stats } }; // Return a copy of stats
+      return { ...queueMetrics, stats: { ...this._stats } };
     } catch (e) {
       logger.error(`Error getting metrics: ${e}`);
       return { error: e.toString() };
@@ -842,65 +1083,59 @@ class OptimizedRedisQueue {
   async deleteMessage(messageId, queueType) {
     try {
       const redis = this.redisManager.redis;
-      let queueName;
+      let streamNames = [];
 
-      // Determine which queue to delete from
       switch (queueType) {
         case 'main':
-          queueName = this.config.queue_name;
+          streamNames = this._getAllPriorityStreams();
           break;
         case 'processing':
-          queueName = this.config.processing_queue_name;
+          // Processing messages are in the priority streams (but in PEL)
+          // To "delete" from processing, we XACK + XDEL from stream.
+          streamNames = this._getAllPriorityStreams();
           break;
         case 'dead':
-          queueName = this.config.dead_letter_queue_name;
+          streamNames = [this.config.dead_letter_queue_name];
           break;
         case 'acknowledged':
-          queueName = this.config.acknowledged_queue_name;
+          streamNames = [this.config.acknowledged_queue_name];
           break;
         default:
           throw new Error(`Invalid queue type: ${queueType}`);
       }
 
-      // Get all messages from the queue
-      const messages = await redis.lrange(queueName, 0, -1);
-
-      // Find the message to delete
-      let messageIndex = -1;
-      let messageToDelete = null;
-
-      for (let i = 0; i < messages.length; i++) {
-        const parsed = this._deserializeMessage(messages[i]);
-        if (parsed && parsed.id === messageId) {
-          messageIndex = i;
-          messageToDelete = messages[i];
-          break;
-        }
+      // All queues now use Streams
+      let deleted = false;
+      for (const stream of streamNames) {
+          // Scan stream to find message with matching ID in JSON
+          // Optimization: XRANGE full scan. For production, Redis Search is better.
+          const entries = await redis.xrange(stream, "-", "+");
+          for (const [id, fields] of entries) {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const msg = this._deserializeMessage(json);
+              if (msg && msg.id === messageId) {
+                  // Found it.
+                  const pipeline = redis.pipeline();
+                  pipeline.xdel(stream, id);
+                  // XACK only for queues with consumer groups (not acknowledged)
+                  if (queueType !== 'acknowledged') {
+                      pipeline.xack(stream, this.config.consumer_group_name, id);
+                  }
+                  await pipeline.exec();
+                  deleted = true;
+                  break;
+              }
+          }
+          if (deleted) break;
       }
+      if (!deleted) throw new Error(`Message ${messageId} not found in ${queueType} queue`);
 
-      if (messageIndex === -1) {
-        throw new Error(`Message with ID ${messageId} not found in ${queueType} queue`);
-      }
-
-      // Remove the message from the queue
-      // Use LREM to remove the specific message
-      const removed = await redis.lrem(queueName, 1, messageToDelete);
-
-      if (removed === 0) {
-        throw new Error(`Failed to remove message ${messageId} from ${queueType} queue`);
-      }
-
-      // Also remove from metadata if it exists
+      // Metadata cleanup
       await redis.hdel(this.config.metadata_hash_name, messageId);
 
       logger.info(`Successfully deleted message ${messageId} from ${queueType} queue`);
-
-      return {
-        success: true,
-        messageId,
-        queueType,
-        message: 'Message deleted successfully'
-      };
+      return { success: true, messageId, queueType, message: 'Message deleted successfully' };
 
     } catch (error) {
       logger.error(`Error deleting message ${messageId} from ${queueType} queue: ${error.message}`);
@@ -911,89 +1146,57 @@ class OptimizedRedisQueue {
   async updateMessage(messageId, queueType, updates) {
     try {
       const redis = this.redisManager.redis;
-      let queueName;
-
-      // Determine which queue to update
-      // We only allow updating Main and Dead Letter queues
+      let streamNames = [];
+      
       switch (queueType) {
         case 'main':
-          queueName = this.config.queue_name;
+          streamNames = this._getAllPriorityStreams();
           break;
         case 'dead':
-          queueName = this.config.dead_letter_queue_name;
+          streamNames = [this.config.dead_letter_queue_name];
           break;
         default:
           throw new Error(`Cannot update message in ${queueType} queue. Only 'main' and 'dead' queues are supported.`);
       }
 
-      // Get all messages from the queue
-      const messages = await redis.lrange(queueName, 0, -1);
-
-      // Find the message to update
-      let messageIndex = -1;
-      let originalMessageJson = null;
       let originalMessageData = null;
+      let originalStream = null;
+      let originalStreamId = null;
 
-      for (let i = 0; i < messages.length; i++) {
-        const parsed = this._deserializeMessage(messages[i]);
-        if (parsed && parsed.id === messageId) {
-          messageIndex = i;
-          originalMessageJson = messages[i];
-          originalMessageData = parsed;
-          break;
-        }
+      // Find message
+      for (const stream of streamNames) {
+          const entries = await redis.xrange(stream, "-", "+");
+          for (const [id, fields] of entries) {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const msg = this._deserializeMessage(json);
+              if (msg && msg.id === messageId) {
+                  originalMessageData = msg;
+                  originalStream = stream;
+                  originalStreamId = id;
+                  break;
+              }
+          }
+          if (originalMessageData) break;
       }
 
-      if (messageIndex === -1) {
+      if (!originalMessageData) {
         throw new Error(`Message with ID ${messageId} not found in ${queueType} queue`);
       }
 
-      // Create updated message data
-      const updatedMessageData = {
-        ...originalMessageData,
-        ...updates,
-        id: messageId // Ensure ID remains the same
-      };
-
-      // Serialize updated message
+      const updatedMessageData = { ...originalMessageData, ...updates, id: messageId };
       const updatedMessageJson = this._serializeMessage(updatedMessageData);
 
       const pipeline = redis.pipeline();
+      // Remove old
+      pipeline.xdel(originalStream, originalStreamId);
+      // Add new (Append to stream)
+      // Note: This changes the timestamp/order.
+      pipeline.xadd(originalStream, "*", "data", updatedMessageJson);
 
-      // Remove the old message
-      pipeline.lrem(queueName, 1, originalMessageJson);
-
-      // Add the new message
-      // If it's a priority update or we want to maintain order, we should be careful.
-      // For simplicity, we'll push it to the list.
-      // If updating priority, we might want to respect it (L/R push).
-      // If just updating payload, ideally we'd put it back in the same spot, but Redis Lists don't support easy "replace at index" if the list changed.
-      // Given this is a queue, re-enqueuing (moving to back or front) is often acceptable or even desired (re-prioritize).
-      // However, for "Edit", users might expect it to stay in place.
-      // To stay in place: LSET index value. But we need the index.
-      // We found the index above, but it might have changed if concurrent ops happened.
-      // But let's try LSET if we can trust the index for a split second, OR just re-enqueue.
-      // Re-enqueuing is safer against race conditions with LREM.
-      // Let's stick to remove + push.
-      
-      if (updatedMessageData.priority > 0) {
-        pipeline.lpush(queueName, updatedMessageJson);
-      } else {
-        pipeline.rpush(queueName, updatedMessageJson);
-      }
-
-      const results = await pipeline.exec();
-      
-      // Check LREM result
-      if (results[0][0]) { // Error in LREM
-         throw results[0][0];
-      }
-      if (results[0][1] === 0) { // 0 removed
-         throw new Error("Message was processed or moved before update could complete.");
-      }
+      await pipeline.exec();
 
       logger.info(`Successfully updated message ${messageId} in ${queueType} queue`);
-
       return {
         success: true,
         messageId,
@@ -1012,126 +1215,212 @@ class OptimizedRedisQueue {
     try {
       const redis = this.redisManager.redis;
       const pipeline = redis.pipeline();
+      const priorityStreams = this._getAllPriorityStreams();
+      const priorityCount = priorityStreams.length;
 
-      // Get queue lengths
-      pipeline.llen(this.config.queue_name);
-      pipeline.llen(this.config.processing_queue_name);
-      pipeline.llen(this.config.dead_letter_queue_name);
-      pipeline.llen(this.config.acknowledged_queue_name);
+      // Get queue lengths for all priority streams
+      for (const stream of priorityStreams) {
+        pipeline.xlen(stream);
+      }
+      
+      // DLQ, Acknowledged, and total acknowledged key
+      pipeline.xlen(this.config.dead_letter_queue_name);
+      pipeline.xlen(this.config.acknowledged_queue_name);
       pipeline.get(this.config.total_acknowledged_key);
 
-      // Get queue contents (limited to 100 items each)
-      pipeline.lrange(this.config.queue_name, 0, 99);
-      pipeline.lrange(this.config.processing_queue_name, 0, 99);
-      pipeline.lrange(this.config.dead_letter_queue_name, 0, 99);
-      pipeline.lrange(this.config.acknowledged_queue_name, 0, 99);
+      // Get queue contents (limited to 100 items each) for all priority streams
+      for (const stream of priorityStreams) {
+        pipeline.xrevrange(stream, "+", "-", "COUNT", 100);
+      }
+      pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 100);
+      pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 100);
 
-      // Get metadata for processed/failed counts
+      // Get metadata
       pipeline.hgetall(this.config.metadata_hash_name);
+      
+      // Get Processing (Pending) for all priority streams
+      for (const stream of priorityStreams) {
+        pipeline.xpending(stream, this.config.consumer_group_name, "-", "+", 100);
+      }
 
       const results = await pipeline.exec();
 
-      const [mainLen, procLen, dlqLen, ackLen, totalAck, mainMsgs, procMsgs, dlqMsgs, ackMsgs, metadata] = results.map(r => r[1]);
-
-      // Parse messages and collect available types
-      const availableTypes = new Set();
-      const parseMessages = (messages) => {
-        const parsed = messages.map(msg => {
-          const parsedMsg = this._deserializeMessage(msg);
-          if (parsedMsg && parsedMsg.type) {
-            availableTypes.add(parsedMsg.type);
-          }
-          return parsedMsg || { error: 'Failed to parse message' };
-        });
-
-        // Filter by type if specified
-        if (typeFilter) {
-          return parsed.filter(msg => msg.type === typeFilter);
-        }
-        return parsed;
-      };
-
-      // Count processed and failed messages from metadata
-      let totalProcessed = 0;
-      let totalFailed = 0;
-
-      if (metadata) {
-        Object.values(metadata).forEach(metaStr => {
-          try {
-            const meta = JSON.parse(metaStr);
-            if (meta.attempt_count >= this.config.max_attempts) {
-              totalFailed++;
-            } else if (meta.dequeued_at) {
-              totalProcessed++;
-            }
-          } catch (e) {
-            // Skip invalid metadata
-          }
-        });
+      // Parse lengths
+      let totalMainLen = 0;
+      for (let i = 0; i < priorityCount; i++) {
+        totalMainLen += results[i][1] || 0;
       }
-
-      const mainMessages = parseMessages(mainMsgs || []);
+      const dlqLen = results[priorityCount][1] || 0;
+      const ackLen = results[priorityCount + 1][1] || 0;
+      const totalAck = parseInt(results[priorityCount + 2][1] || '0', 10);
       
-      // Create a metadata lookup map for easier access
-      const metadataMap = {};
-      if (metadata) {
-        Object.entries(metadata).forEach(([key, metaStr]) => {
-          try {
-             // Skip if key looks like "original_json_string" (contains :)
-             if (!key.includes(':')) {
-                metadataMap[key] = JSON.parse(metaStr);
-             }
-          } catch (e) {
-            // ignore parse error
-          }
+      // Parse messages from all priority streams
+      const contentStartIdx = priorityCount + 3;
+      
+      // Helper to parse Stream messages
+      const parseStreamMessages = (rawMessages, streamName) => {
+          if (!rawMessages) return [];
+          return rawMessages.map(([id, fields]) => {
+              let msgJson = null;
+              for(let i=0; i<fields.length; i+=2) {
+                  if (fields[i] === 'data') {
+                      msgJson = fields[i+1];
+                      break;
+                  }
+              }
+              const msg = this._deserializeMessage(msgJson);
+              if (msg) {
+                  msg._stream_id = id;
+                  msg._stream_name = streamName;
+              }
+              return msg || { id, error: 'Failed to parse' };
+          });
+      };
+
+      // Collect main messages from all priority streams
+      let mainMessages = [];
+      for (let i = 0; i < priorityCount; i++) {
+        const streamMsgs = results[contentStartIdx + i][1];
+        const streamName = priorityStreams[i];
+        mainMessages.push(...parseStreamMessages(streamMsgs, streamName));
+      }
+      mainMessages = mainMessages.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 100);
+      
+      const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
+      const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
+      const metadata = results[contentStartIdx + priorityCount + 2][1];
+      
+      const deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
+
+      // Processing messages from all priority streams
+      const pendingStartIdx = contentStartIdx + priorityCount + 3;
+      const processingMessages = [];
+      const pendingToCheck = [];
+
+      for (let i = 0; i < priorityCount; i++) {
+        const pendingResult = results[pendingStartIdx + i][1];
+        const pending = Array.isArray(pendingResult) ? pendingResult : [];
+        const streamName = priorityStreams[i];
+        const priority = priorityCount - 1 - i; // Convert index to priority
+        
+        pending.forEach(([id, consumer, idle, count]) => {
+           pendingToCheck.push({ id, streamName, priority, count });
         });
       }
 
-      // Helper to enrich messages with metadata
-      const enrichMessages = (messages) => {
-        return messages.map(msg => {
-          if (msg && msg.id && metadataMap[msg.id]) {
-            const meta = metadataMap[msg.id];
-            return {
-              ...msg,
-              processing_started_at: meta.dequeued_at,
-              attempt_count: meta.attempt_count,
-            };
-          }
-          return msg;
-        });
-      };
+      // Fetch details for pending messages to verify existence (filter out ghosts)
+      if (pendingToCheck.length > 0) {
+          const checkPipeline = redis.pipeline();
+          pendingToCheck.forEach(p => {
+              checkPipeline.xrange(p.streamName, p.id, p.id);
+          });
+          const checkResults = await checkPipeline.exec();
+          
+          pendingToCheck.forEach((p, index) => {
+               const res = checkResults[index] ? checkResults[index][1] : null;
+               // If res is empty array, message does not exist in stream (ghost)
+               if (res && res.length > 0) {
+                   const [id, fields] = res[0];
+                   let msgJson = null;
+                   for(let k=0; k<fields.length; k+=2) {
+                       if (fields[k] === 'data') {
+                           msgJson = fields[k+1];
+                           break;
+                       }
+                   }
+                   
+                   let msgData = { 
+                       id: p.id, 
+                       _stream_id: p.id, 
+                       _stream_name: p.streamName, 
+                       attempt_count: p.count,
+                       priority: p.priority
+                   };
 
-      const processingMessages = enrichMessages(parseMessages(procMsgs || []));
-      const deadMessages = enrichMessages(parseMessages(dlqMsgs || []));
-      const acknowledgedMessages = parseMessages(ackMsgs || []);
+                   if (msgJson) {
+                       const parsed = this._deserializeMessage(msgJson);
+                       if (parsed) {
+                           // Merge parsed data but preserve stream metadata
+                           msgData = { ...msgData, ...parsed, _stream_id: p.id, _stream_name: p.streamName };
+                       }
+                   }
+                   processingMessages.push(msgData);
+               }
+           });
+           
+           // Fetch metadata for processing messages to get start times and other details
+           if (processingMessages.length > 0) {
+               const metaPipeline = redis.pipeline();
+               processingMessages.forEach(m => {
+                   // Only fetch if we have an ID (which we should from message content or stream ID)
+                   // Prefer payload ID if available, otherwise use stream ID?
+                   // Metadata is stored by payload ID usually.
+                   if (m.id && m.id !== 'See details') {
+                        metaPipeline.hget(this.config.metadata_hash_name, m.id);
+                   }
+               });
+               
+               const metaResults = await metaPipeline.exec();
+               
+               let metaIndex = 0;
+               processingMessages.forEach(m => {
+                   if (m.id && m.id !== 'See details') {
+                       const metaRes = metaResults[metaIndex];
+                       metaIndex++;
+                       
+                       if (metaRes && !metaRes[0] && metaRes[1]) {
+                           try {
+                               const meta = JSON.parse(metaRes[1]);
+                               // Merge metadata fields
+                               if (meta.processing_started_at) m.processing_started_at = meta.processing_started_at;
+                               if (meta.dequeued_at) m.dequeued_at = meta.dequeued_at;
+                               if (meta.attempt_count) m.attempt_count = meta.attempt_count; 
+                               if (meta.last_error) m.last_error = meta.last_error;
+                           } catch (e) {
+                               // Ignore parse errors
+                           }
+                       }
+                   }
+               });
+           }
+       }
+
+      // Parse acknowledged messages (now also a Stream)
+      const acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
+      
+      // Collect types from all stream messages
+      const availableTypes = new Set();
+      [...mainMessages, ...deadMessages, ...acknowledgedMessages].forEach(m => {
+          if (m.type) availableTypes.add(m.type);
+      });
 
       return {
         mainQueue: {
           name: this.config.queue_name,
-          length: typeFilter ? mainMessages.length : (mainLen || 0),
+          length: totalMainLen,
           messages: mainMessages,
+          priority_levels: this.config.max_priority_levels,
         },
         processingQueue: {
-          name: this.config.processing_queue_name,
-          length: typeFilter ? processingMessages.length : (procLen || 0),
+          name: "processing_pending", // Virtual name
+          length: processingMessages.length,
           messages: processingMessages,
         },
         deadLetterQueue: {
           name: this.config.dead_letter_queue_name,
-          length: typeFilter ? deadMessages.length : (dlqLen || 0),
+          length: dlqLen,
           messages: deadMessages,
         },
         acknowledgedQueue: {
           name: this.config.acknowledged_queue_name,
-          length: typeFilter ? acknowledgedMessages.length : (ackLen || 0),
+          length: ackLen,
           messages: acknowledgedMessages,
-          total: parseInt(totalAck || '0', 10)
+          total: totalAck
         },
         metadata: {
-          totalProcessed,
-          totalFailed,
-          totalAcknowledged: parseInt(totalAck || '0', 10)
+          totalProcessed: 0, // Harder to calculate with Streams without full scan
+          totalFailed: 0,
+          totalAcknowledged: totalAck
         },
         availableTypes: Array.from(availableTypes).sort(),
       };
@@ -1157,52 +1446,147 @@ class OptimizedRedisQueue {
       } = params;
 
       const redis = this.redisManager.redis;
-      let queueName;
+      let rawMessages = [];
+      let isStream = true;
 
-      switch (queueType) {
-        case 'main': queueName = this.config.queue_name; break;
-        case 'processing': queueName = this.config.processing_queue_name; break;
-        case 'dead': queueName = this.config.dead_letter_queue_name; break;
-        case 'acknowledged': queueName = this.config.acknowledged_queue_name; break;
-        default: throw new Error(`Invalid queue type: ${queueType}`);
-      }
+      if (queueType === 'main') {
+          // Fetch from all priority streams
+          const priorityStreams = this._getAllPriorityStreams();
+          
+          const parse = (msgs, name) => msgs.map(([id, fields]) => {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const m = this._deserializeMessage(json);
+              if(m) { m._stream_id = id; m._stream_name = name; }
+              return m;
+          }).filter(Boolean);
 
-      // Fetch ALL messages to filter/sort (Redis List limitation)
-      // For production with millions of messages, this should be replaced by Redis Search or ZSETS
-      const rawMessages = await redis.lrange(queueName, 0, -1);
-      
-      // Get metadata if needed for filtering/sorting by fields in metadata
-      let metadataMap = {};
-      if (queueType === 'processing' || queueType === 'dead' || sortBy === 'processing_started_at' || sortBy === 'attempt_count') {
-          const allMeta = await redis.hgetall(this.config.metadata_hash_name);
-          Object.entries(allMeta).forEach(([key, val]) => {
-              if (!key.includes(':')) {
-                  try { metadataMap[key] = JSON.parse(val); } catch(e) {}
+          for (const streamName of priorityStreams) {
+              const streamData = await redis.xrange(streamName, "-", "+");
+              rawMessages.push(...parse(streamData, streamName));
+          }
+          isStream = false; // Already parsed
+      } else if (queueType === 'processing') {
+          // Fetch pending from all priority streams
+          const priorityStreams = this._getAllPriorityStreams();
+          
+          const getPendingSafe = async (queueName) => {
+              try {
+                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 1000);
+                  return Array.isArray(res) ? res : [];
+              } catch (e) {
+                  const msg = e.message || '';
+                  if (msg.includes('NOGROUP') || msg.includes('no such key')) {
+                      return [];
+                  }
+                  throw e;
               }
-          });
-      }
+          };
 
-      let messages = rawMessages.map(msg => {
-          const parsed = this._deserializeMessage(msg);
-          if (parsed) {
-              // Initialize default values for schema validation, preserving existing values if present
-            parsed.attempt_count = parsed.attempt_count || 0;
-            parsed.dequeued_at = parsed.dequeued_at || null;
-            parsed.last_error = parsed.last_error || null;
-            parsed.processing_duration = parsed.processing_duration || 0;
-            parsed.processing_started_at = parsed.processing_started_at || null;
-
-              if (parsed.id && metadataMap[parsed.id]) {
-                  const meta = metadataMap[parsed.id];
-                  parsed.processing_started_at = meta.dequeued_at;
-                  parsed.dequeued_at = meta.dequeued_at;
-                  parsed.attempt_count = meta.attempt_count;
-                  parsed.last_error = meta.last_error;
-                  parsed.processing_duration = meta.processing_duration || 0;
+          // Collect pending from all priority streams
+          const allPending = [];
+          const streamPendingMap = new Map(); // Map stream ID to stream name
+          
+          for (const streamName of priorityStreams) {
+              const pending = await getPendingSafe(streamName);
+              for (const p of pending) {
+                  allPending.push(p);
+                  streamPendingMap.set(p[0], streamName);
               }
           }
-          return parsed;
-      }).filter(Boolean);
+          
+          if (allPending.length === 0) {
+              rawMessages = [];
+          } else {
+              // Fetch full message data for all pending
+              const pipeline = redis.pipeline();
+              for (const p of allPending) {
+                  const streamName = streamPendingMap.get(p[0]);
+                  pipeline.xrange(streamName, p[0], p[0]);
+              }
+              
+              const results = await pipeline.exec();
+              
+              let messagesWithIds = [];
+              if (results) {
+                  messagesWithIds = results.map((r, i) => {
+                      if(!r || !r[1] || !r[1][0]) return null;
+                      const [id, fields] = r[1][0];
+                      let json = null;
+                      for(let j=0; j<fields.length; j+=2) if(fields[j]==='data') json=fields[j+1];
+                      const m = this._deserializeMessage(json);
+                      if(m) { 
+                          m._stream_id = id; 
+                          m._stream_name = streamPendingMap.get(id);
+                      }
+                      return m;
+                  }).filter(Boolean);
+
+                  // Fetch metadata for all found messages
+                  if (messagesWithIds.length > 0) {
+                      const metaPipeline = redis.pipeline();
+                      messagesWithIds.forEach(m => {
+                          metaPipeline.hget(this.config.metadata_hash_name, m.id);
+                      });
+                      const metaResults = await metaPipeline.exec();
+                      
+                      // Create a map for pending info for fast lookup
+                      const pendingMap = new Map();
+                      allPending.forEach(p => pendingMap.set(p[0], { idle: p[2], count: p[3] }));
+
+                      messagesWithIds.forEach((m, index) => {
+                          const metaRes = metaResults[index];
+                          if (metaRes && !metaRes[0] && metaRes[1]) {
+                              try {
+                                  const meta = JSON.parse(metaRes[1]);
+                                  m.attempt_count = meta.attempt_count;
+                                  m.dequeued_at = meta.dequeued_at;
+                                  m.processing_started_at = meta.dequeued_at;
+                                  m.last_error = meta.last_error;
+                              } catch (e) {
+                                  // ignore
+                              }
+                          } else {
+                              const pendingInfo = pendingMap.get(m._stream_id);
+                              if (pendingInfo) {
+                                  m.attempt_count = pendingInfo.count;
+                                  m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;
+                                  m.processing_started_at = m.dequeued_at;
+                              }
+                          }
+                      });
+                  }
+                  rawMessages = messagesWithIds;
+              }
+          }
+          isStream = false;
+
+      } else if (queueType === 'dead') {
+          const stream = await redis.xrange(this.config.dead_letter_queue_name, "-", "+");
+          rawMessages = stream.map(([id, fields]) => {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const m = this._deserializeMessage(json);
+              if(m) { m._stream_id = id; m._stream_name = this.config.dead_letter_queue_name; }
+              return m;
+          }).filter(Boolean);
+          isStream = false;
+      } else if (queueType === 'acknowledged') {
+          // Stream (now consistent with other queues)
+          const stream = await redis.xrange(this.config.acknowledged_queue_name, "-", "+");
+          rawMessages = stream.map(([id, fields]) => {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const m = this._deserializeMessage(json);
+              if(m) { m._stream_id = id; m._stream_name = this.config.acknowledged_queue_name; }
+              return m;
+          }).filter(Boolean);
+          isStream = false; // Already parsed
+      } else {
+          throw new Error(`Invalid queue type: ${queueType}`);
+      }
+
+      let messages = rawMessages;
 
       // Filter
       if (filterType && filterType !== 'all') {
@@ -1281,9 +1665,12 @@ class OptimizedRedisQueue {
     try {
       const pipeline = this.redisManager.pipeline();
 
-      // Clear all queues and metadata
-      pipeline.del(this.config.queue_name);
-      pipeline.del(this.config.processing_queue_name);
+      // Clear all priority streams
+      for (const stream of this._getAllPriorityStreams()) {
+        pipeline.del(stream);
+      }
+      
+      // Clear other queues and metadata
       pipeline.del(this.config.dead_letter_queue_name);
       pipeline.del(this.config.acknowledged_queue_name);
       pipeline.del(this.config.total_acknowledged_key);
@@ -1310,30 +1697,37 @@ class OptimizedRedisQueue {
 
   async clearQueue(queueType) {
     try {
-      let queueName;
       const pipeline = this.redisManager.pipeline();
+      const priorityStreams = this._getAllPriorityStreams();
 
       switch (queueType) {
         case 'main':
-          queueName = this.config.queue_name;
+          // Clear all priority streams
+          for (const stream of priorityStreams) {
+            pipeline.del(stream);
+          }
           break;
         case 'processing':
-          queueName = this.config.processing_queue_name;
+          // Reset consumer groups for all priority streams
+          // This clears the PEL (processing state) but messages remain in streams
+          logger.warn("Clearing processing queue resets consumer groups, but messages remain in streams.");
+          for (const stream of priorityStreams) {
+            pipeline.xgroup("DESTROY", stream, this.config.consumer_group_name);
+            pipeline.xgroup("CREATE", stream, this.config.consumer_group_name, "0", "MKSTREAM");
+          }
           break;
         case 'dead':
-          queueName = this.config.dead_letter_queue_name;
+          pipeline.del(this.config.dead_letter_queue_name);
           break;
         case 'acknowledged':
-          queueName = this.config.acknowledged_queue_name;
+          pipeline.del(this.config.acknowledged_queue_name);
           break;
         default:
           throw new Error(`Cannot clear ${queueType} queue. Invalid queue type.`);
       }
 
-      pipeline.del(queueName);
-      
       await pipeline.exec();
-      logger.info(`Cleared ${queueType} queue (${queueName})`);
+      logger.info(`Cleared ${queueType} queue`);
       return true;
     } catch (error) {
       logger.error(`Error clearing ${queueType} queue: ${error.message}`);
@@ -1355,14 +1749,7 @@ async function demoOptimizedQueue() {
     await queue.redisManager.testConnection(); // Test connection first
 
     logger.info("Cleaning queues for demo...");
-    const p = queue.redisManager.pipeline();
-    p.del(config.queue_name);
-    p.del(config.processing_queue_name);
-    p.del(config.dead_letter_queue_name);
-    p.del(config.metadata_hash_name);
-    p.del(config.acknowledged_queue_name);
-    p.del(config.total_acknowledged_key);
-    await p.exec();
+    await queue.clearAllQueues();
     logger.info("Queues cleaned for demo.");
 
     logger.info("\n--- Demo: Batch Enqueueing ---");
@@ -1452,8 +1839,10 @@ async function demoOptimizedQueue() {
   }
 }
 
+import { fileURLToPath } from 'url';
+
 // Run demo if the script is run directly
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   demoOptimizedQueue().catch((err) => {
     logger.error(`Fatal error in demo: ${err.stack}`);
     process.exit(1);
