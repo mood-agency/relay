@@ -18,26 +18,21 @@ routes.forEach((route) => {
 // Create main app
 const mainApp = createApp();
 
-// Serve static files from public directory
-mainApp.use('/public/*', serveStatic({ root: './' }));
-
-// Dashboard route
-mainApp.get('/dashboard', (c) => {
-  try {
-    const dashboardPath = join(process.cwd(), 'public', 'dashboard.html');
-    const dashboardContent = readFileSync(dashboardPath, 'utf-8');
-    return c.html(dashboardContent);
-  } catch (error) {
-    return c.text('Dashboard not found', 404);
-  }
-});
+// Mount API routes at /api (MOUNT THIS FIRST)
+mainApp.route('/api', apiApp);
 
 // Root redirect to dashboard
 mainApp.get('/', (c) => {
   return c.redirect('/dashboard');
 });
 
-// Mount API routes at /api
-mainApp.route('/api', apiApp);
+// Serve assets from dist
+mainApp.use('/assets/*', serveStatic({ root: './dashboard-ui/dist' }));
+
+// Dashboard route - serve index.html
+mainApp.get('/dashboard', serveStatic({ path: './dashboard-ui/dist/index.html' }));
+
+// Catch-all for other static files in dist root (like vite.svg, etc)
+mainApp.use('/*', serveStatic({ root: './dashboard-ui/dist' }));
 
 export default mainApp;

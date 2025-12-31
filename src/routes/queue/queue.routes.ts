@@ -11,12 +11,12 @@ const tags = ["Queue"];
 
 /* 
 
-Ahora puedes usar la API con estos endpoints:
-POST /queue/message - Encolar un mensaje
-POST /queue/batch - Encolar múltiples mensajes
-GET /queue/message?timeout=30 - Obtener un mensaje de la cola
-POST /queue/ack - Confirmar procesamiento de un mensaje
-GET /queue/metrics - Obtener métricas de la cola
+Now you can use the API with these endpoints:
+POST /queue/message - Enqueue a message
+POST /queue/batch - Enqueue multiple messages
+GET /queue/message?timeout=30 - Get a message from the queue
+POST /queue/ack - Acknowledge message processing
+GET /queue/metrics - Get queue metrics
 */
 
 export const QueueMessageSchema = z.object({
@@ -37,6 +37,7 @@ export const DequeuedMessageSchema = z.object({
   dequeued_at: z.number().nullable(),
   last_error: z.string().nullable(),
   processing_duration: z.number(),
+  acknowledged_at: z.number().optional(),
 });
 
 export type DequeuedMessage = z.infer<typeof DequeuedMessageSchema>;
@@ -239,6 +240,47 @@ export const getQueueStatus = createRoute({
 
 export type GetQueueStatusRoute = typeof getQueueStatus;
 
+export const getMessages = createRoute({
+  path: "/queue/:queueType/messages",
+  method: "get",
+  tags,
+  request: {
+    params: z.object({
+      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+    }),
+    query: z.object({
+      page: z.string().optional(),
+      limit: z.string().optional(),
+      sortBy: z.string().optional(),
+      sortOrder: z.enum(["asc", "desc"]).optional(),
+      filterType: z.string().optional(),
+      filterPriority: z.string().optional(),
+      filterAttempts: z.string().optional(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      search: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        messages: z.array(DequeuedMessageSchema),
+        pagination: z.object({
+          total: z.number(),
+          page: z.number(),
+          limit: z.number(),
+          totalPages: z.number(),
+        }),
+      }),
+      "Queue Messages"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type GetMessagesRoute = typeof getMessages;
+
 export const deleteMessage = createRoute({
   path: "/queue/message/:messageId",
   method: "delete",
@@ -247,12 +289,9 @@ export const deleteMessage = createRoute({
     params: z.object({
       messageId: z.string(),
     }),
-    body: jsonContentRequired(
-      z.object({
-        queueType: z.enum(["main", "processing", "dead"]),
-      }),
-      "Queue Type"
-    ),
+    query: z.object({
+      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+    }),
   },
   responses: {
     200: jsonContent(
@@ -271,3 +310,83 @@ export const deleteMessage = createRoute({
 });
 
 export type DeleteMessageRoute = typeof deleteMessage;
+
+export const updateMessage = createRoute({
+  path: "/queue/message/:messageId",
+  method: "put",
+  tags,
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+    query: z.object({
+      queueType: z.enum(["main", "dead"]),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        type: z.string().optional(),
+        payload: z.any().optional(),
+        priority: z.number().optional(),
+      }),
+      "Update Message"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        messageId: z.string(),
+        queueType: z.string(),
+        message: z.string(),
+        data: z.any(),
+      }),
+      "Message Updated"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    404: jsonContent(z.object({ message: z.string() }), "Message not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type UpdateMessageRoute = typeof updateMessage;
+
+export const clearAllQueues = createRoute({
+  path: "/queue/clear",
+  method: "delete",
+  tags,
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+      }),
+      "All Queues Cleared"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const clearQueue = createRoute({
+  path: "/queue/:queueType/clear",
+  method: "delete",
+  tags,
+  request: {
+    params: z.object({
+      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        queueType: z.string(),
+        message: z.string(),
+      }),
+      "Queue Cleared"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type ClearAllQueuesRoute = typeof clearAllQueues;
+export type ClearQueueRoute = typeof clearQueue;

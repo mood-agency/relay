@@ -11,9 +11,23 @@ This is a simple Redis-based queue API built with Hono and TypeScript.
 pnpm install
 ```
 
+3.  Start a Redis instance. You can easily do this with Docker:
+
+```bash
+docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest
+```
+
+This will start Redis on port 6379 and RedisInsight on port 8001 (optional, for viewing data).
+
 ## Environment Variables
 
-Create a `.env` file in the root of the project and add the necessary environment variables. You can use `.env.example` as a template.
+Create a `.env` file in the root of the project and update the Redis connection details if needed. You can use `.env.example` as a template.
+
+```ini
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+```
 
 ## Usage
 
@@ -64,24 +78,15 @@ The queue uses four main Redis keys:
 
 ### Message Lifecycle
 
-```
-┌─────────────┐    POST     ┌─────────────┐    GET      ┌─────────────┐
-│   Client    │ ────────────▶│ Main Queue  │ ────────────▶│ Processing  │
-│             │             │             │             │   Queue     │
-└─────────────┘             └─────────────┘             └─────────────┘
-                                                               │
-                                                               │ ACK
-                                                               ▼
-┌─────────────┐             ┌─────────────┐             ┌─────────────┐
-│ Dead Letter │◀────────────│   Timeout   │             │  Deleted    │
-│   Queue     │  Max Retry  │ (30 seconds)│             │ (Success)   │
-└─────────────┘             └─────────────┘             └─────────────┘
-                                   │
-                                   ▼
-                            ┌─────────────┐
-                            │ Main Queue  │
-                            │ (Retry)     │
-                            └─────────────┘
+```mermaid
+flowchart TD
+    Client[Client] -->|POST| MainQueue[Main Queue]
+    MainQueue -->|GET| ProcessingQueue[Processing Queue]
+    ProcessingQueue -->|ACK| Deleted["Deleted\n(Success)"]
+    
+    ProcessingQueue -.->|"Timeout\n(30 seconds)"| TimeoutLogic{Timeout}
+    TimeoutLogic -->|Max Retry| DeadLetterQueue[Dead Letter Queue]
+    TimeoutLogic -->|Retry| MainQueue
 ```
 
 ### Configuration
@@ -155,17 +160,14 @@ The API includes a beautiful web dashboard for real-time queue monitoring:
 Use the included Python script to populate the dashboard with sample data:
 
 ```bash
-# Install requests if not already installed
-pip install requests
-
-# Run the dashboard demo
-python test_dashboard.py
+# Run the dashboard demo (using tsx)
+npx tsx test_dashboard.ts
 
 # Add custom number of messages
-python test_dashboard.py --messages 25
+npx tsx test_dashboard.ts --messages 25
 
 # Use different server URL
-python test_dashboard.py --url http://localhost:8080
+npx tsx test_dashboard.ts --url http://localhost:8080
 ```
 
 The script will:

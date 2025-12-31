@@ -7,7 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "npm run build && tsx dist/index.js",
-    "test": "vitest"
+    "test": "vitest",
+    "dashboard:dev": "pnpm --filter dashboard-ui dev",
+    "dashboard:build": "pnpm --filter dashboard-ui build"
   },
   "keywords": [],
   "author": "",
@@ -16,7 +18,9 @@
   "dependencies": {
     "@hono/node-server": "^1.14.4",
     "@hono/zod-openapi": "^0.19.6",
+    "@radix-ui/react-popover": "^1.1.15",
     "@scalar/hono-api-reference": "^0.8.8",
+    "date-fns": "^4.1.0",
     "dotenv": "^16.5.0",
     "dotenv-expand": "^12.0.2",
     "hono": "^4.7.11",
@@ -24,6 +28,7 @@
     "ioredis": "^5.6.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
+    "react-day-picker": "^9.13.0",
     "stoker": "^1.4.2",
     "uuid": "^11.1.0",
     "zod": "^3.24.4"
@@ -33,6 +38,7 @@
     "@types/uuid": "^10.0.0",
     "tsx": "^4.7.1",
     "typescript": "^5.8.3",
+    "undici": "^7.16.0",
     "vitest": "^3.2.4"
   }
 }

@@ -9,6 +9,8 @@ import type {
   GetMessagesByDateRangeRoute,
   GetQueueStatusRoute,
   DequeuedMessage,
+  ClearAllQueuesRoute,
+  ClearQueueRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
 
@@ -56,8 +58,7 @@ export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
   const message = await queue.enqueueMessage({
     type,
     payload,
-    priority,
-  });
+  }, priority);
 
   if (!message) {
     return c.json({ message: "Message not added" }, 500);
@@ -97,12 +98,12 @@ export const acknowledgeMessage: AppRouteHandler<
   return c.json({ message: "Message acknowledged" }, 200);
 };
 
-export const metrics: AppRouteHandler<MetricsRoute> = async (c:any) => {
+export const metrics: AppRouteHandler<MetricsRoute> = async (c: any) => {
   const metrics = await queue.getMetrics();
   return c.json(metrics, 200);
 };
 
-export const healthCheck: AppRouteHandler<HealthCheckRoute> = async (c:any) => {
+export const healthCheck: AppRouteHandler<HealthCheckRoute> = async (c: any) => {
   const health = await queue.healthCheck();
   if (!health) {
     return c.json({ status: "ERROR" }, 500);
@@ -112,7 +113,7 @@ export const healthCheck: AppRouteHandler<HealthCheckRoute> = async (c:any) => {
 
 export const removeMessagesByDateRange: AppRouteHandler<
   RemoveMessagesByDateRangeRoute
-> = async (c:any) => {
+> = async (c: any) => {
   const { startTimestamp, endTimestamp } = c.req.valid("query");
 
   const removedCount = await queue.removeMessagesByDateRange(
@@ -149,22 +150,62 @@ export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: an
   }
 };
 
+export const getMessages: AppRouteHandler<GetMessagesRoute> = async (c: any) => {
+  try {
+    const { queueType } = c.req.valid("param");
+    const query = c.req.valid("query");
+
+    const result = await queue.getQueueMessages(queueType, query);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get queue messages" }, 500);
+  }
+};
+
 export const deleteMessage: AppRouteHandler<any> = async (c: any) => {
   try {
-    const { messageId } = c.req.param();
-    const { queueType } = await c.req.json();
-    
-    if (!messageId) {
-      return c.json({ message: "Message ID is required" }, 400);
-    }
-    
-    if (!queueType || !['main', 'processing', 'dead'].includes(queueType)) {
-      return c.json({ message: "Valid queue type is required (main, processing, dead)" }, 400);
-    }
-    
+    const { messageId } = c.req.valid("param");
+    const { queueType } = c.req.valid("query");
+
     const result = await queue.deleteMessage(messageId, queueType);
     return c.json(result, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to delete message" }, 500);
+  }
+};
+
+export const updateMessage: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const { messageId } = c.req.valid("param");
+    const { queueType } = c.req.valid("query");
+    const updates = c.req.valid("json");
+
+    const result = await queue.updateMessage(messageId, queueType, updates);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to update message" }, 500);
+  }
+};
+
+export const clearAllQueues: AppRouteHandler<ClearAllQueuesRoute> = async (c: any) => {
+  try {
+    await queue.clearAllQueues();
+    return c.json({ message: "All queues cleared successfully" }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to clear queues" }, 500);
+  }
+};
+
+export const clearQueue: AppRouteHandler<ClearQueueRoute> = async (c: any) => {
+  try {
+    const { queueType } = c.req.valid("param");
+    await queue.clearQueue(queueType);
+    return c.json({
+      success: true,
+      queueType,
+      message: `${queueType} queue cleared successfully`
+    }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to clear queue" }, 500);
   }
 };
