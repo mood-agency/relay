@@ -23,6 +23,9 @@ export const QueueMessageSchema = z.object({
   type: z.string(),
   payload: z.any(),
   priority: z.number().optional(),
+  ackTimeout: z.number().optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  queue: z.string().optional(),
 });
 
 export type QueueMessage = z.infer<typeof QueueMessageSchema>;
@@ -33,6 +36,8 @@ export const DequeuedMessageSchema = z.object({
   payload: z.any(),
   created_at: z.number(),
   priority: z.number().optional(),
+  custom_ack_timeout: z.number().optional(),
+  custom_max_attempts: z.number().optional(),
   attempt_count: z.number(),
   dequeued_at: z.number().nullable(),
   last_error: z.string().nullable(),
@@ -99,13 +104,19 @@ export const getMessage = createRoute({
   method: "get",
   tags,
   request: {
-    query: z.object({ timeout: z.string().pipe(z.coerce.number()).optional() }),
+    query: z.object({ 
+      timeout: z.string().pipe(z.coerce.number()).optional(),
+      ackTimeout: z.string().pipe(z.coerce.number()).optional() 
+    }),
   },
   responses: {
     200: jsonContent(DequeuedMessageSchema, "Queue Message"),
     404: jsonContent(z.object({ message: z.string() }), "Message not found"),
     422: jsonContent(
-      createErrorSchema(z.object({ timeout: z.number().optional() })),
+      createErrorSchema(z.object({ 
+        timeout: z.number().optional(),
+        ackTimeout: z.number().optional()
+      })),
       "Validation Error"
     ),
   },
@@ -294,7 +305,7 @@ export const moveMessages = createRoute({
       z.object({
         messages: z.array(z.any()),
         fromQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
-        toQueue: z.enum(["main", "dead", "acknowledged"]),
+        toQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
       }),
       "Move Messages Request"
     ),
@@ -352,13 +363,14 @@ export const updateMessage = createRoute({
       messageId: z.string(),
     }),
     query: z.object({
-      queueType: z.enum(["main", "dead"]),
+      queueType: z.enum(["main", "processing", "dead"]),
     }),
     body: jsonContentRequired(
       z.object({
         type: z.string().optional(),
         payload: z.any().optional(),
         priority: z.number().optional(),
+        custom_ack_timeout: z.number().optional(),
       }),
       "Update Message"
     ),
@@ -422,3 +434,21 @@ export const clearQueue = createRoute({
 
 export type ClearAllQueuesRoute = typeof clearAllQueues;
 export type ClearQueueRoute = typeof clearQueue;
+
+export const getConfig = createRoute({
+  path: "/queue/config",
+  method: "get",
+  tags,
+  responses: {
+    200: jsonContent(
+      z.object({
+        ack_timeout_seconds: z.number(),
+        max_attempts: z.number(),
+      }),
+      "Queue Configuration"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type GetConfigRoute = typeof getConfig;

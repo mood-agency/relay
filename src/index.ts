@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import app from "./app";
 import env from "./config/env";
 import { pino } from "pino";
+import { queue } from "./routes/queue/queue.handlers";
 
 const logger = pino({
   level: "debug",
@@ -30,6 +31,28 @@ const testRedisConnection = async () => {
   }
 };
 
+const startOverdueRequeueWorker = () => {
+  const intervalMs = Math.max(
+    1000,
+    Math.min(5000, Math.floor(env.ACK_TIMEOUT_SECONDS * 1000))
+  );
+
+  const tick = async () => {
+    try {
+      await queue.requeueFailedMessages();
+    } catch (error) {
+      logger.error({ err: error }, "Overdue requeue worker failed");
+    }
+  };
+
+  tick();
+  const interval = setInterval(tick, intervalMs);
+  interval.unref?.();
+  logger.info(
+    `Overdue requeue worker started (interval=${intervalMs}ms, ackTimeout=${env.ACK_TIMEOUT_SECONDS}s)`
+  );
+};
+
 serve(
   {
     fetch: app.fetch,
@@ -42,5 +65,6 @@ serve(
       logger.debug({ msg: "ENVs:", env });
     }
     await testRedisConnection();
+    startOverdueRequeueWorker();
   }
 );

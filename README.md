@@ -64,7 +64,7 @@ Most queue libraries lock you into a specific language ecosystem. This library p
 
 ✅ **Built-in Retry Logic**: Failed messages are automatically retried with configurable attempts.
 
-✅ **Web Dashboard**: Beautiful real-time monitoring dashboard included.
+✅ **Mission Control Dashboard**: Read/write GUI for inspecting and fixing live jobs.
 
 ✅ **Standard Protocol**: Any Redis GUI (like RedisInsight) can visualize your queues instantly because they are just standard Streams.
 
@@ -343,24 +343,51 @@ flowchart TD
 
 ---
 
-## 🎯 Web Dashboard
+## 🎛️ Mission Control Dashboard
 
-The API includes a beautiful web dashboard for real-time queue monitoring:
+Don't just watch your queue. Manage it.
+
+Most queues are "black boxes": you push a message and hope it works. This API ships with an integrated dashboard that gives you observability and control over your Redis Streams in real time, so Ops can fix stuck jobs without writing one-off scripts.
 
 ### Accessing the Dashboard
 
 - **URL**: `http://localhost:3000/dashboard`
 - **Root redirect**: `http://localhost:3000/` automatically redirects to dashboard
 
+### The Debugging Superpowers
+
+#### 🔍 Deep Filtering (Find the needle in the haystack)
+
+- Filter by stage: queued (main), processing, dead (DLQ), acknowledged
+- Filter by priority and attempts to find starving or repeatedly failing jobs
+- Search by ID and filter by date range to locate specific transactions fast
+
+#### 🔄 State Management (Force transitions)
+
+- Edit the payload data inline.
+- Move the message to a different stage (main, processing, dead, acknowledged).
+- Create a new message with payload, type, priority and attempts number.
+- Adjust the priority of a message.
+
 ### Dashboard Features
 
-- **📊 Real-time Statistics**: View total processed, failed, queued, and processing messages
-- **📥 Main Queue**: See all messages waiting to be processed
-- **⚡ Processing Queue**: Monitor messages currently being processed
-- **💀 Dead Letter Queue**: View failed messages that exceeded retry limits
-- **🔄 Auto-refresh**: Automatically updates every 5 seconds
-- **📱 Responsive Design**: Works on desktop and mobile devices
-- **🎨 Modern UI**: Beautiful gradient design with smooth animations
+- **📊 Real-time statistics**: queued, processing, dead, acknowledged + totals
+- **🧭 Server-side pagination & sorting**: browse large queues without loading everything
+- **🧪 Safe operations via API**: actions go through validation instead of raw Redis edits
+- **🔄 Auto-refresh**: updates every 5 seconds
+
+### Why this beats generic Redis tools
+
+| Feature | Mission Control Dashboard | RedisInsight (generic) | BullMQ / Sidekiq UI |
+|---|---|---|---|
+| Context | Job lifecycle, retries, errors | Raw keys/streams | Good, but language-locked |
+| Editing | JSON + state transitions | Raw string edits | Often read-only or paid features |
+| Search | Multi-criteria (stage + type + date + attempts) | Key scanning | Limited filtering |
+| Safety | API-validated actions | No validation | Safe |
+
+### Powered by the Node.js API (not direct Redis access)
+
+The dashboard talks to the Node.js API; it does not connect to Redis directly. Redis credentials stay on the server, and the UI uses the same endpoints your workers use.
 
 ### Testing the Dashboard
 
@@ -456,7 +483,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-ISC
+MIT
 
 ---
 

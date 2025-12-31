@@ -23,6 +23,7 @@ const router = createRouter()
   .openapi(routes.getMessages, handlers.getMessages)
   .openapi(routes.moveMessages, handlers.moveMessages)
   .openapi(routes.clearQueue, handlers.clearQueue)
-  .openapi(routes.clearAllQueues, handlers.clearAllQueues);
+  .openapi(routes.clearAllQueues, handlers.clearAllQueues)
+  .openapi(routes.getConfig, handlers.getConfig);
 
 export default router;

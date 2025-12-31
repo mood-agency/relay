@@ -68,12 +68,14 @@ class QueueTester {
 
         for (let i = 0; i < count; i++) {
             try {
-                const response = await fetch(`${this.apiBase}/queue/message?timeout=1`);
+                // Random ackTimeout between 30 and 120 seconds
+                const ackTimeout = Math.floor(Math.random() * (120 - 30 + 1)) + 30;
+                const response = await fetch(`${this.apiBase}/queue/message?timeout=1&ackTimeout=${ackTimeout}`);
                 if (response.status === 200) {
                     const message = (await response.json()) as any;
                     console.log(
                         `✅ Dequeued message: ${message.type || "unknown"} (ID: ${(message.id || "N/A").slice(0, 8)
-                        }...)`
+                        }...) [AckTimeout: ${ackTimeout}s]`
                     );
                     dequeuedMessages.push(message);
                 } else {

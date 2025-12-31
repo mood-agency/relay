@@ -19,7 +19,10 @@ import {
     ArrowUp,
     ArrowDown,
     Search,
-    Move
+    Move,
+    Plus,
+    Pickaxe,
+    Check
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -66,6 +69,9 @@ interface Message {
     attempt_count?: number
     error_message?: string
     last_error?: string
+    dequeued_at?: number
+    custom_ack_timeout?: number
+    custom_max_attempts?: number
 }
 
 interface Pagination {
@@ -101,6 +107,24 @@ interface SystemStatus {
     availableTypes: string[]
 }
 
+const QUEUE_TABS = ["main", "processing", "dead", "acknowledged"] as const
+type QueueTab = (typeof QUEUE_TABS)[number]
+type SortOrder = "asc" | "desc"
+
+type DashboardState = {
+    queue: QueueTab
+    page: number
+    limit: string
+    sortBy: string
+    sortOrder: SortOrder
+    filterType: string
+    filterPriority: string
+    filterAttempts: string
+    startDate?: Date
+    endDate?: Date
+    search: string
+}
+
 export default function Dashboard() {
     const [confirmDialog, setConfirmDialog] = useState<{
         isOpen: boolean;
@@ -132,6 +156,8 @@ export default function Dashboard() {
         targetQueue: "main",
     });
 
+    const [createDialog, setCreateDialog] = useState(false);
+
     // System Status (Counts)
     const [statusData, setStatusData] = useState<SystemStatus | null>(null)
     const [loadingStatus, setLoadingStatus] = useState(true)
@@ -143,22 +169,131 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null)
     const [autoRefresh, setAutoRefresh] = useState(false)
     const [lastUpdated, setLastUpdated] = useState<string>("")
-    const [activeTab, setActiveTab] = useState("main")
+    const parseQueueTab = useCallback((value: string | null): QueueTab | null => {
+        if (!value) return null
+        if ((QUEUE_TABS as readonly string[]).includes(value)) return value as QueueTab
+        return null
+    }, [])
+
+    const getDashboardStateFromLocation = useCallback((): DashboardState => {
+        const url = new URL(window.location.href)
+        const params = url.searchParams
+
+        const queue = parseQueueTab(params.get("queue")) ?? "main"
+
+        const rawPage = params.get("page")
+        const parsedPage = rawPage ? Number(rawPage) : 1
+        const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1
+
+        const rawLimit = params.get("limit")
+        const parsedLimit = rawLimit ? Number(rawLimit) : 25
+        const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit).toString() : "25"
+
+        const sortBy = params.get("sortBy") || "created_at"
+        const sortOrder: SortOrder = params.get("sortOrder") === "asc" ? "asc" : "desc"
+
+        const filterType = params.get("filterType") || "all"
+        const filterPriority = params.get("filterPriority") || ""
+        const filterAttempts = params.get("filterAttempts") || ""
+
+        const startDateRaw = params.get("startDate")
+        const startDateParsed = startDateRaw ? new Date(startDateRaw) : undefined
+        const startDate = startDateParsed && !Number.isNaN(startDateParsed.getTime()) ? startDateParsed : undefined
+
+        const endDateRaw = params.get("endDate")
+        const endDateParsed = endDateRaw ? new Date(endDateRaw) : undefined
+        const endDate = endDateParsed && !Number.isNaN(endDateParsed.getTime()) ? endDateParsed : undefined
+
+        const search = params.get("search") || ""
+
+        return {
+            queue,
+            page,
+            limit,
+            sortBy,
+            sortOrder,
+            filterType,
+            filterPriority,
+            filterAttempts,
+            startDate,
+            endDate,
+            search,
+        }
+    }, [parseQueueTab])
+
+    const buildDashboardHref = useCallback((state: DashboardState) => {
+        const url = new URL(window.location.href)
+        const params = url.searchParams
+
+        params.delete("queue")
+        params.delete("page")
+        params.delete("limit")
+        params.delete("sortBy")
+        params.delete("sortOrder")
+        params.delete("filterType")
+        params.delete("filterPriority")
+        params.delete("filterAttempts")
+        params.delete("startDate")
+        params.delete("endDate")
+        params.delete("search")
+
+        if (state.queue !== "main") params.set("queue", state.queue)
+        if (state.page !== 1) params.set("page", state.page.toString())
+        if (state.limit !== "25") params.set("limit", state.limit)
+        if (state.sortBy !== "created_at") params.set("sortBy", state.sortBy)
+        if (state.sortOrder !== "desc") params.set("sortOrder", state.sortOrder)
+        if (state.filterType && state.filterType !== "all") params.set("filterType", state.filterType)
+        if (state.filterPriority) params.set("filterPriority", state.filterPriority)
+        if (state.filterAttempts) params.set("filterAttempts", state.filterAttempts)
+        if (state.startDate) params.set("startDate", state.startDate.toISOString())
+        if (state.endDate) params.set("endDate", state.endDate.toISOString())
+        if (state.search) params.set("search", state.search)
+
+        return `${url.pathname}${url.search}${url.hash}`
+    }, [])
+
+    const writeDashboardStateToUrl = useCallback((state: DashboardState, mode: "push" | "replace") => {
+        const next = buildDashboardHref(state)
+        const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+        if (next === current) return
+        if (mode === "push") window.history.pushState(state, "", next)
+        else window.history.replaceState(state, "", next)
+    }, [buildDashboardHref])
+
+    const initialDashboardState = useMemo(() => getDashboardStateFromLocation(), [getDashboardStateFromLocation])
+
+    const [activeTab, setActiveTab] = useState<QueueTab>(() => initialDashboardState.queue)
     
     // Filter & Sort State
-    const [filterType, setFilterType] = useState("all")
-    const [filterPriority, setFilterPriority] = useState("")
-    const [filterAttempts, setFilterAttempts] = useState("")
-    const [startDate, setStartDate] = useState<Date | undefined>()
-    const [endDate, setEndDate] = useState<Date | undefined>()
-    const [pageSize, setPageSize] = useState("25")
-    const [currentPage, setCurrentPage] = useState(1)
-    const [sortBy, setSortBy] = useState("created_at")
-    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-    const [search, setSearch] = useState("")
+    const [filterType, setFilterType] = useState(() => initialDashboardState.filterType)
+    const [filterPriority, setFilterPriority] = useState(() => initialDashboardState.filterPriority)
+    const [filterAttempts, setFilterAttempts] = useState(() => initialDashboardState.filterAttempts)
+    const [startDate, setStartDate] = useState<Date | undefined>(() => initialDashboardState.startDate)
+    const [endDate, setEndDate] = useState<Date | undefined>(() => initialDashboardState.endDate)
+    const [pageSize, setPageSize] = useState(() => initialDashboardState.limit)
+    const [currentPage, setCurrentPage] = useState(() => initialDashboardState.page)
+    const [sortBy, setSortBy] = useState(() => initialDashboardState.sortBy)
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">(() => initialDashboardState.sortOrder)
+    const [search, setSearch] = useState(() => initialDashboardState.search)
     
+    // Config State
+    const [config, setConfig] = useState<{ ack_timeout_seconds: number; max_attempts: number } | null>(null);
+
     // Selection State
     const [selectedIds, setSelectedIds] = useState<string[]>([])
+
+    // Fetch Config
+    const fetchConfig = useCallback(async () => {
+        try {
+            const response = await fetch('/api/queue/config');
+            if (response.ok) {
+                const json = await response.json();
+                setConfig(json);
+            }
+        } catch (err) {
+            console.error("Fetch config error:", err);
+        }
+    }, []);
 
     // Fetch System Status (Counts)
     const fetchStatus = useCallback(async () => {
@@ -214,8 +349,118 @@ export default function Dashboard() {
 
     // Initial Load
     useEffect(() => {
-        fetchAll()
-    }, [fetchAll])
+        const url = new URL(window.location.href)
+        const rawQueue = url.searchParams.get("queue")
+        const parsedQueue = parseQueueTab(rawQueue)
+        let shouldReplace = false
+
+        if (rawQueue && !parsedQueue) {
+            url.searchParams.delete("queue")
+            shouldReplace = true
+        }
+
+        const pageRaw = url.searchParams.get("page")
+        if (pageRaw) {
+            const n = Number(pageRaw)
+            if (!Number.isFinite(n) || n < 1) {
+                url.searchParams.delete("page")
+                shouldReplace = true
+            }
+        }
+
+        const limitRaw = url.searchParams.get("limit")
+        if (limitRaw) {
+            const n = Number(limitRaw)
+            if (!Number.isFinite(n) || n < 1) {
+                url.searchParams.delete("limit")
+                shouldReplace = true
+            }
+        }
+
+        const sortOrderRaw = url.searchParams.get("sortOrder")
+        if (sortOrderRaw && sortOrderRaw !== "asc" && sortOrderRaw !== "desc") {
+            url.searchParams.delete("sortOrder")
+            shouldReplace = true
+        }
+
+        const startDateRaw = url.searchParams.get("startDate")
+        if (startDateRaw) {
+            const d = new Date(startDateRaw)
+            if (Number.isNaN(d.getTime())) {
+                url.searchParams.delete("startDate")
+                shouldReplace = true
+            }
+        }
+
+        const endDateRaw = url.searchParams.get("endDate")
+        if (endDateRaw) {
+            const d = new Date(endDateRaw)
+            if (Number.isNaN(d.getTime())) {
+                url.searchParams.delete("endDate")
+                shouldReplace = true
+            }
+        }
+
+        if (shouldReplace) {
+            window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
+        }
+
+        const onPopState = () => {
+            const next = getDashboardStateFromLocation()
+            setActiveTab(next.queue)
+            setCurrentPage(next.page)
+            setPageSize(next.limit)
+            setSortBy(next.sortBy)
+            setSortOrder(next.sortOrder)
+            setFilterType(next.filterType)
+            setFilterPriority(next.filterPriority)
+            setFilterAttempts(next.filterAttempts)
+            setStartDate(next.startDate)
+            setEndDate(next.endDate)
+            setSearch(next.search)
+            setSelectedIds([])
+        }
+
+        window.addEventListener("popstate", onPopState)
+        fetchConfig();
+        fetchStatus();
+        return () => window.removeEventListener("popstate", onPopState)
+    }, [fetchConfig, fetchStatus, getDashboardStateFromLocation, parseQueueTab])
+
+    const navigateToTab = useCallback((tab: QueueTab) => {
+        setActiveTab(tab)
+        setSelectedIds([])
+        setCurrentPage(1)
+        writeDashboardStateToUrl({
+            queue: tab,
+            page: 1,
+            limit: pageSize,
+            sortBy,
+            sortOrder,
+            filterType,
+            filterPriority,
+            filterAttempts,
+            startDate,
+            endDate,
+            search,
+        }, "push")
+    }, [endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate, writeDashboardStateToUrl])
+
+    const getTabHref = useCallback((tab: QueueTab) => {
+        return buildDashboardHref({
+            queue: tab,
+            page: 1,
+            limit: pageSize,
+            sortBy,
+            sortOrder,
+            filterType,
+            filterPriority,
+            filterAttempts,
+            startDate,
+            endDate,
+            search,
+        })
+    }, [buildDashboardHref, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate])
 
     // Auto Refresh
     useEffect(() => {
@@ -226,19 +471,25 @@ export default function Dashboard() {
         return () => clearInterval(interval)
     }, [autoRefresh, fetchAll])
 
-    // Reset filters/pagination when tab changes
     useEffect(() => {
-        setFilterType("all")
-        setFilterPriority("")
-        setFilterAttempts("")
-        setStartDate(undefined)
-        setEndDate(undefined)
-        setSelectedIds([])
-        setCurrentPage(1)
-        setSearch("")
-        setSortBy(activeTab === 'dead' ? 'processing_started_at' : 'created_at')
-        setSortOrder("desc")
-    }, [activeTab])
+        writeDashboardStateToUrl({
+            queue: activeTab,
+            page: currentPage,
+            limit: pageSize,
+            sortBy,
+            sortOrder,
+            filterType,
+            filterPriority,
+            filterAttempts,
+            startDate,
+            endDate,
+            search,
+        }, "replace")
+    }, [activeTab, currentPage, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate, writeDashboardStateToUrl])
+
+    useEffect(() => {
+        fetchMessages()
+    }, [fetchMessages])
 
     const handleRefresh = () => {
         fetchAll()
@@ -314,6 +565,28 @@ export default function Dashboard() {
             }
         } catch (err) {
             alert("Failed to update message")
+        }
+    }
+
+    const handleCreateMessage = async (data: any) => {
+        try {
+            const response = await fetch('/api/queue/message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+            
+            if (response.ok) {
+                fetchAll();
+                setCreateDialog(false);
+            } else {
+                const err = await response.json();
+                alert(`Error: ${err.message}`);
+            }
+        } catch (err) {
+            alert("Failed to create message");
         }
     }
 
@@ -437,13 +710,23 @@ export default function Dashboard() {
                     {/* Header */}
                     <div className="flex items-center gap-3 px-2">
                         <div>
-                            <h1 className="text-xl font-bold tracking-tight text-foreground leading-none">RQD</h1>
+                            <h1 className="text-xl font-bold tracking-tight text-foreground leading-none">Relay</h1>
                         </div>
                     </div>
 
                     <div className="space-y-6">
                         {/* Actions */}
                         <div className="flex items-center gap-1 px-2">
+                            <Button
+                                onClick={() => setCreateDialog(true)}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Create Message"
+                                aria-label="Create Message"
+                            >
+                                <Plus className="h-3.5 w-3.5" />
+                            </Button>
                             <Button
                                 onClick={handleRefresh}
                                 variant="ghost"
@@ -483,21 +766,24 @@ export default function Dashboard() {
                             <h3 className="text-xs font-semibold text-muted-foreground px-2 pb-2 uppercase tracking-wider">Queues</h3>
                             <NavButton
                                 active={activeTab === 'main'}
-                                onClick={() => setActiveTab('main')}
+                                href={getTabHref("main")}
+                                onClick={() => navigateToTab('main')}
                                 icon={Inbox}
                                 label="Main Queue"
                                 count={statusData?.mainQueue?.length || 0}
                             />
                             <NavButton
                                 active={activeTab === 'processing'}
-                                onClick={() => setActiveTab('processing')}
-                                icon={Loader2}
+                                href={getTabHref("processing")}
+                                onClick={() => navigateToTab('processing')}
+                                icon={Pickaxe}
                                 label="Processing"
                                 count={statusData?.processingQueue?.length || 0}
                             />
                             <NavButton
                                 active={activeTab === 'dead'}
-                                onClick={() => setActiveTab('dead')}
+                                href={getTabHref("dead")}
+                                onClick={() => navigateToTab('dead')}
                                 icon={XCircle}
                                 label="Dead Letter"
                                 count={statusData?.deadLetterQueue?.length || 0}
@@ -505,8 +791,9 @@ export default function Dashboard() {
                             />
                             <NavButton
                                 active={activeTab === 'acknowledged'}
-                                onClick={() => setActiveTab('acknowledged')}
-                                icon={CheckCircle2}
+                                href={getTabHref("acknowledged")}
+                                onClick={() => navigateToTab('acknowledged')}
+                                icon={Check }
                                 label="Acknowledged"
                                 count={statusData?.acknowledgedQueue?.length || 0}
                                 variant="success"
@@ -605,14 +892,31 @@ export default function Dashboard() {
                                     </div>
                                 </div>
 
+                                {(search || filterType !== "all" || filterPriority || filterAttempts || startDate || endDate) && (
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => {
+                                            setSearch("")
+                                            setFilterType("all")
+                                            setFilterPriority("")
+                                            setFilterAttempts("")
+                                            setStartDate(undefined)
+                                            setEndDate(undefined)
+                                        }}
+                                        className="w-full animate-in fade-in zoom-in duration-200"
+                                    >
+                                        <XCircle className="h-3.5 w-3.5 mr-2" />
+                                        Clear Filters
+                                    </Button>
+                                )}
+
                             </div>
                         </div>
 
                         <div className="h-px bg-border/50" />
 
-                        <div className="text-[10px] text-muted-foreground px-2 pt-2">
-                            Last updated: {lastUpdated}
-                        </div>
+                    
                     </div>
                 </div>
 
@@ -697,8 +1001,9 @@ export default function Dashboard() {
                             <QueueTable
                                 messages={messagesData?.messages || []}
                                 queueType={activeTab}
+                                config={config}
                                 onDelete={(id) => handleDelete(id, activeTab)}
-                                onEdit={activeTab === 'main' ? (msg) => setEditDialog({ isOpen: true, message: msg, queueType: 'main' }) : undefined}
+                                onEdit={activeTab === 'main' || activeTab === 'processing' ? (msg) => setEditDialog({ isOpen: true, message: msg, queueType: activeTab }) : undefined}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -717,6 +1022,7 @@ export default function Dashboard() {
                         {activeTab === 'dead' && (
                             <DeadLetterTable
                                 messages={messagesData?.messages || []}
+                                config={config}
                                 onDelete={(id) => handleDelete(id, 'dead')}
                                 onEdit={(msg) => setEditDialog({ isOpen: true, message: msg, queueType: 'dead' })}
                                 formatTime={formatTimestamp}
@@ -755,6 +1061,12 @@ export default function Dashboard() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <CreateMessageDialog
+                isOpen={createDialog}
+                onClose={() => setCreateDialog(false)}
+                onCreate={handleCreateMessage}
+            />
 
             <EditMessageDialog
                 isOpen={editDialog.isOpen}
@@ -796,6 +1108,7 @@ function MoveMessageDialog({
 }) {
     const allQueues = [
         { value: "main", label: "Main Queue" },
+        { value: "processing", label: "Processing Queue" },
         { value: "dead", label: "Dead Letter Queue" },
         { value: "acknowledged", label: "Acknowledged Queue" },
     ];
@@ -838,7 +1151,7 @@ function MoveMessageDialog({
     )
 }
 
-function NavButton({ active, onClick, icon: Icon, label, count, variant = "default" }: any) {
+function NavButton({ active, href, onClick, icon: Icon, label, count, variant = "default" }: any) {
     const badgeColor = 
         variant === "destructive" ? "bg-red-100 text-red-700 hover:bg-red-100" :
         variant === "success" ? "bg-green-100 text-green-700 hover:bg-green-100" : 
@@ -846,22 +1159,31 @@ function NavButton({ active, onClick, icon: Icon, label, count, variant = "defau
 
     return (
         <Button
+            asChild
             variant={active ? "secondary" : "ghost"}
             className={cn(
                 "w-full justify-between font-normal h-10 px-3",
                 active && "bg-secondary font-medium shadow-sm"
             )}
-            onClick={onClick}
         >
-            <span className="flex items-center gap-3">
-                <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")} />
-                <span className={cn(active ? "text-foreground" : "text-muted-foreground")}>{label}</span>
-            </span>
-            {count > 0 && (
-                <Badge variant="secondary" className={cn("ml-auto text-[10px] h-5 px-1.5 min-w-[1.25rem] justify-center", badgeColor)}>
-                    {count}
-                </Badge>
-            )}
+            <a
+                href={href}
+                onClick={(e) => {
+                    if (!onClick) return
+                    e.preventDefault()
+                    onClick()
+                }}
+            >
+                <span className="flex items-center gap-3">
+                    <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")} />
+                    <span className={cn(active ? "text-foreground" : "text-muted-foreground")}>{label}</span>
+                </span>
+                {count > 0 && (
+                    <Badge variant="secondary" className={cn("ml-auto text-[10px] h-5 px-1.5 min-w-[1.25rem] justify-center", badgeColor)}>
+                        {count}
+                    </Badge>
+                )}
+            </a>
         </Button>
     )
 }
@@ -1003,6 +1325,7 @@ function useElementHeight(elementRef: { current: HTMLElement | null }) {
 function QueueTable({ 
     messages, 
     queueType, 
+    config,
     onDelete, 
     onEdit, 
     formatTime, 
@@ -1021,6 +1344,7 @@ function QueueTable({
 }: {
     messages: Message[],
     queueType: string,
+    config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
     formatTime: (ts?: number) => string,
@@ -1037,6 +1361,26 @@ function QueueTable({
     sortOrder: string,
     onSort: (field: string) => void
 }) {
+    // Add state for live updates
+    const [currentTime, setCurrentTime] = useState(Date.now())
+
+    useEffect(() => {
+        if (queueType === 'processing') {
+            setCurrentTime(Date.now())
+        }
+    }, [queueType])
+
+    useEffect(() => {
+        // Only run interval if we are in processing queue and have messages
+        if (queueType !== 'processing' || messages.length === 0) return
+
+        setCurrentTime(Date.now())
+        const interval = setInterval(() => {
+            setCurrentTime(Date.now())
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [queueType, messages.length])
     
     const getTimeLabel = () => {
         switch (queueType) {
@@ -1056,10 +1400,32 @@ function QueueTable({
 
     const getTimeValue = (m: Message) => {
         switch (queueType) {
-            case 'processing': return m.processing_started_at
+            case 'processing': return m.dequeued_at || m.processing_started_at
             case 'acknowledged': return m.acknowledged_at
             default: return m.created_at
         }
+    }
+
+    const calculateTimeRemaining = (m: Message) => {
+        if (queueType !== 'processing' || !config) return null
+        
+        // Use dequeued_at if available, otherwise fall back to processing_started_at
+        const startTime = m.dequeued_at || m.processing_started_at
+        if (!startTime) return "N/A"
+
+        // startTime is in seconds (from backend), ack_timeout_seconds is in seconds
+        // currentTime is in ms, so divide by 1000
+        const now = currentTime / 1000
+        
+        // Use custom timeout if available, else global config
+        const timeoutSeconds = m.custom_ack_timeout || config.ack_timeout_seconds
+        
+        const deadline = startTime + timeoutSeconds
+        const remaining = deadline - now
+
+        if (remaining <= 0) return <span className="text-destructive font-medium">Overdue</span>
+        
+        return <span className="text-primary font-mono">{Math.ceil(remaining)}s</span>
     }
 
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
@@ -1125,13 +1491,15 @@ function QueueTable({
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            {(queueType === 'main' || queueType === 'acknowledged') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Ack Timeout</TableHead>}
+                            {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Time Remaining</TableHead>}
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={8} className="h-32 text-center text-muted-foreground opacity-50 italic">
+                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic">
                                     No messages found.
                                 </TableCell>
                             </TableRow>
@@ -1139,7 +1507,7 @@ function QueueTable({
                             <>
                                 {virtual.topSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={8} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg) => {
@@ -1173,8 +1541,23 @@ function QueueTable({
                                                 {formatTime(getTimeValue(msg))}
                                             </TableCell>
                                             <TableCell>
-                                                <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || (queueType === 'main' ? 0 : 1)}</span>
+                                                    <span className="text-sm text-foreground pl-4 block">
+                                                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
+                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                                                        )}
+                                                    </span>
                                             </TableCell>
+                                            {(queueType === 'main' || queueType === 'acknowledged') && (
+                                                <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                    {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+                                                </TableCell>
+                                            )}
+                                            {queueType === 'processing' && (
+                                                <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                    {calculateTimeRemaining(msg)}
+                                                </TableCell>
+                                            )}
                                             <TableCell className="text-right pr-6">
                                                 <div className="flex justify-end gap-1">
                                                     {onEdit && (
@@ -1248,8 +1631,23 @@ function QueueTable({
                                         {formatTime(getTimeValue(msg))}
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || (queueType === 'main' ? 0 : 1)}</span>
+                                            <span className="text-sm text-foreground pl-4 block">
+                                                {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
+                                                {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                                                    <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                                                )}
+                                            </span>
                                     </TableCell>
+                                    {(queueType === 'main' || queueType === 'acknowledged') && (
+                                        <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                            {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+                                        </TableCell>
+                                    )}
+                                    {queueType === 'processing' && (
+                                        <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                            {calculateTimeRemaining(msg)}
+                                        </TableCell>
+                                    )}
                                     <TableCell className="text-right pr-6">
                                         <div className="flex justify-end gap-1">
                                             {onEdit && (
@@ -1319,6 +1717,7 @@ function EditMessageDialog({
     const [payload, setPayload] = useState("");
     const [priority, setPriority] = useState(0);
     const [type, setType] = useState("");
+    const [customAckTimeout, setCustomAckTimeout] = useState<number | "">("");
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -1326,6 +1725,7 @@ function EditMessageDialog({
             setPayload(JSON.stringify(message.payload, null, 2));
             setPriority(message.priority || 0);
             setType(message.type || "default");
+            setCustomAckTimeout(message.custom_ack_timeout || "");
             setError(null);
         }
     }, [message]);
@@ -1334,19 +1734,28 @@ function EditMessageDialog({
         if (!message) return;
 
         try {
-            let parsedPayload;
-            try {
-                parsedPayload = JSON.parse(payload);
-            } catch (e) {
-                setError("Invalid JSON payload");
-                return;
+            const updates: any = {};
+            
+            if (queueType === 'processing') {
+                if (customAckTimeout === "" || Number(customAckTimeout) <= 0) {
+                    setError("Ack Timeout must be a positive number");
+                    return;
+                }
+                updates.custom_ack_timeout = Number(customAckTimeout);
+            } else {
+                let parsedPayload;
+                try {
+                    parsedPayload = JSON.parse(payload);
+                } catch (e) {
+                    setError("Invalid JSON payload");
+                    return;
+                }
+                updates.payload = parsedPayload;
+                updates.priority = priority;
+                updates.type = type;
             }
 
-            await onSave(message.id, queueType, {
-                payload: parsedPayload,
-                priority,
-                type
-            });
+            await onSave(message.id, queueType, updates);
         } catch (e) {
             setError("Failed to save message");
         }
@@ -1358,44 +1767,63 @@ function EditMessageDialog({
                 <DialogHeader>
                     <DialogTitle>Edit Message</DialogTitle>
                     <DialogDescription>
-                        Make changes to the message here. Click save when you're done.
+                        {queueType === 'processing' 
+                            ? "Edit the timeout for this processing message." 
+                            : "Make changes to the message here. Click save when you're done."}
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-4 items-center gap-4">
-                        <label htmlFor="type" className="text-right text-sm font-medium">
-                            Type
-                        </label>
-                        <input
-                            id="type"
-                            value={type}
-                            onChange={(e) => setType(e.target.value)}
-                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                    </div>
-                    <div className="grid grid-cols-4 items-center gap-4">
-                        <label htmlFor="priority" className="text-right text-sm font-medium">
-                            Priority
-                        </label>
-                        <input
-                            id="priority"
-                            type="number"
-                            value={priority}
-                            onChange={(e) => setPriority(Number(e.target.value))}
-                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                    </div>
-                    <div className="grid grid-cols-4 items-start gap-4">
-                        <label htmlFor="payload" className="text-right text-sm font-medium pt-2">
-                            Payload
-                        </label>
-                        <textarea
-                            id="payload"
-                            value={payload}
-                            onChange={(e) => setPayload(e.target.value)}
-                            className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                        />
-                    </div>
+                    {queueType === 'processing' ? (
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="ackTimeout" className="text-right text-sm font-medium">
+                                Ack Timeout (s)
+                            </label>
+                            <input
+                                id="ackTimeout"
+                                type="number"
+                                value={customAckTimeout}
+                                onChange={(e) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                                className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                        </div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <label htmlFor="type" className="text-right text-sm font-medium">
+                                    Type
+                                </label>
+                                <input
+                                    id="type"
+                                    value={type}
+                                    onChange={(e) => setType(e.target.value)}
+                                    className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <label htmlFor="priority" className="text-right text-sm font-medium">
+                                    Priority
+                                </label>
+                                <input
+                                    id="priority"
+                                    type="number"
+                                    value={priority}
+                                    onChange={(e) => setPriority(Number(e.target.value))}
+                                    className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-start gap-4">
+                                <label htmlFor="payload" className="text-right text-sm font-medium pt-2">
+                                    Payload
+                                </label>
+                                <textarea
+                                    id="payload"
+                                    value={payload}
+                                    onChange={(e) => setPayload(e.target.value)}
+                                    className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                                />
+                            </div>
+                        </>
+                    )}
                     {error && (
                         <div className="text-sm text-destructive font-medium text-center">
                             {error}
@@ -1415,8 +1843,180 @@ function EditMessageDialog({
     );
 }
 
+function CreateMessageDialog({
+    isOpen,
+    onClose,
+    onCreate
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onCreate: (data: any) => Promise<void>;
+}) {
+    const [payload, setPayload] = useState("{\n  \n}");
+    const [priority, setPriority] = useState(0);
+    const [type, setType] = useState("default");
+    const [queue, setQueue] = useState("");
+    const [ackTimeout, setAckTimeout] = useState<number | "">("");
+    const [maxAttempts, setMaxAttempts] = useState<number | "">("");
+    const [error, setError] = useState<string | null>(null);
+
+    // Reset state when dialog opens
+    useEffect(() => {
+        if (isOpen) {
+            setPayload("{\n  \n}");
+            setPriority(0);
+            setType("default");
+            setQueue("");
+            setAckTimeout("");
+            setMaxAttempts("");
+            setError(null);
+        }
+    }, [isOpen]);
+
+    const handleCreate = async () => {
+        try {
+            let parsedPayload;
+            try {
+                parsedPayload = JSON.parse(payload);
+            } catch (e) {
+                setError("Invalid JSON payload");
+                return;
+            }
+
+            const data: any = {
+                type,
+                payload: parsedPayload,
+                priority,
+            };
+
+            if (queue.trim()) {
+                data.queue = queue.trim();
+            }
+
+            if (ackTimeout !== "" && Number(ackTimeout) > 0) {
+                data.ackTimeout = Number(ackTimeout);
+            }
+
+            if (maxAttempts !== "" && Number(maxAttempts) > 0) {
+                data.maxAttempts = Number(maxAttempts);
+            }
+
+            await onCreate(data);
+        } catch (e) {
+            setError("Failed to create message");
+        }
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                    <DialogTitle>Create New Message</DialogTitle>
+                    <DialogDescription>
+                        Create a new message to be enqueued.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="create-type" className="text-right text-sm font-medium">
+                            Type
+                        </label>
+                        <input
+                            id="create-type"
+                            value={type}
+                            onChange={(e) => setType(e.target.value)}
+                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="default"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="create-queue" className="text-right text-sm font-medium">
+                            Queue
+                        </label>
+                        <Select value={queue || "main"} onValueChange={(val) => setQueue(val === "main" ? "" : val)}>
+                            <SelectTrigger className="col-span-3" id="create-queue">
+                                <SelectValue placeholder="Select queue" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="main">Main Queue</SelectItem>
+                                <SelectItem value="dead">Dead Letter Queue</SelectItem>
+                                <SelectItem value="acknowledged">Acknowledged Queue</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="create-priority" className="text-right text-sm font-medium">
+                            Priority
+                        </label>
+                        <input
+                            id="create-priority"
+                            type="number"
+                            value={priority}
+                            onChange={(e) => setPriority(Number(e.target.value))}
+                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="create-ackTimeout" className="text-right text-sm font-medium">
+                            Ack Timeout (s)
+                        </label>
+                        <input
+                            id="create-ackTimeout"
+                            type="number"
+                            value={ackTimeout}
+                            onChange={(e) => setAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="Optional"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="create-maxAttempts" className="text-right text-sm font-medium">
+                            Max Attempts
+                        </label>
+                        <input
+                            id="create-maxAttempts"
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={maxAttempts}
+                            onChange={(e) => setMaxAttempts(e.target.value === "" ? "" : Number(e.target.value))}
+                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            placeholder="Optional"
+                        />
+                    </div>
+                    <div className="grid grid-cols-4 items-start gap-4">
+                        <label htmlFor="create-payload" className="text-right text-sm font-medium pt-2">
+                            Payload
+                        </label>
+                        <textarea
+                            id="create-payload"
+                            value={payload}
+                            onChange={(e) => setPayload(e.target.value)}
+                            className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                        />
+                    </div>
+                    {error && (
+                        <div className="text-sm text-destructive font-medium text-center">
+                            {error}
+                        </div>
+                    )}
+                </div>
+                <DialogFooter>
+                    <Button type="button" variant="secondary" onClick={onClose}>
+                        Cancel
+                    </Button>
+                    <Button type="button" onClick={handleCreate}>
+                        Create Message
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 function DeadLetterTable({ 
     messages, 
+    config,
     onDelete, 
     onEdit, 
     formatTime, 
@@ -1434,6 +2034,7 @@ function DeadLetterTable({
     onSort
 }: {
     messages: Message[],
+    config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
     formatTime: (ts?: number) => string,
@@ -1515,13 +2116,14 @@ function DeadLetterTable({
                             <SortableHeader label="Failed At" field="failed_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Ack Timeout</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic">
+                                <TableCell colSpan={10} className="h-32 text-center text-muted-foreground opacity-50 italic">
                                     No failed messages found.
                                 </TableCell>
                             </TableRow>
@@ -1529,7 +2131,7 @@ function DeadLetterTable({
                             <>
                                 {virtual.topSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                        <TableCell colSpan={10} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg) => {
@@ -1569,7 +2171,13 @@ function DeadLetterTable({
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || 1}</span>
+                                                <span className="text-sm text-foreground pl-4 block">
+                                                    {msg.attempt_count || 1}
+                                                    {config?.max_attempts && <span className="text-muted-foreground"> / {config.max_attempts}</span>}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                             </TableCell>
                                             <TableCell className="text-right pr-6">
                                                 <div className="flex justify-end gap-1">
@@ -1608,7 +2216,7 @@ function DeadLetterTable({
                                 })}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                        <TableCell colSpan={10} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
                                     </TableRow>
                                 )}
                             </>
@@ -1650,7 +2258,15 @@ function DeadLetterTable({
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground pl-4 block">{msg.attempt_count || 1}</span>
+                                        <span className="text-sm text-foreground pl-4 block">
+                                            {msg.attempt_count || 1}
+                                            {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                                                <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                                            )}
+                                        </span>
+                                    </TableCell>
+                                    <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                        {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                     </TableCell>
                                     <TableCell className="text-right pr-6">
                                         <div className="flex justify-end gap-1">

@@ -72,13 +72,17 @@ class MessageMetadata {
     dequeued_at = null,
     created_at = 0.0,
     last_error = null,
-    processing_duration = 0.0
+    processing_duration = 0.0,
+    custom_ack_timeout = null,
+    custom_max_attempts = null
   ) {
     this.attempt_count = attempt_count;
     this.dequeued_at = dequeued_at; // timestamp in seconds
     this.created_at = created_at; // timestamp in seconds
     this.last_error = last_error;
     this.processing_duration = processing_duration;
+    this.custom_ack_timeout = custom_ack_timeout;
+    this.custom_max_attempts = custom_max_attempts;
   }
 
   static fromObject(data) {
@@ -87,7 +91,9 @@ class MessageMetadata {
       data.dequeued_at,
       data.created_at,
       data.last_error,
-      data.processing_duration
+      data.processing_duration,
+      data.custom_ack_timeout,
+      data.custom_max_attempts
     );
   }
 }
@@ -237,6 +243,11 @@ class OptimizedRedisQueue {
     };
   }
 
+  // Get immediate stream name (checked before all priorities)
+  _getImmediateStreamName() {
+    return `${this.config.queue_name}_immediate`;
+  }
+
   // Get stream name for a specific priority level
   _getPriorityStreamName(priority) {
     const maxPriority = this.config.max_priority_levels - 1;
@@ -249,7 +260,7 @@ class OptimizedRedisQueue {
 
   // Get all priority stream names (highest priority first for reading)
   _getAllPriorityStreams() {
-    const streams = [];
+    const streams = [this._getImmediateStreamName()];
     for (let p = this.config.max_priority_levels - 1; p >= 0; p--) {
       streams.push(this._getPriorityStreamName(p));
     }
@@ -301,7 +312,7 @@ class OptimizedRedisQueue {
     }
   }
 
-  async enqueueMessage(messageData, priority = 0) {
+  async enqueueMessage(messageData, priority = 0, queueNameOverride = null) {
     try {
       if (!messageData.id) {
         messageData.id = uuidv4();
@@ -312,7 +323,7 @@ class OptimizedRedisQueue {
       messageData.priority = priority;
 
       const messageJson = this._serializeMessage(messageData);
-      const queueName = this._getPriorityStreamName(priority);
+      const queueName = queueNameOverride || this._getPriorityStreamName(priority);
 
       await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
 
@@ -365,7 +376,7 @@ class OptimizedRedisQueue {
     }
   }
 
-  async dequeueMessage(timeout = 0) {
+  async dequeueMessage(timeout = 0, ackTimeout = null) {
     const priorityStreams = this._getAllPriorityStreams(); // Highest priority first
     const timeoutMs = Math.max(0, Math.floor(timeout * 1000));
 
@@ -488,6 +499,19 @@ class OptimizedRedisQueue {
 
       metadata.dequeued_at = currentTime;
       metadata.attempt_count += 1;
+      
+      if (ackTimeout) {
+        metadata.custom_ack_timeout = ackTimeout;
+      } else if (messageData.custom_ack_timeout) {
+        metadata.custom_ack_timeout = messageData.custom_ack_timeout;
+      }
+
+      if (
+        typeof messageData.custom_max_attempts === "number" &&
+        messageData.custom_max_attempts > 0
+      ) {
+        metadata.custom_max_attempts = messageData.custom_max_attempts;
+      }
 
       // Update metadata (include the full message data for acknowledgment)
       const metadataWithMessage = {
@@ -497,6 +521,8 @@ class OptimizedRedisQueue {
           payload: messageData.payload,
           priority: messageData.priority,
           created_at: messageData.created_at,
+          custom_ack_timeout: metadata.custom_ack_timeout,
+          custom_max_attempts: metadata.custom_max_attempts,
           encryption: messageData.encryption,
           signature: messageData.signature,
         }
@@ -654,73 +680,142 @@ class OptimizedRedisQueue {
     for (const queueName of queues) {
       try {
         // Check for pending messages (limit 100 for batch processing)
-        const pending = await this.redisManager.redis.xpending(
-          queueName,
-          this.config.consumer_group_name,
-          "-",
-          "+",
-          100
-        );
+        let pending;
+        try {
+          pending = await this.redisManager.redis.xpending(
+            queueName,
+            this.config.consumer_group_name,
+            "-",
+            "+",
+            100
+          );
+        } catch (e) {
+          const msg = e?.message || "";
+          if (msg.includes("NOGROUP") || msg.includes("no such key")) {
+            continue;
+          }
+          throw e;
+        }
 
         if (!pending || pending.length === 0) continue;
 
+        // Fetch metadata for all pending messages to check for custom timeouts
+        const pendingIds = pending.map((p) => p[0]);
+        let metadataMap = new Map();
+        let messageDataMap = new Map();
+        
+        if (pendingIds.length > 0) {
+             const pipeline = this.redisManager.pipeline();
+             pendingIds.forEach(id => pipeline.xrange(queueName, id, id));
+             const ranges = await pipeline.exec();
+             
+             const messageIds = [];
+             
+             ranges.forEach((result, index) => {
+                 const streamId = pendingIds[index];
+                 if (result[1] && result[1].length > 0) {
+                     const [id, fields] = result[1][0];
+                     let json = null;
+                     for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+                     if (json) {
+                         const msg = this._deserializeMessage(json);
+                         if (msg && msg.id) {
+                             messageIds.push(msg.id);
+                             messageDataMap.set(streamId, msg);
+                         }
+                     }
+                 }
+             });
+             
+             if (messageIds.length > 0) {
+                 const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...messageIds);
+                 messageIds.forEach((msgId, index) => {
+                     if (metadataJsons[index]) {
+                         try {
+                             metadataMap.set(msgId, JSON.parse(metadataJsons[index]));
+                         } catch (e) {}
+                     }
+                 });
+             }
+        }
+
         for (const [msgId, consumer, idleMs, deliveryCount] of pending) {
-          if (idleMs < this.config.ack_timeout_seconds * 1000) continue;
-
-          // Message timed out. Retrieve full message details.
-          const range = await this.redisManager.redis.xrange(queueName, msgId, msgId);
-          if (!range || range.length === 0) {
-            // Message in PEL but not in Stream (likely deleted). Clean up PEL.
-            await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
-            continue;
-          }
-
-          const [streamId, fields] = range[0];
-          let messageJson = null;
-          for (let i = 0; i < fields.length; i += 2) {
-            if (fields[i] === "data") {
-              messageJson = fields[i + 1];
-              break;
-            }
-          }
-
-          if (!messageJson) {
-             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
-             await this.redisManager.redis.xdel(queueName, msgId);
-             continue;
-          }
-
-          const messageData = this._deserializeMessage(messageJson);
-          if (!messageData || !messageData.id) {
-             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
-             await this.redisManager.redis.xdel(queueName, msgId);
-             continue;
-          }
-
-          // Check metadata
-          const metadataJson = await this.redisManager.redis.hget(
-            this.config.metadata_hash_name,
-            messageData.id
-          );
+          if (idleMs < 1000) continue; // Skip if idle < 1s (optimization)
           
-          let metadata;
-          if (metadataJson) {
-             metadata = JSON.parse(metadataJson);
+          const messageData = messageDataMap.get(msgId);
+          
+          if (!messageData) {
+             // Message might be deleted or corrupt, let's verify with explicit call if needed, 
+             // but since we just fetched it via pipeline, it's likely gone or bad.
+             // We can safely cleanup.
+             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
+             // Only delete if we are sure it's gone from stream. Pipeline result said so.
+             // But wait, if deserialization failed, we should cleanup too.
+             // To be safe against race conditions (added between pipeline and now?), rare but possible.
+             // But XACK is safe.
+             continue;
+          }
+          
+          let metadata = metadataMap.get(messageData.id);
+          let effectiveTimeout = this.config.ack_timeout_seconds;
+          let effectiveMaxAttempts = this.config.max_attempts;
+          
+          if (metadata) {
+             if (metadata.custom_ack_timeout) {
+                 effectiveTimeout = metadata.custom_ack_timeout;
+             }
+             if (metadata.custom_max_attempts) {
+                 effectiveMaxAttempts = metadata.custom_max_attempts;
+             }
           } else {
-             metadata = { attempt_count: 0, created_at: messageData.created_at };
+             metadata = {
+               attempt_count: 0,
+               created_at: messageData.created_at,
+               custom_max_attempts: messageData.custom_max_attempts
+             };
+             if (metadata.custom_max_attempts) {
+               effectiveMaxAttempts = metadata.custom_max_attempts;
+             }
           }
 
+          if (idleMs < effectiveTimeout * 1000) continue;
+          
           // Use deliveryCount from Stream or metadata, whichever is higher/safer
           // Metadata attempt_count is incremented on dequeue.
           // If we are here, it means it wasn't ACKed.
           
-          if (metadata.attempt_count >= this.config.max_attempts) {
+          if (metadata.attempt_count >= effectiveMaxAttempts) {
             // Move to DLQ
             logger.warn(`Message ${messageData.id} exceeded max attempts, moving to DLQ.`);
             
             // Enrich with error info
+            if (
+              typeof messageData.custom_ack_timeout !== "number" &&
+              typeof metadata.custom_ack_timeout === "number"
+            ) {
+              messageData.custom_ack_timeout = metadata.custom_ack_timeout;
+            } else if (
+              typeof messageData.custom_ack_timeout !== "number" &&
+              typeof metadata._original_message?.custom_ack_timeout === "number"
+            ) {
+              messageData.custom_ack_timeout = metadata._original_message.custom_ack_timeout;
+            }
+
+            if (
+              typeof messageData.custom_max_attempts !== "number" &&
+              typeof metadata.custom_max_attempts === "number"
+            ) {
+              messageData.custom_max_attempts = metadata.custom_max_attempts;
+            } else if (
+              typeof messageData.custom_max_attempts !== "number" &&
+              typeof metadata._original_message?.custom_max_attempts === "number"
+            ) {
+              messageData.custom_max_attempts = metadata._original_message.custom_max_attempts;
+            }
+
             messageData.failed_at = currentTime;
             messageData.last_error = "Max attempts exceeded (Stream)";
+            messageData.attempt_count = metadata.attempt_count;
             const dlqJson = this._serializeMessage(messageData);
 
             await this.redisManager.redis.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
@@ -734,6 +829,8 @@ class OptimizedRedisQueue {
             
             // We don't increment attempt_count here; it will be incremented on next dequeue.
             // But we might want to note the timeout.
+            
+            const messageJson = this._serializeMessage(messageData);
             
             await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
             await this.redisManager.redis.xack(queueName, this.config.consumer_group_name, msgId);
@@ -757,44 +854,94 @@ class OptimizedRedisQueue {
   }
 
   async _ensureFullMessage(msg, queueType) {
-    if (msg.payload && msg.type) return msg;
+    if (!msg || !msg.id) return msg;
+    if (msg.payload && msg.type && msg._stream_id) return msg;
 
     try {
-      const getQueueName = (type, priority = 0) => {
-        if (type === 'main') return this._getPriorityStreamName(priority);
-        if (type === 'dead') return this.config.dead_letter_queue_name;
-        if (type === 'acknowledged') return this.config.acknowledged_queue_name;
-        if (type === 'processing') return this._getPriorityStreamName(priority);
-        return this.config.queue_name;
+      const redis = this.redisManager.redis;
+
+      const getStreamsForType = (type) => {
+        if (type === "main") return this._getAllPriorityStreams();
+        if (type === "processing") return this._getAllPriorityStreams();
+        if (type === "dead") return [this.config.dead_letter_queue_name];
+        if (type === "acknowledged") return [this.config.acknowledged_queue_name];
+        return [];
       };
 
-      if (queueType === 'acknowledged') {
-        const stream = await this.redisManager.redis.xrange(this.config.acknowledged_queue_name, "-", "+");
-        for (const [id, fields] of stream) {
-          let json = null;
-          for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-          const parsed = this._deserializeMessage(json);
-          if (parsed && parsed.id === msg.id) {
-            return { ...parsed, ...msg, _stream_id: id, _stream_name: this.config.acknowledged_queue_name };
-          }
-        }
-      } else {
-        const streamId = msg._stream_id;
-        if (streamId) {
-          const streamName = msg._stream_name || getQueueName(queueType, msg.priority);
-          if (streamName) {
-            const range = await this.redisManager.redis.xrange(streamName, streamId, streamId);
-            if (range && range.length > 0) {
-              const [id, fields] = range[0];
-              let json = null;
-              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-              const fullMsg = this._deserializeMessage(json);
-              if (fullMsg) {
-                return { ...fullMsg, ...msg, _stream_id: id, _stream_name: streamName };
+      const findByIdInStream = async (streamName, targetId) => {
+        const batchSize = 250;
+        let start = "-";
+
+        while (true) {
+          const entries = await redis.xrange(
+            streamName,
+            start,
+            "+",
+            "COUNT",
+            batchSize
+          );
+
+          if (!entries || entries.length === 0) return null;
+
+          for (const [id, fields] of entries) {
+            let json = null;
+            for (let i = 0; i < fields.length; i += 2) {
+              if (fields[i] === "data") {
+                json = fields[i + 1];
+                break;
               }
             }
+            const parsed = this._deserializeMessage(json);
+            if (parsed && parsed.id === targetId) {
+              return { streamId: id, streamName, parsed };
+            }
+          }
+
+          if (entries.length < batchSize) return null;
+          const lastId = entries[entries.length - 1]?.[0];
+          if (!lastId) return null;
+          start = `(${lastId}`;
+        }
+      };
+
+      const findByIdInStreams = async (streamNames, targetId) => {
+        for (const streamName of streamNames) {
+          const found = await findByIdInStream(streamName, targetId);
+          if (found) return found;
+        }
+        return null;
+      };
+
+      const streamId = msg._stream_id;
+      const streamName = msg._stream_name;
+
+      if (streamId && streamName) {
+        const range = await redis.xrange(streamName, streamId, streamId);
+        if (range && range.length > 0) {
+          const [id, fields] = range[0];
+          let json = null;
+          for (let i = 0; i < fields.length; i += 2) {
+            if (fields[i] === "data") {
+              json = fields[i + 1];
+              break;
+            }
+          }
+          const fullMsg = this._deserializeMessage(json);
+          if (fullMsg) {
+            return { ...fullMsg, ...msg, _stream_id: id, _stream_name: streamName };
           }
         }
+      }
+
+      const streamsToSearch = getStreamsForType(queueType);
+      const found = await findByIdInStreams(streamsToSearch, msg.id);
+      if (found) {
+        return {
+          ...found.parsed,
+          ...msg,
+          _stream_id: found.streamId,
+          _stream_name: found.streamName,
+        };
       }
     } catch (e) {
       // Ignore errors, return original message
@@ -803,10 +950,6 @@ class OptimizedRedisQueue {
   }
 
   async moveMessages(messages, fromQueue, toQueue) {
-    if (toQueue === 'processing') {
-      throw new Error("Cannot move messages directly to 'processing' state. Move to 'main' to re-process.");
-    }
-    
     // Fetch full messages if missing payload/type (e.g. from partial UI selection)
     const enrichedMessages = await Promise.all(messages.map(m => this._ensureFullMessage(m, fromQueue)));
     
@@ -824,7 +967,7 @@ class OptimizedRedisQueue {
 
     for (const msg of enrichedMessages) {
         if (!msg || !msg.id) continue;
-        
+
         // 1. Remove from Source
         if (fromQueue === 'acknowledged') {
             // For acknowledged queue (Stream), use _stream_id if available
@@ -832,7 +975,7 @@ class OptimizedRedisQueue {
             if (streamId) {
                 pipeline.xdel(this.config.acknowledged_queue_name, streamId);
             } else {
-                logger.warn(`Missing _stream_id for message ${msg.id} in acknowledged queue, skipping removal`);
+                throw new Error(`Message ${msg.id} not found in acknowledged queue`);
             }
         } else {
             // Stream Source
@@ -851,7 +994,7 @@ class OptimizedRedisQueue {
                 }
                 pipeline.xdel(actualStreamName, streamId);
             } else {
-                logger.warn(`Missing _stream_id for message ${msg.id}, skipping removal from ${fromQueue}`);
+                throw new Error(`Message ${msg.id} not found in ${fromQueue} queue`);
             }
         }
 
@@ -880,7 +1023,14 @@ class OptimizedRedisQueue {
         const msgJson = this._serializeMessage(newMsg);
         
         // All destinations now use Streams
-        const destQueue = getQueueName(toQueue, newMsg.priority);
+        let destQueue;
+        if (toQueue === 'processing') {
+             // Force to immediate stream to ensure it is picked up first by dequeue
+             destQueue = this._getImmediateStreamName();
+        } else {
+             destQueue = getQueueName(toQueue, newMsg.priority);
+        }
+        
         pipeline.xadd(destQueue, "*", "data", msgJson);
         
         if (toQueue === 'acknowledged') {
@@ -894,6 +1044,23 @@ class OptimizedRedisQueue {
     }
 
     await pipeline.exec();
+
+    // Special handling when moving TO processing queue:
+    // We attempt to dequeue (consume) the messages immediately so they appear in the PEL (Processing list).
+    // Note: dequeueMessage(0) picks the next available message. If the queue has other messages,
+    // this might pick up a different message than the one just moved.
+    // However, this is the best approximation for "Move to Processing" in a FIFO queue system.
+    if (toQueue === 'processing') {
+      for (let i = 0; i < movedCount; i++) {
+        // We use 0 timeout to return immediately if nothing is available (should be available since we just added it)
+        try {
+          await this.dequeueMessage(0); 
+        } catch (e) {
+          logger.warn(`Failed to auto-dequeue message after move: ${e.message}`);
+        }
+      }
+    }
+
     return movedCount;
   }
 
@@ -922,6 +1089,8 @@ class OptimizedRedisQueue {
                         if (meta) {
                             msgs[i].attempt_count = meta.attempt_count;
                             msgs[i].last_error = meta.last_error;
+                            msgs[i].custom_ack_timeout = meta.custom_ack_timeout;
+                            msgs[i].custom_max_attempts = meta.custom_max_attempts;
                         }
                     } catch (e) { /* ignore */ }
                 }
@@ -939,14 +1108,19 @@ class OptimizedRedisQueue {
       const allMessages = stream.map(([id, fields]) => {
           let json = null;
           for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-          return json;
+          return { json, id };
       });
 
-      for (const messageJson of allMessages) {
+      for (const { json: messageJson, id: streamId } of allMessages) {
         if (!messageJson) continue;
         try {
           const messageData = this._deserializeMessage(messageJson);
           if (!messageData) continue;
+          
+          // Attach stream info for reliable moves/deletes
+          messageData._stream_id = streamId;
+          messageData._stream_name = queue.name;
+
           const messageTimestamp = messageData.created_at * 1000; // Convert to milliseconds
           if (messageTimestamp >= startTimestamp && messageTimestamp <= endTimestamp) {
             messages.push(messageData);
@@ -1174,6 +1348,46 @@ class OptimizedRedisQueue {
       const redis = this.redisManager.redis;
       let streamNames = [];
       
+      // Special handling for processing queue - only allow metadata updates (timeout)
+      if (queueType === 'processing') {
+          // Verify message exists in pending list (optional but good for validation)
+          // For efficiency, we might skip full verification or just check metadata.
+          // Let's check metadata first as that's what we are updating.
+          
+          const metadataKey = messageId;
+          const existingMetaJson = await redis.hget(this.config.metadata_hash_name, metadataKey);
+          
+          if (!existingMetaJson) {
+              throw new Error(`Message metadata not found for ${messageId} in processing queue`);
+          }
+
+          let meta = JSON.parse(existingMetaJson);
+          
+          // Only update allowed fields for processing messages
+          if (updates.custom_ack_timeout !== undefined) {
+              meta.custom_ack_timeout = updates.custom_ack_timeout;
+              await redis.hset(this.config.metadata_hash_name, metadataKey, JSON.stringify(meta));
+              
+              logger.info(`Updated custom_ack_timeout for message ${messageId} in processing queue`);
+              return {
+                  success: true,
+                  messageId,
+                  queueType,
+                  message: 'Message timeout updated successfully',
+                  data: { ...updates, id: messageId }
+              };
+          } else {
+              // If no valid updates for processing queue
+               return {
+                  success: true, // Or false? User might have sent payload update which we ignored.
+                  messageId,
+                  queueType,
+                  message: 'No updatable fields provided for processing message (only timeout can be updated)',
+                  data: { id: messageId }
+              };
+          }
+      }
+
       switch (queueType) {
         case 'main':
           streamNames = this._getAllPriorityStreams();
@@ -1182,7 +1396,7 @@ class OptimizedRedisQueue {
           streamNames = [this.config.dead_letter_queue_name];
           break;
         default:
-          throw new Error(`Cannot update message in ${queueType} queue. Only 'main' and 'dead' queues are supported.`);
+          throw new Error(`Cannot update message in ${queueType} queue. Only 'main', 'dead', and 'processing' queues are supported.`);
       }
 
       let originalMessageData = null;
@@ -1420,10 +1634,18 @@ class OptimizedRedisQueue {
           if (m.type) availableTypes.add(m.type);
       });
 
+      // Filter out messages from mainQueue that are present in processingQueue
+      // This prevents "duplication" in the UI status since processing messages are technically still in the stream (mainQueue)
+      const processingStreamIds = new Set(processingMessages.map(m => m._stream_id));
+      mainMessages = mainMessages.filter(m => !processingStreamIds.has(m._stream_id));
+
+      // Adjust main queue length to reflect only waiting messages
+      const waitingLength = Math.max(0, totalMainLen - processingMessages.length);
+
       return {
         mainQueue: {
           name: this.config.queue_name,
-          length: totalMainLen,
+          length: waitingLength,
           messages: mainMessages,
           priority_levels: this.config.max_priority_levels,
         },
@@ -1478,6 +1700,27 @@ class OptimizedRedisQueue {
       if (queueType === 'main') {
           // Fetch from all priority streams
           const priorityStreams = this._getAllPriorityStreams();
+
+          const getPendingSafe = async (queueName) => {
+              try {
+                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 1000);
+                  return Array.isArray(res) ? res : [];
+              } catch (e) {
+                  const msg = e.message || '';
+                  if (msg.includes('NOGROUP') || msg.includes('no such key')) {
+                      return [];
+                  }
+                  throw e;
+              }
+          };
+
+          const pendingStreamIds = new Set();
+          for (const streamName of priorityStreams) {
+              const pending = await getPendingSafe(streamName);
+              for (const p of pending) {
+                  pendingStreamIds.add(p[0]);
+              }
+          }
           
           const parse = (msgs, name) => msgs.map(([id, fields]) => {
               let json = null;
@@ -1490,6 +1733,26 @@ class OptimizedRedisQueue {
           for (const streamName of priorityStreams) {
               const streamData = await redis.xrange(streamName, "-", "+");
               rawMessages.push(...parse(streamData, streamName));
+          }
+
+          if (pendingStreamIds.size > 0) {
+              rawMessages = rawMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
+          }
+
+          const ids = rawMessages.map(m => m?.id).filter(Boolean);
+          if (ids.length > 0) {
+              const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+              rawMessages.forEach((m, index) => {
+                  const metaStr = metaResults[index];
+                  if (!metaStr) return;
+                  try {
+                      const meta = JSON.parse(metaStr);
+                      if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+                      if (meta.last_error) m.last_error = meta.last_error;
+                      if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
+                      if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+                  } catch (e) {}
+              });
           }
           isStream = false; // Already parsed
       } else if (queueType === 'processing') {
@@ -1541,9 +1804,16 @@ class OptimizedRedisQueue {
                       let json = null;
                       for(let j=0; j<fields.length; j+=2) if(fields[j]==='data') json=fields[j+1];
                       const m = this._deserializeMessage(json);
+                      
+                      const pendingInfo = allPending[i];
+                      const idleTime = pendingInfo ? pendingInfo[2] : 0;
+
                       if(m) { 
                           m._stream_id = id; 
                           m._stream_name = streamPendingMap.get(id);
+                          // Calculate dequeued_at from idle time for accurate timeout calculation
+                          m.dequeued_at = (Date.now() - idleTime) / 1000;
+                          if (!m.processing_started_at) m.processing_started_at = m.dequeued_at;
                       }
                       return m;
                   }).filter(Boolean);
@@ -1569,6 +1839,8 @@ class OptimizedRedisQueue {
                                   m.dequeued_at = meta.dequeued_at;
                                   m.processing_started_at = meta.dequeued_at;
                                   m.last_error = meta.last_error;
+                                  if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
+                                  if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
                               } catch (e) {
                                   // ignore
                               }
@@ -1596,6 +1868,25 @@ class OptimizedRedisQueue {
               if(m) { m._stream_id = id; m._stream_name = this.config.dead_letter_queue_name; }
               return m;
           }).filter(Boolean);
+          const ids = rawMessages.map(m => m?.id).filter(Boolean);
+          if (ids.length > 0) {
+              const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+              const metaById = new Map();
+              ids.forEach((id, index) => metaById.set(id, metaResults[index]));
+              rawMessages.forEach((m) => {
+                  const metaStr = metaById.get(m?.id);
+                  if (!metaStr) return;
+                  try {
+                      const meta = JSON.parse(metaStr);
+                      if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+                      if (meta.last_error) m.last_error = meta.last_error;
+                      const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
+                      const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
+                      if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
+                      if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
+                  } catch (e) {}
+              });
+          }
           isStream = false;
       } else if (queueType === 'acknowledged') {
           // Stream (now consistent with other queues)

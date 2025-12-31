@@ -19,7 +19,7 @@ vi.mock('@/config/env', async () => {
 import router from './queue.index';
 import { OptimizedRedisQueue, QueueConfig } from '@/lib/redis.js';
 import env from '@/config/env';
-
+  
 // Create a real Redis queue instance for testing (to clean up)
 let queue: OptimizedRedisQueue;
 const testConfig = new QueueConfig({
@@ -190,6 +190,128 @@ describe('Queue Routes - Integration Tests', () => {
     });
   });
 
+  describe('POST /queue/move', () => {
+    it('should move a selected message to processing and remove it from main', async () => {
+      await testClient(router).queue.message.$post({ json: { type: 'm1', payload: { n: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'm2', payload: { n: 2 } } });
+
+      const mainListRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(mainListRes.status).toBe(200);
+      const mainList = await mainListRes.json();
+      expect(Array.isArray(mainList.messages)).toBe(true);
+      expect(mainList.messages.length).toBeGreaterThan(0);
+
+      const selected = mainList.messages[0];
+      const toMove = {
+        id: selected.id,
+        type: selected.type,
+        payload: selected.payload,
+        priority: selected.priority,
+      };
+
+      const moveRes = await testClient(router).queue.move.$post({
+        json: { messages: [toMove], fromQueue: 'main', toQueue: 'processing' }
+      });
+      expect(moveRes.status).toBe(200);
+      const moveResult = await moveRes.json();
+      expect(moveResult.movedCount).toBe(1);
+
+      const mainListAfterRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(mainListAfterRes.status).toBe(200);
+      const mainListAfter = await mainListAfterRes.json();
+      const stillInMain = (mainListAfter.messages || []).some((m: any) => m.id === selected.id);
+      expect(stillInMain).toBe(false);
+
+      const processingRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'processing' }
+      });
+      expect(processingRes.status).toBe(200);
+      const processing = await processingRes.json();
+      const inProcessing = (processing.messages || []).some((m: any) => m.id === selected.id);
+      expect(inProcessing).toBe(true);
+    }, 15000);
+
+    it('should enrich DLQ messages with attempt_count from metadata after manual move', async () => {
+      await testClient(router).queue.message.$post({ json: { type: 'dlq-meta', payload: { n: 1 } } });
+
+      const dequeueRes = await testClient(router).queue.message.$get({
+        query: { timeout: '1', ackTimeout: '60' }
+      });
+      expect(dequeueRes.status).toBe(200);
+      const dequeued = await dequeueRes.json() as any;
+
+      const moveRes = await testClient(router).queue.move.$post({
+        json: { messages: [dequeued], fromQueue: 'processing', toQueue: 'dead' }
+      });
+      expect(moveRes.status).toBe(200);
+
+      const deadRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'dead' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(deadRes.status).toBe(200);
+      const deadList = await deadRes.json() as any;
+      const deadMsg = (deadList.messages || []).find((m: any) => m.id === dequeued.id);
+      expect(deadMsg).toBeTruthy();
+      expect(deadMsg.attempt_count).toBe(1);
+      expect(deadMsg.custom_ack_timeout).toBe(60);
+    }, 15000);
+
+    it('should preserve custom ack timeout when moving back to processing', async () => {
+      await testClient(router).queue.message.$post({ json: { type: 'timeout-test', payload: { a: 1 } } });
+
+      const dequeueRes = await testClient(router).queue.message.$get({
+        query: { timeout: '1', ackTimeout: '90' }
+      });
+      expect(dequeueRes.status).toBe(200);
+      const dequeued = await dequeueRes.json() as any;
+      expect(dequeued).toHaveProperty('id');
+      expect(dequeued).toHaveProperty('_stream_id');
+      expect(dequeued).toHaveProperty('_stream_name');
+
+      const moveToMainRes = await testClient(router).queue.move.$post({
+        json: { messages: [dequeued], fromQueue: 'processing', toQueue: 'main' }
+      });
+      expect(moveToMainRes.status).toBe(200);
+
+      const mainListRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(mainListRes.status).toBe(200);
+      const mainList = await mainListRes.json() as any;
+
+      const mainMsg = (mainList.messages || []).find((m: any) => m.id === dequeued.id);
+      expect(mainMsg).toBeTruthy();
+      expect(mainMsg.attempt_count).toBe(1);
+
+      const moveToProcessingRes = await testClient(router).queue.move.$post({
+        json: { messages: [mainMsg], fromQueue: 'main', toQueue: 'processing' }
+      });
+      expect(moveToProcessingRes.status).toBe(200);
+
+      const metaJson = await queue.redisManager.redis.hget(queue.config.metadata_hash_name, dequeued.id);
+      expect(metaJson).toBeTruthy();
+      const meta = JSON.parse(metaJson!);
+      expect(meta.custom_ack_timeout).toBe(90);
+
+      const processingRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'processing' }
+      });
+      expect(processingRes.status).toBe(200);
+      const processing = await processingRes.json() as any;
+      const processingMsg = (processing.messages || []).find((m: any) => m.id === dequeued.id);
+      expect(processingMsg).toBeTruthy();
+      expect(processingMsg.custom_ack_timeout).toBe(90);
+    }, 15000);
+  });
+
   // Update Message
   describe('PUT /queue/message/:messageId', () => {
     it('should update a message successfully', async () => {
@@ -220,11 +342,7 @@ describe('Queue Routes - Integration Tests', () => {
         // 1. Enqueue
         await testClient(router).queue.message.$post({ json: { type: 'to-delete', payload: {} } });
         
-        // 2. Dequeue to get ID (Wait, if I dequeue, it's technically "processing" but still in stream? 
-        // No, dequeue uses XREADGROUP. The message remains in the stream but is added to PEL.
-        // deleteMessage in redis.js scans the stream. It should find it.
-        // However, if I dequeue, I might want to test deleting from 'main' or 'processing'.
-        // Let's test deleting from 'main' (which covers the stream).
+        // 2. Dequeue to get ID
         const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
         const msg = await dequeueRes.json();
 
@@ -315,13 +433,6 @@ describe('Queue Routes - Integration Tests', () => {
         const dequeuedMessage = await dequeueRes.json();
   
         // Try to acknowledge with ONLY ID (should fail now)
-        // Note: The schema might allow it (if I didn't make it required in schema), but the handler returns 400.
-        // Wait, I updated the schema to require _stream_id and _stream_name.
-        // So validation (422) might happen BEFORE the handler (400).
-        // Let's check the schema change again.
-        // Schema: required({ id: true, _stream_id: true, _stream_name: true })
-        // So if I send missing fields, Zod Validator will return 422.
-        
         const ackRes = await testClient(router).queue.ack.$post({ 
             json: { 
                 id: dequeuedMessage.id 
@@ -329,8 +440,6 @@ describe('Queue Routes - Integration Tests', () => {
             } as any
         });
   
-        // Expecting 422 (Validation Error) if schema enforces it, or 400 if it passes schema but fails logic.
-        // Since I added .required(), it should be 422.
         expect(ackRes.status).toBe(422); 
     });
   });
@@ -384,5 +493,136 @@ describe('Queue Routes - Integration Tests', () => {
       const status = await statusRes.json();
       expect(status.processingQueue.length).toBe(1);
     });
+  });
+
+  // Robustness Tests
+  describe('Robustness Tests - Retry and DLQ', () => {
+    it('should retry a message until max attempts and then move to DLQ', async () => {
+        // 1. Modify config for the existing queue instance
+        // Store original values to restore later
+        const originalTimeout = queue.config.ack_timeout_seconds;
+        const originalMaxAttempts = queue.config.max_attempts;
+
+        // We cast to any to avoid readonly issues if defined as such
+        (queue.config as any).ack_timeout_seconds = 1;
+        (queue.config as any).max_attempts = 2;
+
+        try {
+            // 2. Enqueue a message
+            const payload = { data: 'retry-test' };
+            await queue.enqueueMessage({ type: 'retry-job', payload });
+
+            // 3. First Dequeue (Attempt 1)
+            // timeout=1s to wait for message, ackTimeout=1s
+            const msg1 = await queue.dequeueMessage(1, 1);
+            expect(msg1).not.toBeNull();
+            expect(msg1?.type).toBe('retry-job');
+            
+            // Verify attempt count in metadata
+            let metadata = await queue.redisManager.redis.hget(
+                queue.config.metadata_hash_name, 
+                msg1!.id
+            );
+            expect(JSON.parse(metadata!)).toHaveProperty('attempt_count', 1);
+
+            // 4. Simulate Timeout (Wait 1.1s)
+            await new Promise(resolve => setTimeout(resolve, 1100));
+
+            // 5. Trigger Requeue Logic
+            const requeuedCount = await queue.requeueFailedMessages();
+            expect(requeuedCount).toBe(1); // Should have requeued 1 message
+
+            // 6. Second Dequeue (Attempt 2)
+            const msg2 = await queue.dequeueMessage(1, 1);
+            expect(msg2).not.toBeNull();
+            expect(msg2?.payload).toEqual(payload);
+            expect(msg2?.id).toBe(msg1?.id);
+
+            // Verify attempt count
+            metadata = await queue.redisManager.redis.hget(
+                queue.config.metadata_hash_name, 
+                msg2!.id
+            );
+            expect(JSON.parse(metadata!)).toHaveProperty('attempt_count', 2);
+
+            // 7. Simulate Timeout Again (Wait 1.1s)
+            await new Promise(resolve => setTimeout(resolve, 1100));
+
+            // 8. Trigger Requeue Logic (Should move to DLQ now)
+            // Because attempt_count (2) >= max_attempts (2)
+            await queue.requeueFailedMessages();
+
+            // 9. Verify DLQ
+            const dlqMessages = await queue.redisManager.redis.xrange(
+                queue.config.dead_letter_queue_name, 
+                '-', 
+                '+'
+            );
+            expect(dlqMessages.length).toBe(1);
+            
+            // Check content of DLQ message
+            const [dlqStreamId, dlqFields] = dlqMessages[0];
+            const dlqDataStr = dlqFields[1];
+            const dlqData = JSON.parse(dlqDataStr);
+            expect(dlqData.id).toBe(msg1?.id);
+            expect(dlqData.last_error).toContain('Max attempts exceeded');
+
+            // 10. Verify Main Queue is Empty
+            const mainMessages = await queue.redisManager.redis.xrange(
+                queue.config.queue_name,
+                '-',
+                '+'
+            );
+            expect(mainMessages.length).toBe(0);
+        } finally {
+            // Restore original config
+            (queue.config as any).ack_timeout_seconds = originalTimeout;
+            (queue.config as any).max_attempts = originalMaxAttempts;
+        }
+    }, 15000);
+
+    it('should preserve custom_max_attempts on messages moved to DLQ', async () => {
+        const originalTimeout = queue.config.ack_timeout_seconds;
+        const originalMaxAttempts = queue.config.max_attempts;
+
+        (queue.config as any).ack_timeout_seconds = 1;
+        (queue.config as any).max_attempts = 10;
+
+        try {
+            const payload = { data: 'custom-attempts-test' };
+            await queue.enqueueMessage({ type: 'retry-job', payload, custom_max_attempts: 2 });
+
+            const msg1 = await queue.dequeueMessage(1, 1);
+            expect(msg1).not.toBeNull();
+            expect(msg1?.id).toBeTruthy();
+
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            const requeuedCount = await queue.requeueFailedMessages();
+            expect(requeuedCount).toBe(1);
+
+            const msg2 = await queue.dequeueMessage(1, 1);
+            expect(msg2).not.toBeNull();
+            expect(msg2?.id).toBe(msg1?.id);
+
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            await queue.requeueFailedMessages();
+
+            const dlqMessages = await queue.redisManager.redis.xrange(
+                queue.config.dead_letter_queue_name,
+                '-',
+                '+'
+            );
+            expect(dlqMessages.length).toBe(1);
+
+            const [, dlqFields] = dlqMessages[0];
+            const dlqDataStr = dlqFields[1];
+            const dlqData = JSON.parse(dlqDataStr);
+            expect(dlqData.id).toBe(msg1?.id);
+            expect(dlqData.custom_max_attempts).toBe(2);
+        } finally {
+            (queue.config as any).ack_timeout_seconds = originalTimeout;
+            (queue.config as any).max_attempts = originalMaxAttempts;
+        }
+    }, 15000);
   });
 });

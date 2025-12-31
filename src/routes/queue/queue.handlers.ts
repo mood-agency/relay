@@ -13,6 +13,7 @@ import type {
   DequeuedMessage,
   ClearAllQueuesRoute,
   ClearQueueRoute,
+  GetConfigRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
 
@@ -54,15 +55,17 @@ const queueConfig: QueueConfigI = {
   secret_key: env.SECRET_KEY,
 };
 
-const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig));
+export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig));
 
 export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
-  const { type, payload, priority } = c.req.valid("json");
+  const { type, payload, priority, ackTimeout, maxAttempts, queue: queueName } = c.req.valid("json");
 
   const message = await queue.enqueueMessage({
     type,
     payload,
-  }, priority);
+    custom_ack_timeout: ackTimeout,
+    custom_max_attempts: maxAttempts,
+  }, priority, queueName);
 
   if (!message) {
     return c.json({ message: "Message not added" }, 500);
@@ -83,8 +86,8 @@ export const addBatch: AppRouteHandler<AddBatchRoute> = async (c: any) => {
 };
 
 export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
-  const { timeout } = c.req.valid("query");
-  const message = (await queue.dequeueMessage(timeout)) as DequeuedMessage;
+  const { timeout, ackTimeout } = c.req.valid("query");
+  const message = (await queue.dequeueMessage(timeout, ackTimeout)) as DequeuedMessage;
   if (!message) {
     return c.json({ message: "Message not found" }, 404);
   }
@@ -224,5 +227,16 @@ export const clearQueue: AppRouteHandler<ClearQueueRoute> = async (c: any) => {
     }, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to clear queue" }, 500);
+  }
+};
+
+export const getConfig: AppRouteHandler<GetConfigRoute> = async (c: any) => {
+  try {
+    return c.json({
+      ack_timeout_seconds: queueConfig.ack_timeout_seconds,
+      max_attempts: queueConfig.max_attempts,
+    }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get config" }, 500);
   }
 };
