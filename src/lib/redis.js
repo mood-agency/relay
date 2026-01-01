@@ -1,6 +1,9 @@
 import Redis from "ioredis";
-import crypto from "crypto";
-import { v7 as uuidv7 } from "uuid";
+import { nanoid } from "nanoid";
+
+// --- ID Generation Helper ---
+// Generates a 10-character URL-safe string using NanoID.
+const generateId = () => nanoid(10);
 
 // --- Improved Logging Configuration (Simple Console Logger) ---
 const logger = {
@@ -32,7 +35,7 @@ class QueueConfig {
     
     // Stream-specific configuration
     this.consumer_group_name = config.consumer_group_name || "queue_group";
-    this.consumer_name = config.consumer_name || `consumer-${uuidv7()}`;
+    this.consumer_name = config.consumer_name || `consumer-${generateId()}`;
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
@@ -360,7 +363,7 @@ class OptimizedRedisQueue {
   async enqueueMessage(messageData, priority = 0, queueNameOverride = null) {
     try {
       if (!messageData.id) {
-        messageData.id = uuidv7();
+        messageData.id = generateId();
       }
       if (typeof messageData.created_at === "undefined") {
         messageData.created_at = Date.now() / 1000; // seconds timestamp
@@ -391,7 +394,7 @@ class OptimizedRedisQueue {
     const pipeline = this.redisManager.pipeline();
     for (const msg of messages) {
       if (!msg.id) {
-        msg.id = uuidv7();
+        msg.id = generateId();
       }
       if (typeof msg.created_at === "undefined") {
         msg.created_at = Date.now() / 1000;

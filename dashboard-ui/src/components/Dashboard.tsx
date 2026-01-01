@@ -942,7 +942,7 @@ export default function Dashboard() {
 
     const formatTimestamp = (ts?: number) => {
         if (!ts) return "N/A"
-        return format(new Date(ts * 1000), "MM/dd/yyyy HH:mm:ss.SSS")
+        return format(new Date(ts * 1000), "dd MMM, yyyy HH:mm:ss.SSS")
     }
 
     // Available types for filter dropdown
@@ -1527,7 +1527,7 @@ function PaginationFooter({
 
 function SortableHeader({ label, field, currentSort, currentOrder, onSort }: { label: string, field: string, currentSort: string, currentOrder: string, onSort: (f: string) => void }) {
     return (
-        <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => onSort(field)}>
+        <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors text-xs" onClick={() => onSort(field)}>
             <div className="flex items-center gap-1">
                 {label}
                 {currentSort === field ? (
@@ -1690,7 +1690,7 @@ function QueueTable({
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
 
     const getPriorityBadge = (p: number) => (
-        <span className="text-sm text-foreground">
+        <span className="text-xs text-foreground">
             {p ?? 0}
         </span>
     )
@@ -1736,7 +1736,7 @@ function QueueTable({
                 <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card w-[40px]">
+                            <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
                                 <input 
                                     type="checkbox" 
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
@@ -1750,15 +1750,15 @@ function QueueTable({
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            {(queueType === 'main' || queueType === 'acknowledged') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Ack Timeout</TableHead>}
-                            {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Time Remaining</TableHead>}
-                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
+                            {(queueType === 'main' || queueType === 'acknowledged') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
+                            {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Time Remaining</TableHead>}
+                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic">
+                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic text-xs">
                                     No messages found.
                                 </TableCell>
                             </TableRow>
@@ -1785,22 +1785,22 @@ function QueueTable({
                                                 />
                                             </TableCell>
                                             <TableCell>
-                                                <span className="text-sm text-foreground font-mono" title={msg.id}>
+                                                <span className="text-xs text-foreground font-mono" title={msg.id}>
                                                     {msg.id}
                                                 </span>
                                             </TableCell>
                                             <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
                                             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
                                             <TableCell className="max-w-[300px]">
-                                                <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                                <div className="truncate text-xs font-mono" title={payloadText}>
                                                     {payloadText}
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                 {formatTime(getTimeValue(msg))}
                                             </TableCell>
                                             <TableCell>
-                                                    <span className="text-sm text-foreground pl-4 block">
+                                                    <span className="text-xs text-foreground pl-4 block">
                                                         {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
                                                         {(msg.custom_max_attempts ?? config?.max_attempts) && (
                                                             <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
@@ -1808,12 +1808,12 @@ function QueueTable({
                                                     </span>
                                             </TableCell>
                                             {(queueType === 'main' || queueType === 'acknowledged') && (
-                                                <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                     {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                                 </TableCell>
                                             )}
                                             {queueType === 'processing' && (
-                                                <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                     {calculateTimeRemaining(msg)}
                                                 </TableCell>
                                             )}
@@ -1875,38 +1875,38 @@ function QueueTable({
                                         />
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground font-mono" title={msg.id}>
-                                            {msg.id}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
-                                    <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-                                    <TableCell className="max-w-[300px]">
-                                        <div className="truncate text-sm text-muted-foreground" title={payloadText}>
-                                            {payloadText}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-sm text-foreground whitespace-nowrap">
-                                        {formatTime(getTimeValue(msg))}
-                                    </TableCell>
-                                    <TableCell>
-                                            <span className="text-sm text-foreground pl-4 block">
-                                                {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
-                                                {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                                                    <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                                                )}
-                                            </span>
-                                    </TableCell>
-                                    {(queueType === 'main' || queueType === 'acknowledged') && (
-                                        <TableCell className="text-sm text-foreground whitespace-nowrap">
-                                            {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                        </TableCell>
-                                    )}
-                                    {queueType === 'processing' && (
-                                        <TableCell className="text-sm text-foreground whitespace-nowrap">
-                                            {calculateTimeRemaining(msg)}
-                                        </TableCell>
-                                    )}
+                                                <span className="text-xs text-foreground font-mono" title={msg.id}>
+                                                    {msg.id}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
+                                            <TableCell className="max-w-[300px]">
+                                                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
+                                                    {payloadText}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
+                                                {formatTime(getTimeValue(msg))}
+                                            </TableCell>
+                                            <TableCell>
+                                                    <span className="text-xs text-foreground pl-4 block">
+                                                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
+                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                                                        )}
+                                                    </span>
+                                            </TableCell>
+                                            {(queueType === 'main' || queueType === 'acknowledged') && (
+                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
+                                                    {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+                                                </TableCell>
+                                            )}
+                                            {queueType === 'processing' && (
+                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
+                                                    {calculateTimeRemaining(msg)}
+                                                </TableCell>
+                                            )}
                                     <TableCell className="text-right pr-6">
                                         <div className="flex justify-end gap-1">
                                             {onEdit && (
@@ -2326,7 +2326,7 @@ function DeadLetterTable({
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
 
     const getPriorityBadge = (p: number) => (
-        <span className="text-sm text-foreground">
+        <span className="text-xs text-foreground">
             {p ?? 0}
         </span>
     )
@@ -2372,7 +2372,7 @@ function DeadLetterTable({
                 <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card w-[40px]">
+                            <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
                                 <input 
                                     type="checkbox" 
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
@@ -2388,14 +2388,14 @@ function DeadLetterTable({
                             <SortableHeader label="Failed At" field="failed_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground">Ack Timeout</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6">Actions</TableHead>
+                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
+                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={10} className="h-32 text-center text-muted-foreground opacity-50 italic">
+                                <TableCell colSpan={10} className="h-32 text-center text-muted-foreground opacity-50 italic text-xs">
                                     No failed messages found.
                                 </TableCell>
                             </TableRow>
@@ -2423,32 +2423,32 @@ function DeadLetterTable({
                                                 />
                                             </TableCell>
                                             <TableCell>
-                                                <span className="text-sm text-foreground font-mono">
+                                                <span className="text-xs text-foreground font-mono">
                                                     {msg.id}
                                                 </span>
                                             </TableCell>
                                             <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
                                             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
                                             <TableCell className="max-w-[300px]">
-                                                <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
                                                     {payloadText}
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                 {formatTime(msg.failed_at || msg.processing_started_at)}
                                             </TableCell>
                                             <TableCell>
-                                                <div className="text-sm font-medium max-w-[300px] truncate" title={errorText}>
+                                                <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
                                                     {errorText}
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                <span className="text-sm text-foreground pl-4 block">
+                                                <span className="text-xs text-foreground pl-4 block">
                                                     {msg.attempt_count || 1}
                                                     {config?.max_attempts && <span className="text-muted-foreground"> / {config.max_attempts}</span>}
                                                 </span>
                                             </TableCell>
-                                            <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                 {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                             </TableCell>
                                             <TableCell className="text-right pr-6">
@@ -2510,34 +2510,34 @@ function DeadLetterTable({
                                         />
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground font-mono">
+                                        <span className="text-xs text-foreground font-mono">
                                             {msg.id}
                                         </span>
                                     </TableCell>
                                     <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
                                     <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
                                     <TableCell className="max-w-[300px]">
-                                        <div className="truncate text-sm text-muted-foreground" title={payloadText}>
+                                        <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
                                             {payloadText}
                                         </div>
                                     </TableCell>
-                                    <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                    <TableCell className="text-xs text-foreground whitespace-nowrap">
                                         {formatTime(msg.failed_at || msg.processing_started_at)}
                                     </TableCell>
                                     <TableCell>
-                                        <div className="text-sm font-medium max-w-[300px] truncate" title={errorText}>
+                                        <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
                                             {errorText}
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        <span className="text-sm text-foreground pl-4 block">
+                                        <span className="text-xs text-foreground pl-4 block">
                                             {msg.attempt_count || 1}
                                             {(msg.custom_max_attempts ?? config?.max_attempts) && (
                                                 <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
                                             )}
                                         </span>
                                     </TableCell>
-                                    <TableCell className="text-sm text-foreground whitespace-nowrap">
+                                    <TableCell className="text-xs text-foreground whitespace-nowrap">
                                         {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                     </TableCell>
                                     <TableCell className="text-right pr-6">
