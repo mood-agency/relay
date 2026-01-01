@@ -99,6 +99,7 @@ export const addBatch = createRoute({
   },
 });
 
+
 export const getMessage = createRoute({
   path: "/queue/message",
   method: "get",
@@ -225,6 +226,11 @@ export const getQueueStatus = createRoute({
   path: "/queue/status",
   method: "get",
   tags,
+  request: {
+    query: z.object({
+      include_messages: z.enum(["true", "false"]).optional(),
+    }),
+  },
   responses: {
     200: jsonContent(
       z.object({
@@ -352,7 +358,36 @@ export const deleteMessage = createRoute({
   },
 });
 
+export const deleteMessages = createRoute({
+  path: "/queue/messages/delete",
+  method: "post",
+  tags,
+  request: {
+    query: z.object({
+      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        messageIds: z.array(z.string()),
+      }),
+      "Delete Messages Batch"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        success: z.boolean(),
+        deletedCount: z.number(),
+        message: z.string(),
+      }),
+      "Messages Deleted"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type DeleteMessageRoute = typeof deleteMessage;
+export type DeleteMessagesRoute = typeof deleteMessages;
 
 export const updateMessage = createRoute({
   path: "/queue/message/:messageId",
@@ -451,4 +486,21 @@ export const getConfig = createRoute({
   },
 });
 
+export const getEvents = createRoute({
+  path: "/queue/events",
+  method: "get",
+  tags,
+  responses: {
+    200: {
+      content: {
+        "text/event-stream": {
+          schema: z.string(),
+        },
+      },
+      description: "Server-Sent Events stream",
+    },
+  },
+});
+
 export type GetConfigRoute = typeof getConfig;
+export type GetEventsRoute = typeof getEvents;

@@ -1,4 +1,4 @@
-import { z } from "zod/v4";
+import { z } from "zod";
 import { config } from "dotenv";
 import { expand } from "dotenv-expand";
 
@@ -35,6 +35,7 @@ export const EnvSchema = z.object({
   MAX_PRIORITY_LEVELS: z.coerce.number().default(10),
   ENABLE_ENCRYPTION: z.string().default("false"),
   SECRET_KEY: z.string().optional().nullable(),
+  EVENTS_CHANNEL: z.string().default("queue_events"),
 });
 
 export type env = z.infer<typeof EnvSchema>;

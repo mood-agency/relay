@@ -14,8 +14,10 @@ import type {
   ClearAllQueuesRoute,
   ClearQueueRoute,
   GetConfigRoute,
+  GetEventsRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
+import { streamSSE } from "hono/streaming";
 
 import env from "@/config/env";
 import { OptimizedRedisQueue, QueueConfig } from "@/lib/redis.js";
@@ -35,6 +37,7 @@ interface QueueConfigI {
   redis_pool_size: number;
   enable_message_encryption: string;
   secret_key: string | null | undefined;
+  events_channel: string;
 }
 
 const queueConfig: QueueConfigI = {
@@ -53,6 +56,7 @@ const queueConfig: QueueConfigI = {
   redis_pool_size: env.REDIS_POOL_SIZE,
   enable_message_encryption: env.ENABLE_ENCRYPTION,
   secret_key: env.SECRET_KEY,
+  events_channel: env.EVENTS_CHANNEL,
 };
 
 export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig));
@@ -83,6 +87,42 @@ export const addBatch: AppRouteHandler<AddBatchRoute> = async (c: any) => {
     },
     201
   );
+};
+
+export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
+  return streamSSE(c, async (stream) => {
+    const subscriber = queue.redisManager.subscriber;
+    const channel = queue.config.events_channel;
+
+    const messageHandler = (chan: string, message: string) => {
+      if (chan === channel) {
+        stream.writeSSE({
+          data: message,
+          event: 'queue-update',
+          id: String(Date.now()),
+        });
+      }
+    };
+
+    try {
+      await subscriber.subscribe(channel);
+      subscriber.on("message", messageHandler);
+
+      stream.onAbort(() => {
+        subscriber.removeListener("message", messageHandler);
+      });
+
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        await stream.writeSSE({
+          event: 'ping',
+          data: 'ping'
+        });
+      }
+    } catch (e) {
+      console.error("SSE Error:", e);
+    }
+  });
 };
 
 export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
@@ -150,7 +190,9 @@ export const getMessagesByDateRange: AppRouteHandler<
 
 export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: any) => {
   try {
-    const status = await queue.getQueueStatus();
+    const { include_messages } = c.req.valid("query");
+    const includeMessages = include_messages !== "false";
+    const status = await queue.getQueueStatus(null, includeMessages);
     return c.json(status, 200);
   } catch (error) {
     return c.json({ message: "Failed to get queue status" }, 500);
@@ -191,6 +233,22 @@ export const deleteMessage: AppRouteHandler<any> = async (c: any) => {
     return c.json(result, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to delete message" }, 500);
+  }
+};
+
+export const deleteMessages: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const { queueType } = c.req.valid("query");
+    const { messageIds } = c.req.valid("json");
+
+    const deletedCount = await queue.deleteMessages(messageIds, queueType);
+    return c.json({
+      success: true,
+      deletedCount,
+      message: `${deletedCount} messages deleted successfully`
+    }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to delete messages" }, 500);
   }
 };
 

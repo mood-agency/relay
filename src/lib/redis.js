@@ -1,6 +1,6 @@
 import Redis from "ioredis";
 import crypto from "crypto";
-import { v4 as uuidv4 } from "uuid";
+import { v7 as uuidv7 } from "uuid";
 
 // --- Improved Logging Configuration (Simple Console Logger) ---
 const logger = {
@@ -32,7 +32,7 @@ class QueueConfig {
     
     // Stream-specific configuration
     this.consumer_group_name = config.consumer_group_name || "queue_group";
-    this.consumer_name = config.consumer_name || `consumer-${uuidv4()}`;
+    this.consumer_name = config.consumer_name || `consumer-${uuidv7()}`;
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
@@ -46,6 +46,8 @@ class QueueConfig {
     this.enable_message_encryption =
       (config.enable_message_encryption || "false").toLowerCase() === "true";
     this.secret_key = config.secret_key || null;
+
+    this.events_channel = config.events_channel || "queue_events";
 
     this._validate();
   }
@@ -166,6 +168,7 @@ class RedisConnectionManager {
   constructor(config) {
     this.config = config;
     this._redis = null;
+    this._subscriber = null;
     this.security =
       config.enable_message_encryption && config.secret_key
         ? new MessageSecurity(config.secret_key)
@@ -204,6 +207,30 @@ class RedisConnectionManager {
     return this._redis;
   }
 
+  get subscriber() {
+    if (!this._subscriber) {
+       // Duplicate the main connection options but for a dedicated subscriber
+       const redisOptions = {
+        host: this.config.redis_host,
+        port: this.config.redis_port,
+        db: this.config.redis_db,
+        family: 0,
+        retryStrategy: (times) => Math.min(times * 50, 2000),
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: true,
+      };
+      if (this.config.redis_password) {
+        redisOptions.password = this.config.redis_password;
+      }
+      this._subscriber = new Redis(redisOptions);
+      this._subscriber.setMaxListeners(0); // Allow unlimited listeners for SSE
+      
+      this._subscriber.on("connect", () => logger.info("Redis subscriber connected"));
+      this._subscriber.on("error", (err) => logger.error(`Redis subscriber error: ${err}`));
+    }
+    return this._subscriber;
+  }
+
   async testConnection() {
     try {
       await this.redis.ping();
@@ -226,6 +253,11 @@ class RedisConnectionManager {
       this._redis = null;
       logger.info("Disconnected from Redis.");
     }
+    if (this._subscriber) {
+      await this._subscriber.quit();
+      this._subscriber = null;
+      logger.info("Disconnected Redis subscriber.");
+    }
   }
 }
 
@@ -241,6 +273,19 @@ class OptimizedRedisQueue {
       failed: 0,
       requeued: 0,
     };
+  }
+
+  async publishEvent(type, payload = {}) {
+    try {
+      const event = JSON.stringify({
+        type,
+        timestamp: Date.now(),
+        payload
+      });
+      await this.redisManager.redis.publish(this.config.events_channel, event);
+    } catch (e) {
+      logger.error(`Failed to publish event ${type}: ${e.message}`);
+    }
   }
 
   // Get immediate stream name (checked before all priorities)
@@ -315,7 +360,7 @@ class OptimizedRedisQueue {
   async enqueueMessage(messageData, priority = 0, queueNameOverride = null) {
     try {
       if (!messageData.id) {
-        messageData.id = uuidv4();
+        messageData.id = uuidv7();
       }
       if (typeof messageData.created_at === "undefined") {
         messageData.created_at = Date.now() / 1000; // seconds timestamp
@@ -331,6 +376,7 @@ class OptimizedRedisQueue {
       logger.info(
         `Message enqueued to stream ${queueName}: ${messageData.id} (priority: ${priority})`
       );
+      this.publishEvent('enqueue', { count: 1, message: messageData });
       return true;
     } catch (e) {
       logger.error(`Error enqueuing message ${messageData.id || "N/A"}: ${e}`);
@@ -345,7 +391,7 @@ class OptimizedRedisQueue {
     const pipeline = this.redisManager.pipeline();
     for (const msg of messages) {
       if (!msg.id) {
-        msg.id = uuidv4();
+        msg.id = uuidv7();
       }
       if (typeof msg.created_at === "undefined") {
         msg.created_at = Date.now() / 1000;
@@ -369,6 +415,15 @@ class OptimizedRedisQueue {
       logger.info(
         `Batch processed: ${successful}/${messages.length} messages enqueued to streams`
       );
+      if (successful > 0) {
+        // Optimization: For large batches, don't send all message data to avoid clogging the socket.
+        // Instead, send a signal to force a refresh.
+        if (successful > 50) {
+          this.publishEvent('enqueue', { count: successful, force_refresh: true });
+        } else {
+          this.publishEvent('enqueue', { count: successful, messages: messages });
+        }
+      }
       return successful;
     } catch (e) {
       logger.error(`Error in batch enqueue: ${e}`);
@@ -538,6 +593,8 @@ class OptimizedRedisQueue {
       logger.info(
         `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
       );
+      // Optional: Publish dequeue event? Might be too noisy.
+      // this.publishEvent('dequeue', { count: 1 }); 
       return messageData;
 
     } catch (e) {
@@ -662,6 +719,7 @@ class OptimizedRedisQueue {
         this._stats.acknowledged++;
       }
       logger.info(`Message acknowledged successfully: ${messageId}`);
+      this.publishEvent('acknowledge', { id: messageId });
       return true;
 
     } catch (error) {
@@ -850,6 +908,10 @@ class OptimizedRedisQueue {
 
     this._stats.requeued += requeuedCount;
     this._stats.failed += movedToDlqCount;
+
+    if (movedToDlqCount > 0) this.publishEvent('move_to_dlq', { count: movedToDlqCount });
+    if (requeuedCount > 0) this.publishEvent('requeue', { count: requeuedCount });
+
     return requeuedCount;
   }
 
@@ -1059,6 +1121,10 @@ class OptimizedRedisQueue {
           logger.warn(`Failed to auto-dequeue message after move: ${e.message}`);
         }
       }
+    }
+
+    if (movedCount > 0) {
+      this.publishEvent('move', { from: fromQueue, to: toQueue, count: movedCount });
     }
 
     return movedCount;
@@ -1280,6 +1346,67 @@ class OptimizedRedisQueue {
     }
   }
 
+  async deleteMessages(messageIds, queueType) {
+    try {
+      const redis = this.redisManager.redis;
+      let streamNames = [];
+
+      switch (queueType) {
+        case 'main':
+          streamNames = this._getAllPriorityStreams();
+          break;
+        case 'processing':
+          streamNames = this._getAllPriorityStreams();
+          break;
+        case 'dead':
+          streamNames = [this.config.dead_letter_queue_name];
+          break;
+        case 'acknowledged':
+          streamNames = [this.config.acknowledged_queue_name];
+          break;
+        default:
+          throw new Error(`Invalid queue type: ${queueType}`);
+      }
+
+      const idsToDelete = new Set(messageIds);
+      let totalDeleted = 0;
+      const pipeline = redis.pipeline();
+      // Keep track of found IDs to stop searching if we found all (optional, but streams are disjoint)
+
+      for (const stream of streamNames) {
+          // Optimization: If we had stream IDs, we could pipeline XDELs directly.
+          // Since we have UUIDs, we must scan.
+          // Scanning full stream is expensive. 
+          // FUTURE TODO: Use Redis Search or maintain a UUID->StreamID mapping.
+          const entries = await redis.xrange(stream, "-", "+");
+          for (const [id, fields] of entries) {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const msg = this._deserializeMessage(json);
+              
+              if (msg && idsToDelete.has(msg.id)) {
+                  pipeline.xdel(stream, id);
+                  if (queueType === 'processing') {
+                      pipeline.xack(stream, this.config.consumer_group_name, id);
+                  }
+                  totalDeleted++;
+              }
+          }
+      }
+      
+      await pipeline.exec();
+      
+      if (totalDeleted > 0) {
+           this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted });
+      }
+
+      return totalDeleted;
+    } catch (error) {
+        logger.error(`Error deleting messages: ${error.message}`);
+        throw error;
+    }
+  }
+
   async deleteMessage(messageId, queueType) {
     try {
       const redis = this.redisManager.redis;
@@ -1335,6 +1462,7 @@ class OptimizedRedisQueue {
       await redis.hdel(this.config.metadata_hash_name, messageId);
 
       logger.info(`Successfully deleted message ${messageId} from ${queueType} queue`);
+      this.publishEvent('delete', { id: messageId, queue: queueType });
       return { success: true, messageId, queueType, message: 'Message deleted successfully' };
 
     } catch (error) {
@@ -1369,6 +1497,7 @@ class OptimizedRedisQueue {
               await redis.hset(this.config.metadata_hash_name, metadataKey, JSON.stringify(meta));
               
               logger.info(`Updated custom_ack_timeout for message ${messageId} in processing queue`);
+              this.publishEvent('update', { id: messageId, queue: queueType, updates: { custom_ack_timeout: updates.custom_ack_timeout } });
               return {
                   success: true,
                   messageId,
@@ -1437,6 +1566,7 @@ class OptimizedRedisQueue {
       await pipeline.exec();
 
       logger.info(`Successfully updated message ${messageId} in ${queueType} queue`);
+      this.publishEvent('update', { id: messageId, queue: queueType, updates });
       return {
         success: true,
         messageId,
@@ -1451,7 +1581,7 @@ class OptimizedRedisQueue {
     }
   }
 
-  async getQueueStatus(typeFilter = null) {
+  async getQueueStatus(typeFilter = null, includeMessages = true) {
     try {
       const redis = this.redisManager.redis;
       const pipeline = redis.pipeline();
@@ -1469,11 +1599,13 @@ class OptimizedRedisQueue {
       pipeline.get(this.config.total_acknowledged_key);
 
       // Get queue contents (limited to 100 items each) for all priority streams
-      for (const stream of priorityStreams) {
-        pipeline.xrevrange(stream, "+", "-", "COUNT", 100);
+      if (includeMessages) {
+        for (const stream of priorityStreams) {
+          pipeline.xrevrange(stream, "+", "-", "COUNT", 100);
+        }
+        pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 100);
+        pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 100);
       }
-      pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 100);
-      pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 100);
 
       // Get metadata
       pipeline.hgetall(this.config.metadata_hash_name);
@@ -1495,8 +1627,12 @@ class OptimizedRedisQueue {
       const totalAck = parseInt(results[priorityCount + 2][1] || '0', 10);
       
       // Parse messages from all priority streams
-      const contentStartIdx = priorityCount + 3;
-      
+      let mainMessages = [];
+      let deadMessages = [];
+      let acknowledgedMessages = [];
+      let metadata = {};
+      let pendingStartIdx;
+
       // Helper to parse Stream messages
       const parseStreamMessages = (rawMessages, streamName) => {
           if (!rawMessages) return [];
@@ -1517,23 +1653,31 @@ class OptimizedRedisQueue {
           });
       };
 
-      // Collect main messages from all priority streams
-      let mainMessages = [];
-      for (let i = 0; i < priorityCount; i++) {
-        const streamMsgs = results[contentStartIdx + i][1];
-        const streamName = priorityStreams[i];
-        mainMessages.push(...parseStreamMessages(streamMsgs, streamName));
+      if (includeMessages) {
+          const contentStartIdx = priorityCount + 3;
+          
+          // Collect main messages from all priority streams
+          for (let i = 0; i < priorityCount; i++) {
+            const streamMsgs = results[contentStartIdx + i][1];
+            const streamName = priorityStreams[i];
+            mainMessages.push(...parseStreamMessages(streamMsgs, streamName));
+          }
+          mainMessages = mainMessages.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 100);
+          
+          const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
+          const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
+          metadata = results[contentStartIdx + priorityCount + 2][1];
+          
+          deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
+          acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
+
+          pendingStartIdx = contentStartIdx + priorityCount + 3;
+      } else {
+          metadata = results[priorityCount + 3][1];
+          pendingStartIdx = priorityCount + 4;
       }
-      mainMessages = mainMessages.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 100);
-      
-      const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
-      const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
-      const metadata = results[contentStartIdx + priorityCount + 2][1];
-      
-      const deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
 
       // Processing messages from all priority streams
-      const pendingStartIdx = contentStartIdx + priorityCount + 3;
       const processingMessages = [];
       const pendingToCheck = [];
 
@@ -1549,7 +1693,7 @@ class OptimizedRedisQueue {
       }
 
       // Fetch details for pending messages to verify existence (filter out ghosts)
-      if (pendingToCheck.length > 0) {
+      if (pendingToCheck.length > 0 && includeMessages) {
           const checkPipeline = redis.pipeline();
           pendingToCheck.forEach(p => {
               checkPipeline.xrange(p.streamName, p.id, p.id);
@@ -1624,9 +1768,6 @@ class OptimizedRedisQueue {
                });
            }
        }
-
-      // Parse acknowledged messages (now also a Stream)
-      const acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
       
       // Collect types from all stream messages
       const availableTypes = new Set();
@@ -1636,11 +1777,15 @@ class OptimizedRedisQueue {
 
       // Filter out messages from mainQueue that are present in processingQueue
       // This prevents "duplication" in the UI status since processing messages are technically still in the stream (mainQueue)
-      const processingStreamIds = new Set(processingMessages.map(m => m._stream_id));
-      mainMessages = mainMessages.filter(m => !processingStreamIds.has(m._stream_id));
+      if (includeMessages && processingMessages.length > 0) {
+        const processingStreamIds = new Set(processingMessages.map(m => m._stream_id));
+        mainMessages = mainMessages.filter(m => !processingStreamIds.has(m._stream_id));
+      }
+
+      const processingLength = includeMessages ? processingMessages.length : pendingToCheck.length;
 
       // Adjust main queue length to reflect only waiting messages
-      const waitingLength = Math.max(0, totalMainLen - processingMessages.length);
+      const waitingLength = Math.max(0, totalMainLen - processingLength);
 
       return {
         mainQueue: {
@@ -1651,7 +1796,7 @@ class OptimizedRedisQueue {
         },
         processingQueue: {
           name: "processing_pending", // Virtual name
-          length: processingMessages.length,
+          length: processingLength,
           messages: processingMessages,
         },
         deadLetterQueue: {

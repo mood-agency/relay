@@ -358,6 +358,43 @@ describe('Queue Routes - Integration Tests', () => {
     });
   });
 
+  // Batch Delete Messages
+  describe('POST /queue/messages/batch-delete', () => {
+    it('should delete multiple messages successfully', async () => {
+      // 1. Enqueue 3 messages
+      await testClient(router).queue.message.$post({ json: { type: 'del-1', payload: { i: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'del-2', payload: { i: 2 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'del-3', payload: { i: 3 } } });
+
+      // 2. Fetch messages to get IDs
+      const listRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { limit: '10' }
+      });
+      const list = await listRes.json();
+      const ids = list.messages.map((m: any) => m.id);
+      expect(ids.length).toBe(3);
+
+      // 3. Batch Delete
+      const deleteRes = await testClient(router).queue.messages['batch-delete'].$post({
+        query: { queueType: 'main' },
+        json: { messageIds: ids }
+      });
+
+      expect(deleteRes.status).toBe(200);
+      const result = await deleteRes.json();
+      expect(result.success).toBe(true);
+      expect(result.deletedCount).toBe(3);
+
+      // 4. Verify empty
+      const afterRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' }
+      });
+      const afterList = await afterRes.json();
+      expect(afterList.messages.length).toBe(0);
+    });
+  });
+
   // Enqueue
   describe('POST /queue/message', () => {
     it('should return 201 when message is added successfully', async () => {

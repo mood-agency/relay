@@ -281,6 +281,17 @@ export default function Dashboard() {
 
     // Selection State
     const [selectedIds, setSelectedIds] = useState<string[]>([])
+    
+    // Scroll Reset State
+    const [scrollResetKey, setScrollResetKey] = useState(0)
+    
+    // Throttling Ref
+    const lastStatusFetchRef = useRef(0);
+
+    // Trigger scroll reset on navigation/filter changes
+    useEffect(() => {
+        setScrollResetKey(prev => prev + 1)
+    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
     // Fetch Config
     const fetchConfig = useCallback(async () => {
@@ -296,12 +307,29 @@ export default function Dashboard() {
     }, []);
 
     // Fetch System Status (Counts)
-    const fetchStatus = useCallback(async () => {
+    const fetchStatus = useCallback(async (includeMessages = true) => {
         try {
-            const response = await fetch('/api/queue/status')
+            const response = await fetch(`/api/queue/status${!includeMessages ? '?include_messages=false' : ''}`)
             if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
             const json = await response.json()
-            setStatusData(json)
+            
+            if (includeMessages) {
+                setStatusData(json)
+            } else {
+                // Merge counts only to preserve messages/types from full fetch
+                setStatusData(prev => {
+                    if (!prev) return json;
+                    return {
+                        ...prev,
+                        mainQueue: { ...prev.mainQueue, length: json.mainQueue.length },
+                        processingQueue: { ...prev.processingQueue, length: json.processingQueue.length },
+                        deadLetterQueue: { ...prev.deadLetterQueue, length: json.deadLetterQueue.length },
+                        acknowledgedQueue: { ...prev.acknowledgedQueue, length: json.acknowledgedQueue.length, total: json.acknowledgedQueue.total },
+                        metadata: json.metadata
+                    }
+                })
+            }
+            
             setLastUpdated(new Date().toLocaleTimeString())
             setError(null)
         } catch (err: any) {
@@ -313,8 +341,8 @@ export default function Dashboard() {
     }, [])
 
     // Fetch Messages (Table Data)
-    const fetchMessages = useCallback(async () => {
-        setLoadingMessages(true)
+    const fetchMessages = useCallback(async (silent = false) => {
+        if (!silent) setLoadingMessages(true)
         try {
             const params = new URLSearchParams()
             params.append('page', currentPage.toString())
@@ -338,13 +366,13 @@ export default function Dashboard() {
             console.error("Fetch messages error:", err)
             setError(err.message)
         } finally {
-            setLoadingMessages(false)
+            if (!silent) setLoadingMessages(false)
         }
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
-    const fetchAll = useCallback(() => {
+    const fetchAll = useCallback((silent = false) => {
         fetchStatus()
-        fetchMessages()
+        fetchMessages(silent)
     }, [fetchStatus, fetchMessages])
 
     // Initial Load
@@ -464,11 +492,232 @@ export default function Dashboard() {
 
     // Auto Refresh
     useEffect(() => {
-        let interval: any
+        let interval: NodeJS.Timeout
+        let eventSource: EventSource
+
         if (autoRefresh) {
-            interval = setInterval(fetchAll, 5000)
+            // Use SSE for reactive updates
+            eventSource = new EventSource('/api/queue/events')
+            
+            eventSource.addEventListener('queue-update', (event: MessageEvent) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    const { type, payload } = data;
+
+                    // Always fetch status to keep counters updated (lightweight)
+                    // Throttle to max once per 2 seconds to reduce load
+                    const now = Date.now();
+                    if (now - lastStatusFetchRef.current > 2000) {
+                        fetchStatus(false);
+                        lastStatusFetchRef.current = now;
+                    }
+
+                    const isStandardSort = sortBy === 'created_at';
+                    const hasNoFilters = 
+                        !search && 
+                        filterType === 'all' && 
+                        !filterPriority && 
+                        !filterAttempts && 
+                        !startDate && 
+                        !endDate;
+
+                    if (type === 'enqueue') {
+                        // Handle batch optimization signal
+                        if (payload.force_refresh) {
+                            if (activeTab === 'main') {
+                                fetchMessages(true);
+                            }
+                            // Ensure status is updated for the new counts
+                            fetchStatus(false);
+                            return;
+                        }
+
+                        // Enqueue only affects main queue
+                        if (activeTab !== 'main') return;
+
+                        const messagesToAdd = payload.messages || (payload.message ? [payload.message] : []);
+                        if (!messagesToAdd.length) return;
+
+                        setMessagesData(prev => {
+                            if (!prev) return prev;
+
+                            // 1. Client-side Filtering
+                            const filteredNew = messagesToAdd.filter((m: Message) => {
+                                // Duplicate check
+                                if (prev.messages.some(existing => existing.id === m.id)) return false;
+
+                                // Filter Type
+                                if (filterType && filterType !== 'all' && m.type !== filterType) return false;
+                                
+                                // Filter Priority
+                                if (filterPriority && m.priority !== parseInt(filterPriority)) return false;
+                                
+                                // Filter Attempts
+                                if (filterAttempts && (m.attempt_count || 0) < parseInt(filterAttempts)) return false;
+                                
+                                // Date Range
+                                if (startDate && m.created_at * 1000 < startDate.getTime()) return false;
+                                if (endDate && m.created_at * 1000 > endDate.getTime()) return false;
+                                
+                                // Search
+                                if (search) {
+                                    const searchLower = search.toLowerCase();
+                                    const matchesId = m.id.toLowerCase().includes(searchLower);
+                                    const matchesPayload = m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower);
+                                    const matchesError = m.error_message && m.error_message.toLowerCase().includes(searchLower);
+                                    if (!matchesId && !matchesPayload && !matchesError) return false;
+                                }
+                                
+                                return true;
+                            });
+
+                            if (filteredNew.length === 0) return prev;
+
+                            // 2. Update Total Count
+                            const newTotal = prev.pagination.total + filteredNew.length;
+                            const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
+
+                            // 3. Determine if we should update rows
+                            // Helper to compare messages based on current sort
+                            const compare = (a: Message, b: Message) => {
+                                let valA = (a as any)[sortBy];
+                                let valB = (b as any)[sortBy];
+                                
+                                if (sortBy === 'payload') {
+                                    valA = JSON.stringify(valA);
+                                    valB = JSON.stringify(valB);
+                                }
+                                
+                                if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+                                if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+                                return 0;
+                            };
+
+                            let shouldUpdateRows = false;
+                            if (currentPage === 1) {
+                                shouldUpdateRows = true;
+                            } else if (prev.messages.length > 0) {
+                                // If any new message belongs "before" the current page's start, 
+                                // it implies a shift from a previous page.
+                                // In that case, we keep the view stable (don't update rows).
+                                // We only update rows if new messages belong strictly "after" or "at" the start of this page.
+                                const firstMsg = prev.messages[0];
+                                const allBelongAfter = filteredNew.every((m: Message) => compare(m, firstMsg) >= 0);
+                                if (allBelongAfter) {
+                                    shouldUpdateRows = true;
+                                }
+                            } else {
+                                shouldUpdateRows = true;
+                            }
+
+                            if (shouldUpdateRows) {
+                                const combined = [...prev.messages, ...filteredNew];
+                                combined.sort(compare);
+                                const updatedList = combined.slice(0, Number(pageSize));
+                                
+                                return {
+                                    ...prev,
+                                    messages: updatedList,
+                                    pagination: {
+                                        ...prev.pagination,
+                                        total: newTotal,
+                                        totalPages: newTotalPages
+                                    }
+                                };
+                            } else {
+                                // Stable View: Just update total
+                                return {
+                                    ...prev,
+                                    pagination: {
+                                        ...prev.pagination,
+                                        total: newTotal,
+                                        totalPages: newTotalPages
+                                    }
+                                };
+                            }
+                        });
+                    } else if (type === 'acknowledge' || type === 'delete') {
+                         // Remove from list if present (works for any tab/view)
+                         const idsToRemove = payload.ids || (payload.id ? [payload.id] : []);
+                         
+                         if (idsToRemove.length > 0) {
+                             setMessagesData(prev => {
+                                 if (!prev) return prev;
+                                 
+                                 // Update total count regardless of whether it's in view
+                                 const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length);
+                                 const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
+
+                                 // Check if any are in view to decide if we need to filter messages
+                                 const shouldFilter = prev.messages.some(m => idsToRemove.includes(m.id));
+                                 
+                                 if (!shouldFilter) {
+                                     return {
+                                        ...prev,
+                                        pagination: {
+                                            ...prev.pagination,
+                                            total: newTotal,
+                                            totalPages: newTotalPages
+                                        }
+                                     };
+                                 }
+                                 
+                                 return {
+                                     ...prev,
+                                     messages: prev.messages.filter(m => !idsToRemove.includes(m.id)),
+                                     pagination: {
+                                         ...prev.pagination,
+                                         total: newTotal,
+                                         totalPages: newTotalPages
+                                     }
+                                 };
+                             });
+                         } else {
+                             fetchMessages(true);
+                         }
+                    } else if (type === 'update') {
+                        // Check if update is for current queue
+                        if (payload.queue && payload.queue !== activeTab) return;
+
+                        if (payload.id && payload.updates) {
+                            setMessagesData(prev => {
+                                if (!prev) return prev;
+                                // Only update if in view
+                                if (!prev.messages.some(m => m.id === payload.id)) return prev;
+                                
+                                return {
+                                    ...prev,
+                                    messages: prev.messages.map(m => m.id === payload.id ? { ...m, ...payload.updates } : m)
+                                };
+                            });
+                        } else {
+                            fetchMessages(true);
+                        }
+                    } else {
+                        // Other events (like metrics/stats only), just fetch stats or all
+                        fetchMessages(true);
+                    }
+                } catch (e) {
+                    console.error("SSE Parse Error", e);
+                    fetchAll(true);
+                }
+            })
+
+            eventSource.onerror = (err) => {
+                console.error("SSE Error:", err)
+                // If SSE fails, fallback to polling
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    if (!interval) {
+                         interval = setInterval(fetchAll, 5000)
+                    }
+                }
+            }
         }
-        return () => clearInterval(interval)
+
+        return () => {
+            if (interval) clearInterval(interval)
+            if (eventSource) eventSource.close()
+        }
     }, [autoRefresh, fetchAll])
 
     useEffect(() => {
@@ -649,16 +898,22 @@ export default function Dashboard() {
             description: "Are you sure you want to delete the selected messages? This action cannot be undone.",
             action: async () => {
                 try {
-                    const promises = selectedIds.map(id => 
-                        fetch(`/api/queue/message/${id}?queueType=${activeTab}`, {
-                            method: 'DELETE',
-                        })
-                    )
+                    const response = await fetch(`/api/queue/messages/delete?queueType=${activeTab}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ messageIds: selectedIds }),
+                    })
                     
-                    await Promise.all(promises)
-                    
-                    fetchAll()
-                    setSelectedIds([])
+                    if (response.ok) {
+                        const json = await response.json()
+                        fetchAll()
+                        setSelectedIds([])
+                    } else {
+                        const err = await response.json()
+                        alert(`Error: ${err.message}`)
+                    }
                 } catch (err) {
                     alert("Failed to delete some messages")
                 }
@@ -687,7 +942,7 @@ export default function Dashboard() {
 
     const formatTimestamp = (ts?: number) => {
         if (!ts) return "N/A"
-        return format(new Date(ts * 1000), "MM/dd/yyyy HH:mm:ss")
+        return format(new Date(ts * 1000), "MM/dd/yyyy HH:mm:ss.SSS")
     }
 
     // Available types for filter dropdown
@@ -1017,6 +1272,7 @@ export default function Dashboard() {
                                 sortBy={sortBy}
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
+                                scrollResetKey={scrollResetKey}
                             />
                         )}
                         {activeTab === 'dead' && (
@@ -1038,6 +1294,7 @@ export default function Dashboard() {
                                 sortBy={sortBy}
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
+                                scrollResetKey={scrollResetKey}
                             />
                         )}
                     </div>
@@ -1340,7 +1597,8 @@ function QueueTable({
     totalItems,
     sortBy,
     sortOrder,
-    onSort
+    onSort,
+    scrollResetKey
 }: {
     messages: Message[],
     queueType: string,
@@ -1359,7 +1617,8 @@ function QueueTable({
     totalItems: number,
     sortBy: string,
     sortOrder: string,
-    onSort: (field: string) => void
+    onSort: (field: string) => void,
+    scrollResetKey: number
 }) {
     // Add state for live updates
     const [currentTime, setCurrentTime] = useState(Date.now())
@@ -1444,7 +1703,7 @@ function QueueTable({
     useEffect(() => {
         setScrollTop(0)
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
-    }, [queueType, messages])
+    }, [scrollResetKey])
 
     const virtual = useMemo(() => {
         if (!shouldVirtualize) return null
@@ -1527,7 +1786,7 @@ function QueueTable({
                                             </TableCell>
                                             <TableCell>
                                                 <span className="text-sm text-foreground font-mono" title={msg.id}>
-                                                    {msg.id?.substring(0, 8)}
+                                                    {msg.id}
                                                 </span>
                                             </TableCell>
                                             <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
@@ -1617,7 +1876,7 @@ function QueueTable({
                                     </TableCell>
                                     <TableCell>
                                         <span className="text-sm text-foreground font-mono" title={msg.id}>
-                                            {msg.id?.substring(0, 8)}
+                                            {msg.id}
                                         </span>
                                     </TableCell>
                                     <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
@@ -1773,6 +2032,17 @@ function EditMessageDialog({
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <label htmlFor="edit-id" className="text-right text-sm font-medium">
+                            ID
+                        </label>
+                        <input
+                            id="edit-id"
+                            value={message?.id || ""}
+                            readOnly
+                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm shadow-sm font-mono focus-visible:outline-none cursor-text"
+                        />
+                    </div>
                     {queueType === 'processing' ? (
                         <div className="grid grid-cols-4 items-center gap-4">
                             <label htmlFor="ackTimeout" className="text-right text-sm font-medium">
@@ -2031,7 +2301,8 @@ function DeadLetterTable({
     totalItems,
     sortBy,
     sortOrder,
-    onSort
+    onSort,
+    scrollResetKey
 }: {
     messages: Message[],
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
@@ -2049,7 +2320,8 @@ function DeadLetterTable({
     totalItems: number,
     sortBy: string,
     sortOrder: string,
-    onSort: (field: string) => void
+    onSort: (field: string) => void,
+    scrollResetKey: number
 }) {
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
 
@@ -2067,7 +2339,7 @@ function DeadLetterTable({
     useEffect(() => {
         setScrollTop(0)
         if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
-    }, [messages])
+    }, [scrollResetKey])
 
     const virtual = useMemo(() => {
         if (!shouldVirtualize) return null
@@ -2152,7 +2424,7 @@ function DeadLetterTable({
                                             </TableCell>
                                             <TableCell>
                                                 <span className="text-sm text-foreground font-mono">
-                                                    {msg.id?.substring(0, 8)}...
+                                                    {msg.id}
                                                 </span>
                                             </TableCell>
                                             <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
@@ -2239,7 +2511,7 @@ function DeadLetterTable({
                                     </TableCell>
                                     <TableCell>
                                         <span className="text-sm text-foreground font-mono">
-                                            {msg.id?.substring(0, 8)}...
+                                            {msg.id}
                                         </span>
                                     </TableCell>
                                     <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>

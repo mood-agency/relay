@@ -19,11 +19,13 @@ const router = createRouter()
     handlers.getMessagesByDateRange
   )
   .openapi(routes.deleteMessage, handlers.deleteMessage)
+  .openapi(routes.deleteMessages, handlers.deleteMessages)
   .openapi(routes.updateMessage, handlers.updateMessage)
   .openapi(routes.getMessages, handlers.getMessages)
   .openapi(routes.moveMessages, handlers.moveMessages)
   .openapi(routes.clearQueue, handlers.clearQueue)
   .openapi(routes.clearAllQueues, handlers.clearAllQueues)
-  .openapi(routes.getConfig, handlers.getConfig);
+  .openapi(routes.getConfig, handlers.getConfig)
+  .openapi(routes.getEvents, handlers.getEvents);
 
 export default router;
