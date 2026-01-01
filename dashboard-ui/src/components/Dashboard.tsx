@@ -293,6 +293,10 @@ export default function Dashboard() {
         setScrollResetKey(prev => prev + 1)
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
+    useEffect(() => {
+        setSelectedIds([])
+    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
+
     // Fetch Config
     const fetchConfig = useCallback(async () => {
         try {

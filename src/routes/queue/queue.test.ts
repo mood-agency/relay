@@ -310,6 +310,165 @@ describe('Queue Routes - Integration Tests', () => {
       expect(processingMsg).toBeTruthy();
       expect(processingMsg.custom_ack_timeout).toBe(90);
     }, 15000);
+
+    it('should correctly move a batch of messages to processing and preserve IDs even with backlog', async () => {
+      // 1. Enqueue 5 messages
+      for(let i=0; i<5; i++) {
+         await testClient(router).queue.message.$post({ json: { type: 'batch-move', payload: { i } } });
+      }
+
+      // 2. Fetch messages to get IDs
+      const listRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { limit: '10' }
+      });
+      const list = await listRes.json();
+      const messages = (list.messages || []).filter((m: any) => m.type === 'batch-move');
+      
+      expect(messages.length).toBe(5);
+      
+      // Select 2 specific messages (e.g. index 1 and 3)
+      // Note: messages are likely sorted by created_at desc (newest first)
+      const selected = [messages[1], messages[3]];
+      const selectedIds = selected.map((m: any) => m.id);
+
+      // 3. Move them to Processing
+      const moveRes = await testClient(router).queue.move.$post({
+        json: { messages: selected, fromQueue: 'main', toQueue: 'processing' }
+      });
+      expect(moveRes.status).toBe(200);
+      const moveResult = await moveRes.json();
+      expect(moveResult.movedCount).toBe(2);
+
+      // 4. Verify Processing Queue
+      const processingRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'processing' }
+      });
+      expect(processingRes.status).toBe(200);
+      const processing = await processingRes.json();
+      const processingMessages = processing.messages || [];
+      
+      // Check count
+      expect(processingMessages.length).toBe(2);
+      
+      // Check IDs match exactly what we selected
+      const processingIds = processingMessages.map((m: any) => m.id);
+      expect(processingIds.sort()).toEqual(selectedIds.sort());
+      
+      // Check Metadata (attempt_count should be 1)
+      for (const msg of processingMessages) {
+          expect(msg.attempt_count).toBeGreaterThanOrEqual(1);
+          // Verify we have full message data
+          expect(msg.payload).toBeDefined();
+          expect(msg.type).toBe('batch-move');
+      }
+      
+      // 5. Verify Main Queue (should have 3 left)
+      const mainRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' }
+      });
+      const main = await mainRes.json();
+      // We might have other messages from other tests if flushdb didn't work, but based on beforeEach it should be clean.
+      // But let's filter by type to be safe
+      const remaining = (main.messages || []).filter((m: any) => m.type === 'batch-move');
+      expect(remaining.length).toBe(3);
+      
+      // Verify none of the selected IDs are in main
+      const remainingIds = remaining.map((m: any) => m.id);
+      for (const id of selectedIds) {
+          expect(remainingIds).not.toContain(id);
+      }
+    }, 15000);
+
+    it('should correctly move messages to acknowledged and dead letter queues preserving IDs', async () => {
+      // 1. Enqueue 5 messages for ACK test
+      for(let i=0; i<5; i++) {
+         await testClient(router).queue.message.$post({ json: { type: 'batch-ack', payload: { i } } });
+      }
+
+      // 2. Fetch messages to get IDs
+      let listRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { limit: '10' }
+      });
+      let list = await listRes.json();
+      let messages = (list.messages || []).filter((m: any) => m.type === 'batch-ack');
+      
+      // Ensure we have enough messages
+      expect(messages.length).toBeGreaterThanOrEqual(3);
+
+      const ackTarget = [messages[0], messages[2]];
+      const ackTargetIds = ackTarget.map((m: any) => m.id);
+
+      // 3. Move to Acknowledged
+      let moveRes = await testClient(router).queue.move.$post({
+        json: { messages: ackTarget, fromQueue: 'main', toQueue: 'acknowledged' }
+      });
+      expect(moveRes.status).toBe(200);
+      let moveResult = await moveRes.json();
+      expect(moveResult.movedCount).toBe(2);
+
+      // 4. Verify Acknowledged Queue
+      const ackRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'acknowledged' }
+      });
+      const ackQueue = await ackRes.json();
+      const ackMessages = (ackQueue.messages || []).filter((m: any) => m.type === 'batch-ack');
+      
+      expect(ackMessages.length).toBe(2);
+      const ackIds = ackMessages.map((m: any) => m.id);
+      expect(ackIds.sort()).toEqual(ackTargetIds.sort());
+      
+      // Check acknowledged_at is set
+      for (const msg of ackMessages) {
+          expect(msg.acknowledged_at).toBeDefined();
+      }
+
+      // --- DLQ Test ---
+
+      // 5. Enqueue 5 messages for DLQ test
+      for(let i=0; i<5; i++) {
+         await testClient(router).queue.message.$post({ json: { type: 'batch-dlq', payload: { i } } });
+      }
+      
+      listRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { limit: '10' }
+      });
+      list = await listRes.json();
+      messages = (list.messages || []).filter((m: any) => m.type === 'batch-dlq');
+      
+      // Ensure we have enough messages
+      expect(messages.length).toBeGreaterThanOrEqual(5);
+
+      const dlqTarget = [messages[1], messages[4]];
+      const dlqTargetIds = dlqTarget.map((m: any) => m.id);
+
+      // 6. Move to DLQ
+      moveRes = await testClient(router).queue.move.$post({
+        json: { messages: dlqTarget, fromQueue: 'main', toQueue: 'dead' }
+      });
+      expect(moveRes.status).toBe(200);
+      moveResult = await moveRes.json();
+      expect(moveResult.movedCount).toBe(2);
+
+      // 7. Verify Dead Letter Queue
+      const dlqRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'dead' }
+      });
+      const dlqQueue = await dlqRes.json();
+      const dlqMessages = (dlqQueue.messages || []).filter((m: any) => m.type === 'batch-dlq');
+      
+      expect(dlqMessages.length).toBe(2);
+      const dlqIds = dlqMessages.map((m: any) => m.id);
+      expect(dlqIds.sort()).toEqual(dlqTargetIds.sort());
+
+      // Check failed_at is set
+      for (const msg of dlqMessages) {
+          expect(msg.failed_at).toBeDefined();
+          expect(msg.last_error).toBe("Manually moved to DLQ");
+      }
+    }, 15000);
   });
 
   // Update Message
@@ -359,7 +518,7 @@ describe('Queue Routes - Integration Tests', () => {
   });
 
   // Batch Delete Messages
-  describe('POST /queue/messages/batch-delete', () => {
+  describe('POST /queue/messages/delete', () => {
     it('should delete multiple messages successfully', async () => {
       // 1. Enqueue 3 messages
       await testClient(router).queue.message.$post({ json: { type: 'del-1', payload: { i: 1 } } });
@@ -376,7 +535,7 @@ describe('Queue Routes - Integration Tests', () => {
       expect(ids.length).toBe(3);
 
       // 3. Batch Delete
-      const deleteRes = await testClient(router).queue.messages['batch-delete'].$post({
+      const deleteRes = await testClient(router).queue.messages['delete'].$post({
         query: { queueType: 'main' },
         json: { messageIds: ids }
       });
@@ -534,6 +693,55 @@ describe('Queue Routes - Integration Tests', () => {
 
   // Robustness Tests
   describe('Robustness Tests - Retry and DLQ', () => {
+    it('should not duplicate messages when requeue runs concurrently', async () => {
+        const originalTimeout = queue.config.ack_timeout_seconds;
+        const originalMaxAttempts = queue.config.max_attempts;
+
+        (queue.config as any).ack_timeout_seconds = 1;
+        (queue.config as any).max_attempts = 10;
+
+        try {
+            await queue.enqueueMessage({ type: 'concurrent-requeue', payload: { a: 1 } });
+
+            const msg1 = await queue.dequeueMessage(1, 1);
+            expect(msg1).not.toBeNull();
+            expect(msg1?.id).toBeTruthy();
+
+            await new Promise(resolve => setTimeout(resolve, 1100));
+
+            const results = await Promise.all([
+              queue.requeueFailedMessages(),
+              queue.requeueFailedMessages(),
+              queue.requeueFailedMessages(),
+            ]);
+            expect(results.reduce((a, b) => a + b, 0)).toBe(1);
+
+            const streams = (queue as any)._getAllPriorityStreams() as string[];
+            let occurrences = 0;
+
+            for (const streamName of streams) {
+              const entries = await queue.redisManager.redis.xrange(streamName, '-', '+');
+              for (const [, fields] of entries) {
+                let json: string | null = null;
+                for (let i = 0; i < fields.length; i += 2) {
+                  if (fields[i] === 'data') {
+                    json = fields[i + 1] as any;
+                    break;
+                  }
+                }
+                if (!json) continue;
+                const parsed = (queue as any)._deserializeMessage(json) as any;
+                if (parsed?.id === msg1?.id) occurrences++;
+              }
+            }
+
+            expect(occurrences).toBe(1);
+        } finally {
+            (queue.config as any).ack_timeout_seconds = originalTimeout;
+            (queue.config as any).max_attempts = originalMaxAttempts;
+        }
+    }, 15000);
+
     it('should retry a message until max attempts and then move to DLQ', async () => {
         // 1. Modify config for the existing queue instance
         // Store original values to restore later

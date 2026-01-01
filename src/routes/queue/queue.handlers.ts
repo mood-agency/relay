@@ -21,6 +21,48 @@ import { streamSSE } from "hono/streaming";
 
 import env from "@/config/env";
 import { OptimizedRedisQueue, QueueConfig } from "@/lib/redis.js";
+
+/**
+ * --- Redis Queue Architecture & Stream Types ---
+ * 
+ * This application uses Redis Streams to implement a robust, multi-priority queue system.
+ * Below is an explanation of the different queue types and their purposes:
+ * 
+ * 1. **Manual Queue (`queue_manual`)**
+ *    - **Priority:** Highest (Checked 1st).
+ *    - **Purpose:** Reserved exclusively for messages manually moved to "Processing" via the Dashboard UI.
+ *    - **Why:** Isolates user-initiated actions from the general backlog. When a user clicks "Move to Processing", 
+ *      the message goes here so the system can immediately pick it up without processing thousands of backlog items first.
+ * 
+ * 2. **Priority Queues (`queue_p{N}` e.g., `queue_p9`, `queue_p1`)**
+ *    - **Priority:** High to Low (Checked 2nd to Nth).
+ *    - **Purpose:** Standard segmented priority streams.
+ *    - **Order:** `queue_p9` is checked before `queue_p8`, and so on.
+ * 
+ * 3. **Main/Standard Queue (`queue`)**
+ *    - **Priority:** Normal (Priority 0).
+ *    - **Purpose:** The default stream for messages enqueued without a specific high priority.
+ *    - **Behavior:** Processed after all manual and higher-priority streams are empty.
+ * 
+ * 4. **Processing Queue (Consumer Group PEL)**
+ *    - **Type:** Logical State (Not a separate list key).
+ *    - **Purpose:** Messages that have been dequeued (read) by a consumer but not yet Acknowledged (ACK) or Failed.
+ *    - **Storage:** Tracked in the Redis Stream's Pending Entry List (PEL).
+ * 
+ * 5. **Acknowledged Queue (`queue_acknowledged`)**
+ *    - **Type:** Stream.
+ *    - **Purpose:** Archive of successfully processed messages.
+ *    - **Retention:** Trimmed to a configurable limit (e.g., last 100 messages) to prevent indefinite growth.
+ * 
+ * 6. **Dead Letter Queue (`queue_dlq`)**
+ *    - **Type:** Stream.
+ *    - **Purpose:** Graveyard for messages that failed after maximum retry attempts.
+ *    - **Action:** Messages here usually require manual intervention or inspection.
+ * 
+ * --- Message Lifecycle ---
+ * Enqueue -> [Manual/Priority/Main Stream] -> Dequeue (Consumer Group) -> Processing (PEL) -> ACK (-> Acknowledged Stream) OR Fail (-> DLQ Stream)
+ */
+
 interface QueueConfigI {
   redis_host: string;
   redis_port: number;
