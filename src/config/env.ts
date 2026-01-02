@@ -27,11 +27,12 @@ export const EnvSchema = z.object({
   QUEUE_NAME: z.string().default("queue"),
   PROCESSING_QUEUE_NAME: z.string().default("queue_processing"),
   DEAD_LETTER_QUEUE_NAME: z.string().default("queue_dlq"),
+  ARCHIVED_QUEUE_NAME: z.string().default("queue_archived"),
   METADATA_HASH_NAME: z.string().default("queue_metadata"),
   
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),
   MAX_ATTEMPTS: z.coerce.number().default(3),
-  BATCH_SIZE: z.coerce.number().default(100),
+  REQUEUE_BATCH_SIZE: z.coerce.number().default(100),
   MAX_PRIORITY_LEVELS: z.coerce.number().default(10),
   ENABLE_ENCRYPTION: z.string().default("false"),
   SECRET_KEY: z.string().optional().nullable(),

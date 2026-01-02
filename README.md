@@ -326,6 +326,13 @@ flowchart TD
 
 ## 📡 API Endpoints
 
+### 📖 API Documentation
+
+This API includes a fully interactive documentation UI (Scalar) and a raw OpenAPI specification.
+
+- **Interactive UI**: `http://localhost:3000/api/reference`
+- **OpenAPI Spec (JSON)**: `http://localhost:3000/api/doc`
+
 ### Queue Operations
 
 - `POST /api/queue/message` - Add a message to the queue

@@ -25,7 +25,8 @@ import {
     Pickaxe,
     Check,
     Download,
-    Upload
+    Upload,
+    Archive
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -75,6 +76,7 @@ interface Message {
     dequeued_at?: number
     custom_ack_timeout?: number
     custom_max_attempts?: number
+    archived_at?: number
 }
 
 interface Pagination {
@@ -106,11 +108,12 @@ interface SystemStatus {
     processingQueue: QueueInfo
     deadLetterQueue: QueueInfo
     acknowledgedQueue: QueueInfo
+    archivedQueue: QueueInfo
     metadata: QueueMetadata
     availableTypes: string[]
 }
 
-const QUEUE_TABS = ["main", "processing", "dead", "acknowledged"] as const
+const QUEUE_TABS = ["main", "processing", "dead", "acknowledged", "archived"] as const
 type QueueTab = (typeof QUEUE_TABS)[number]
 type SortOrder = "asc" | "desc"
 
@@ -126,6 +129,16 @@ type DashboardState = {
     startDate?: Date
     endDate?: Date
     search: string
+}
+
+const getDefaultSortBy = (queue: QueueTab): string => {
+    switch (queue) {
+        case "processing": return "processing_started_at"
+        case "dead": return "failed_at"
+        case "archived": return "archived_at"
+        case "acknowledged": return "acknowledged_at"
+        default: return "created_at"
+    }
 }
 
 export default function Dashboard() {
@@ -195,7 +208,7 @@ export default function Dashboard() {
         const parsedLimit = rawLimit ? Number(rawLimit) : 25
         const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit).toString() : "25"
 
-        const sortBy = params.get("sortBy") || "created_at"
+        const sortBy = params.get("sortBy") || getDefaultSortBy(queue)
         const sortOrder: SortOrder = params.get("sortOrder") === "asc" ? "asc" : "desc"
 
         const filterType = params.get("filterType") || "all"
@@ -246,7 +259,7 @@ export default function Dashboard() {
         if (state.queue !== "main") params.set("queue", state.queue)
         if (state.page !== 1) params.set("page", state.page.toString())
         if (state.limit !== "25") params.set("limit", state.limit)
-        if (state.sortBy !== "created_at") params.set("sortBy", state.sortBy)
+        if (state.sortBy !== getDefaultSortBy(state.queue)) params.set("sortBy", state.sortBy)
         if (state.sortOrder !== "desc") params.set("sortOrder", state.sortOrder)
         if (state.filterType && state.filterType !== "all") params.set("filterType", state.filterType)
         if (state.filterPriority) params.set("filterPriority", state.filterPriority)
@@ -300,6 +313,12 @@ export default function Dashboard() {
     
     // File Input Ref
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // Active Tab Ref (for race condition handling)
+    const activeTabRef = useRef(activeTab)
+    useEffect(() => {
+        activeTabRef.current = activeTab
+    }, [activeTab])
 
     // Trigger scroll reset on navigation/filter changes
     useEffect(() => {
@@ -360,7 +379,8 @@ export default function Dashboard() {
 
     // Fetch Messages (Table Data)
     const fetchMessages = useCallback(async (silent = false) => {
-        setMessagesQueueType(activeTab)
+        const currentTab = activeTab
+        setMessagesQueueType(currentTab)
         if (!silent) setLoadingMessages(true)
         if (!silent) setMessagesData(null)
         try {
@@ -377,15 +397,25 @@ export default function Dashboard() {
             if (endDate) params.append('endDate', endDate.toISOString())
             if (search) params.append('search', search)
 
-            const response = await fetch(`/api/queue/${activeTab}/messages?${params.toString()}`)
+            const response = await fetch(`/api/queue/${currentTab}/messages?${params.toString()}`)
             if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
             const json = await response.json()
+            
+            // Check for stale response
+            if (currentTab !== activeTabRef.current) return
+
             setMessagesData(json)
             setError(null)
         } catch (err: any) {
+            // Check for stale response
+            if (currentTab !== activeTabRef.current) return
+
             console.error("Fetch messages error:", err)
             setError(err.message)
         } finally {
+            // Check for stale response
+            if (currentTab !== activeTabRef.current) return
+
             if (!silent) setLoadingMessages(false)
         }
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
@@ -477,16 +507,19 @@ export default function Dashboard() {
     }, [fetchConfig, fetchStatus, getDashboardStateFromLocation, parseQueueTab])
 
     const navigateToTab = useCallback((tab: QueueTab) => {
+        const defaultSortBy = getDefaultSortBy(tab)
         setActiveTab(tab)
         setSelectedIds([])
         setLastSelectedId(null)
         setCurrentPage(1)
+        setSortBy(defaultSortBy)
+        setSortOrder("desc")
         writeDashboardStateToUrl({
             queue: tab,
             page: 1,
             limit: pageSize,
-            sortBy,
-            sortOrder,
+            sortBy: defaultSortBy,
+            sortOrder: "desc",
             filterType,
             filterPriority,
             filterAttempts,
@@ -494,15 +527,15 @@ export default function Dashboard() {
             endDate,
             search,
         }, "push")
-    }, [endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate, writeDashboardStateToUrl])
+    }, [endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate, writeDashboardStateToUrl])
 
     const getTabHref = useCallback((tab: QueueTab) => {
         return buildDashboardHref({
             queue: tab,
             page: 1,
             limit: pageSize,
-            sortBy,
-            sortOrder,
+            sortBy: getDefaultSortBy(tab),
+            sortOrder: "desc",
             filterType,
             filterPriority,
             filterAttempts,
@@ -510,7 +543,7 @@ export default function Dashboard() {
             endDate,
             search,
         })
-    }, [buildDashboardHref, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate])
+    }, [buildDashboardHref, endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate])
 
     // Auto Refresh
     useEffect(() => {
@@ -604,7 +637,7 @@ export default function Dashboard() {
                             if (filteredNew.length === 0) return base;
 
                             // Highlight new messages
-                            const newIds = filteredNew.map(m => m.id);
+                            const newIds = filteredNew.map((m: Message) => m.id);
                             setHighlightedIds(prev => [...prev, ...newIds]);
                             setTimeout(() => {
                                 setHighlightedIds(prev => prev.filter(id => !newIds.includes(id)));
@@ -1203,6 +1236,14 @@ export default function Dashboard() {
                                 count={statusData?.acknowledgedQueue?.length || 0}
                                 variant="success"
                             />
+                            <NavButton
+                                active={activeTab === 'archived'}
+                                href={getTabHref("archived")}
+                                onClick={() => navigateToTab('archived')}
+                                icon={Archive}
+                                label="Archived"
+                                count={statusData?.archivedQueue?.length || 0}
+                            />
                         </div>
 
                         <div className="h-px bg-border/50" />
@@ -1344,6 +1385,7 @@ export default function Dashboard() {
                                     {activeTab === 'processing' && 'Processing Queue'}
                                     {activeTab === 'dead' && 'Dead Letter Queue'}
                                     {activeTab === 'acknowledged' && 'Acknowledged Messages'}
+                                    {activeTab === 'archived' && 'Archived Messages'}
                                 </h2>
                                
                             </div>
@@ -1352,6 +1394,7 @@ export default function Dashboard() {
                                 {activeTab === 'processing' && 'Messages currently being processed.'}
                                 {activeTab === 'dead' && 'Messages that failed processing.'}
                                 {activeTab === 'acknowledged' && 'Successfully processed messages.'}
+                                {activeTab === 'archived' && 'Messages archived for long-term storage.'}
                             </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1362,7 +1405,7 @@ export default function Dashboard() {
                                         size="sm"
                                         onClick={() => {
                                             // Set default target to first queue that isn't the current one
-                                            const queues = ['main', 'dead', 'acknowledged'];
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived'];
                                             const defaultTarget = queues.find(q => q !== activeTab) || 'main';
                                             setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }));
                                         }}
@@ -1388,7 +1431,7 @@ export default function Dashboard() {
                                 onClick={handleClearCurrentQueue}
                                 className="h-8 hover:bg-destructive hover:text-destructive-foreground"
                             >
-                                <Brush className="h-3.5 w-3.5 mr-2" />
+                                <Trash2 className="h-3.5 w-3.5 mr-2" />
                                 Clear {activeTab === 'dead' ? 'Dead Letter' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Queue
                             </Button>
                         </div>
@@ -1402,7 +1445,7 @@ export default function Dashboard() {
                             </div>
                         )}
                         
-                        {(activeTab === 'main' || activeTab === 'processing' || activeTab === 'acknowledged') && (
+                        {(activeTab === 'main' || activeTab === 'processing' || activeTab === 'acknowledged' || activeTab === 'archived') && (
                             <QueueTable
                                 messages={effectiveMessagesData?.messages || []}
                                 queueType={activeTab}
@@ -1540,6 +1583,7 @@ function MoveMessageDialog({
         { value: "processing", label: "Processing Queue" },
         { value: "dead", label: "Dead Letter Queue" },
         { value: "acknowledged", label: "Acknowledged Queue" },
+        { value: "archived", label: "Archived Queue" },
     ];
     
     // Filter out the current queue from available options
@@ -1833,6 +1877,7 @@ function QueueTable({
         switch (queueType) {
             case 'processing': return 'Started At'
             case 'acknowledged': return 'Ack At'
+            case 'archived': return 'Archived At'
             default: return 'Created At'
         }
     }
@@ -1841,6 +1886,7 @@ function QueueTable({
         switch (queueType) {
             case 'processing': return 'processing_started_at'
             case 'acknowledged': return 'acknowledged_at'
+            case 'archived': return 'archived_at'
             default: return 'created_at'
         }
     }
@@ -1849,6 +1895,7 @@ function QueueTable({
         switch (queueType) {
             case 'processing': return m.dequeued_at || m.processing_started_at
             case 'acknowledged': return m.acknowledged_at
+            case 'archived': return m.archived_at
             default: return m.created_at
         }
     }
@@ -1938,7 +1985,7 @@ function QueueTable({
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            {(queueType === 'main' || queueType === 'acknowledged') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
+                            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
                             {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Time Remaining</TableHead>}
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
@@ -1995,7 +2042,7 @@ function QueueTable({
                                                         )}
                                                     </span>
                                             </TableCell>
-                                            {(queueType === 'main' || queueType === 'acknowledged') && (
+                                            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
                                                 <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                     {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                                 </TableCell>
@@ -2085,7 +2132,7 @@ function QueueTable({
                                                         )}
                                                     </span>
                                             </TableCell>
-                                            {(queueType === 'main' || queueType === 'acknowledged') && (
+                                            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
                                                 <TableCell className="text-xs text-foreground whitespace-nowrap">
                                                     {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
                                                 </TableCell>
@@ -2719,20 +2766,20 @@ function DeadLetterTable({
                                             {errorText}
                                         </div>
                                     </TableCell>
-                                    <TableCell>
-                                        <span className="text-xs text-foreground pl-4 block">
-                                            {msg.attempt_count || 1}
-                                            {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                                                <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                                            )}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                        {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                    </TableCell>
-                                    <TableCell className="text-right pr-6">
-                                        <div className="flex justify-end gap-1">
-                                            {onEdit && (
+                                            <TableCell>
+                                                    <span className="text-xs text-foreground pl-4 block">
+                                                        {msg.attempt_count || 1}
+                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                                                        )}
+                                                    </span>
+                                            </TableCell>
+                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
+                                                {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+                                            </TableCell>
+                                            <TableCell className="text-right pr-6">
+                                                <div className="flex justify-end gap-1">
+                                                    {onEdit && (
                                                 <Button
                                                     type="button"
                                                     variant="ghost"

@@ -249,6 +249,17 @@ export const getQueueStatus = createRoute({
           length: z.number(),
           messages: z.array(DequeuedMessageSchema),
         }),
+        acknowledgedQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+          total: z.number(),
+        }),
+        archivedQueue: z.object({
+          name: z.string(),
+          length: z.number(),
+          messages: z.array(DequeuedMessageSchema),
+        }),
         metadata: z.object({
           totalProcessed: z.number(),
           totalFailed: z.number(),
@@ -267,7 +278,7 @@ export const getMessages = createRoute({
   tags,
   request: {
     params: z.object({
-      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+      queueType: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
     }),
     query: z.object({
       page: z.string().optional(),
@@ -306,7 +317,7 @@ export const exportMessages = createRoute({
   tags,
   request: {
     params: z.object({
-      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+      queueType: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
     }),
     query: z.object({
       sortBy: z.string().optional(),
@@ -376,8 +387,8 @@ export const moveMessages = createRoute({
     body: jsonContentRequired(
       z.object({
         messages: z.array(z.any()),
-        fromQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
-        toQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
+        fromQueue: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
+        toQueue: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
         errorReason: z.string().max(2000).optional(),
       }),
       "Move Messages Request"
@@ -406,7 +417,7 @@ export const deleteMessage = createRoute({
       messageId: z.string(),
     }),
     query: z.object({
-      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+      queueType: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
     }),
   },
   responses: {
@@ -431,7 +442,7 @@ export const deleteMessages = createRoute({
   tags,
   request: {
     query: z.object({
-      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+      queueType: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
     }),
     body: jsonContentRequired(
       z.object({
@@ -517,7 +528,7 @@ export const clearQueue = createRoute({
   tags,
   request: {
     params: z.object({
-      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+      queueType: z.enum(["main", "processing", "dead", "acknowledged", "archived"]),
     }),
   },
   responses: {

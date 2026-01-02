@@ -29,6 +29,7 @@ class QueueConfig {
     this.queue_name = config.queue_name || "queue";
     this.processing_queue_name = config.processing_queue_name || "queue_processing";
     this.dead_letter_queue_name = config.dead_letter_queue_name || "queue_dlq";
+    this.archived_queue_name = config.archived_queue_name || "queue_archived";
     this.acknowledged_queue_name = config.acknowledged_queue_name || "queue_acknowledged";
     this.total_acknowledged_key = config.total_acknowledged_key || "queue:stats:total_acknowledged";
     this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
@@ -40,7 +41,7 @@ class QueueConfig {
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
-    this.batch_size = parseInt(config.batch_size || "100", 10);
+    this.requeue_batch_size = parseInt(config.requeue_batch_size || "100", 10);
     this.max_acknowledged_history = parseInt(config.max_acknowledged_history || "100", 10);
     this.connection_pool_size = parseInt(config.redis_pool_size || "10", 10);
     
@@ -761,7 +762,7 @@ class OptimizedRedisQueue {
               this.config.consumer_group_name,
               "-",
               "+",
-              100
+              this.config.requeue_batch_size
             );
           } catch (e) {
             const msg = e?.message || "";
@@ -820,13 +821,17 @@ class OptimizedRedisQueue {
             }
           }
 
+          const processingPipeline = redis.pipeline();
+          let operationsInPipeline = 0;
+
           for (const [msgId, , idleMs] of pending) {
             if (idleMs < 1000) continue;
 
             const messageData = messageDataMap.get(msgId);
 
             if (!messageData) {
-              await redis.xack(queueName, this.config.consumer_group_name, msgId);
+              processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+              operationsInPipeline++;
               continue;
             }
 
@@ -886,22 +891,27 @@ class OptimizedRedisQueue {
               messageData.attempt_count = metadata.attempt_count;
               const dlqJson = this._serializeMessage(messageData);
 
-              const tx = redis.multi();
-              tx.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
-              tx.xack(queueName, this.config.consumer_group_name, msgId);
-              tx.xdel(queueName, msgId);
-              tx.hdel(this.config.metadata_hash_name, messageData.id);
-              await tx.exec();
+              processingPipeline.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
+              processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+              processingPipeline.xdel(queueName, msgId);
+              processingPipeline.hdel(this.config.metadata_hash_name, messageData.id);
+              
               movedToDlqCount++;
+              operationsInPipeline++;
             } else {
               const messageJson = this._serializeMessage(messageData);
-              const tx = redis.multi();
-              tx.xadd(queueName, "*", "data", messageJson);
-              tx.xack(queueName, this.config.consumer_group_name, msgId);
-              tx.xdel(queueName, msgId);
-              await tx.exec();
+              
+              processingPipeline.xadd(queueName, "*", "data", messageJson);
+              processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+              processingPipeline.xdel(queueName, msgId);
+              
               requeuedCount++;
+              operationsInPipeline++;
             }
+          }
+          
+          if (operationsInPipeline > 0) {
+             await processingPipeline.exec();
           }
         } catch (e) {
           logger.error(`Error processing pending messages for ${queueName}: ${e}`);
@@ -1070,6 +1080,7 @@ class OptimizedRedisQueue {
         if (type === 'main') return this._getPriorityStreamName(priority);
         if (type === 'dead') return this.config.dead_letter_queue_name;
         if (type === 'acknowledged') return this.config.acknowledged_queue_name;
+        if (type === 'archived') return this.config.archived_queue_name;
         if (type === 'processing') return this._getPriorityStreamName(priority);
         return this.config.queue_name;
     };
@@ -1127,6 +1138,8 @@ class OptimizedRedisQueue {
             // Actually, if we move to main, we are treating it as a new enqueue but with history.
         } else if (toQueue === 'acknowledged') {
             newMsg.acknowledged_at = Date.now() / 1000;
+        } else if (toQueue === 'archived') {
+            newMsg.archived_at = Date.now() / 1000;
         } else if (toQueue === 'dead') {
              newMsg.failed_at = Date.now() / 1000;
              newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to DLQ";
@@ -1520,12 +1533,13 @@ class OptimizedRedisQueue {
       // DLQ and Acknowledged
       const dlqLen = results[priorityCount][1] || 0;
       const ackLen = results[priorityCount + 1][1] || 0;
-      const totalAck = parseInt(results[priorityCount + 2][1] || '0', 10);
-      const metadataCount = results[priorityCount + 3][1] || 0;
+      const archivedLen = results[priorityCount + 2][1] || 0;
+      const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
+      const metadataCount = results[priorityCount + 4][1] || 0;
       
       // Parse pending counts for all priority streams
       for (let i = 0; i < priorityCount; i++) {
-        const pendingResult = results[priorityCount + 4 + i][1];
+        const pendingResult = results[priorityCount + 5 + i][1];
         const pendingCount = pendingResult ? pendingResult[0] : 0;
         const priority = priorityCount - 1 - i;
         priorityDetails[`priority_${priority}_processing`] = pendingCount;
@@ -1537,6 +1551,7 @@ class OptimizedRedisQueue {
         processing_queue_size: totalProcessingSize,
         dead_letter_queue_size: dlqLen,
         acknowledged_queue_size: ackLen,
+        archived_queue_size: archivedLen,
         total_acknowledged: totalAck,
         metadata_count: metadataCount,
         priority_levels: this.config.max_priority_levels,
@@ -1749,8 +1764,11 @@ class OptimizedRedisQueue {
         case 'dead':
           streamNames = [this.config.dead_letter_queue_name];
           break;
+        case 'archived':
+          streamNames = [this.config.archived_queue_name];
+          break;
         default:
-          throw new Error(`Cannot update message in ${queueType} queue. Only 'main', 'dead', and 'processing' queues are supported.`);
+          throw new Error(`Cannot update message in ${queueType} queue. Only 'main', 'dead', 'archived', and 'processing' queues are supported.`);
       }
 
       let originalMessageData = null;
@@ -1818,9 +1836,10 @@ class OptimizedRedisQueue {
         pipeline.xlen(stream);
       }
       
-      // DLQ, Acknowledged, and total acknowledged key
+      // DLQ, Acknowledged, Archived, and total acknowledged key
       pipeline.xlen(this.config.dead_letter_queue_name);
       pipeline.xlen(this.config.acknowledged_queue_name);
+      pipeline.xlen(this.config.archived_queue_name);
       pipeline.get(this.config.total_acknowledged_key);
 
       // Get queue contents (limited to 100 items each) for all priority streams
@@ -1830,6 +1849,7 @@ class OptimizedRedisQueue {
         }
         pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 100);
         pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 100);
+        pipeline.xrevrange(this.config.archived_queue_name, "+", "-", "COUNT", 100);
       }
 
       // Get metadata
@@ -1852,12 +1872,14 @@ class OptimizedRedisQueue {
       }
       const dlqLen = results[priorityCount][1] || 0;
       const ackLen = results[priorityCount + 1][1] || 0;
-      const totalAck = parseInt(results[priorityCount + 2][1] || '0', 10);
+      const archivedLen = results[priorityCount + 2][1] || 0;
+      const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
       
       // Parse messages from all priority streams
       let mainMessages = [];
       let deadMessages = [];
       let acknowledgedMessages = [];
+      let archivedMessages = [];
       let metadata = {};
       let pendingSummaryStartIdx;
       let pendingDetailStartIdx;
@@ -1883,7 +1905,7 @@ class OptimizedRedisQueue {
       };
 
       if (includeMessages) {
-          const contentStartIdx = priorityCount + 3;
+          const contentStartIdx = priorityCount + 4;
           
           // Collect main messages from all priority streams
           for (let i = 0; i < priorityCount; i++) {
@@ -1895,16 +1917,18 @@ class OptimizedRedisQueue {
           
           const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
           const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
-          metadata = results[contentStartIdx + priorityCount + 2][1];
+          const archivedMsgsRaw = results[contentStartIdx + priorityCount + 2][1];
+          metadata = results[contentStartIdx + priorityCount + 3][1];
           
           deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
           acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
+          archivedMessages = parseStreamMessages(archivedMsgsRaw, this.config.archived_queue_name);
 
-          pendingSummaryStartIdx = contentStartIdx + priorityCount + 3;
+          pendingSummaryStartIdx = contentStartIdx + priorityCount + 4;
           pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
       } else {
-          metadata = results[priorityCount + 3][1];
-          pendingSummaryStartIdx = priorityCount + 4;
+          metadata = results[priorityCount + 4][1];
+          pendingSummaryStartIdx = priorityCount + 5;
           pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
       }
 
@@ -2072,6 +2096,11 @@ class OptimizedRedisQueue {
           length: ackLen,
           messages: acknowledgedMessages,
           total: totalAck
+        },
+        archivedQueue: {
+          name: this.config.archived_queue_name,
+          length: archivedLen,
+          messages: archivedMessages,
         },
         metadata: {
           totalProcessed: 0, // Harder to calculate with Streams without full scan
@@ -2312,6 +2341,35 @@ class OptimizedRedisQueue {
               return m;
           }).filter(Boolean);
           isStream = false; // Already parsed
+      } else if (queueType === 'archived') {
+          const stream = await redis.xrange(this.config.archived_queue_name, "-", "+");
+          rawMessages = stream.map(([id, fields]) => {
+              let json = null;
+              for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
+              const m = this._deserializeMessage(json);
+              if(m) { m._stream_id = id; m._stream_name = this.config.archived_queue_name; }
+              return m;
+          }).filter(Boolean);
+          const ids = rawMessages.map(m => m?.id).filter(Boolean);
+          if (ids.length > 0) {
+              const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+              const metaById = new Map();
+              ids.forEach((id, index) => metaById.set(id, metaResults[index]));
+              rawMessages.forEach((m) => {
+                  const metaStr = metaById.get(m?.id);
+                  if (!metaStr) return;
+                  try {
+                      const meta = JSON.parse(metaStr);
+                      if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+                      if (meta.last_error) m.last_error = meta.last_error;
+                      const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
+                      const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
+                      if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
+                      if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
+                  } catch (e) {}
+              });
+          }
+          isStream = false;
       } else {
           throw new Error(`Invalid queue type: ${queueType}`);
       }
@@ -2332,7 +2390,8 @@ class OptimizedRedisQueue {
           const start = new Date(startDate).getTime() / 1000;
           messages = messages.filter(m => {
              const ts = queueType === 'processing' ? m.processing_started_at : 
-                        queueType === 'acknowledged' ? m.acknowledged_at : m.created_at;
+                        queueType === 'acknowledged' ? m.acknowledged_at : 
+                        queueType === 'archived' ? m.archived_at : m.created_at;
              return ts >= start;
           });
       }
@@ -2340,7 +2399,8 @@ class OptimizedRedisQueue {
           const end = new Date(endDate).getTime() / 1000;
           messages = messages.filter(m => {
              const ts = queueType === 'processing' ? m.processing_started_at : 
-                        queueType === 'acknowledged' ? m.acknowledged_at : m.created_at;
+                        queueType === 'acknowledged' ? m.acknowledged_at : 
+                        queueType === 'archived' ? m.archived_at : m.created_at;
              return ts <= end;
           });
       }
@@ -2410,6 +2470,7 @@ class OptimizedRedisQueue {
       // Clear other queues and metadata
       pipeline.del(this.config.dead_letter_queue_name);
       pipeline.del(this.config.acknowledged_queue_name);
+      pipeline.del(this.config.archived_queue_name);
       pipeline.del(this.config.total_acknowledged_key);
       pipeline.del(this.config.metadata_hash_name);
 
@@ -2456,6 +2517,9 @@ class OptimizedRedisQueue {
         case 'dead':
           pipeline.del(this.config.dead_letter_queue_name);
           break;
+        case 'archived':
+          pipeline.del(this.config.archived_queue_name);
+          break;
         case 'acknowledged':
           pipeline.del(this.config.acknowledged_queue_name);
           break;
@@ -2474,105 +2538,6 @@ class OptimizedRedisQueue {
 
   async disconnect() {
     await this.redisManager.disconnect();
-  }
-}
-
-// --- Optimized Usage Example ---
-async function demoOptimizedQueue() {
-  logger.info("=== Starting Optimized Queue System Demo (Node.js) ===");
-  const queue = new OptimizedRedisQueue(config);
-
-  try {
-    await queue.redisManager.testConnection(); // Test connection first
-
-    logger.info("Cleaning queues for demo...");
-    await queue.clearAllQueues();
-    logger.info("Queues cleaned for demo.");
-
-    logger.info("\n--- Demo: Batch Enqueueing ---");
-    const messages = [];
-    for (let i = 0; i < 10; i++) {
-      messages.push({
-        // id will be auto-generated by enqueueBatch if not provided
-        type: "email_send",
-        payload: { recipient: `user${i}@example.com` },
-        priority: i < 3 ? 1 : 0, // First 3 with priority
-      });
-    }
-    const enqueued = await queue.enqueueBatch(messages);
-    logger.info(`Batch enqueued: ${enqueued} messages`);
-
-    logger.info("\n--- Demo: Message Processing ---");
-    let processed = 0;
-    for (let i = 0; i < 5; i++) {
-      // Try to process 5 messages
-      const message = await queue.dequeueMessage(1); // 1 second timeout
-      if (message) {
-        const msgId = message.id || "N/A";
-        logger.info(`Processing: ${msgId}, Priority: ${message.priority}`);
-
-        await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate processing
-
-        if (
-          message.payload &&
-          message.payload.recipient === "user2@example.com"
-        ) {
-          // Check specific message for simulated failure
-          logger.warn(`Simulating failure for ${msgId}`);
-          // Do not acknowledge, it should be requeued later
-        } else {
-          await queue.acknowledgeMessage(message);
-        }
-        processed++;
-      } else {
-        logger.info("No message to process, or timeout.");
-      }
-    }
-    logger.info(`Attempted to process ${processed} messages initially.`);
-
-    logger.info("\n--- Demo: Requeue Failed Messages ---");
-    logger.info(
-      `Waiting ${config.ack_timeout_seconds + 1} seconds for timeout...`
-    );
-    await new Promise((resolve) =>
-      setTimeout(resolve, (config.ack_timeout_seconds + 1) * 1000)
-    );
-    const requeued = await queue.requeueFailedMessages();
-    logger.info(
-      `Messages requeued/moved to DLQ after timeout check: ${requeued} (requeued to main)`
-    );
-
-    // Try processing again to see if the failed message is picked up
-    logger.info("\n--- Demo: Processing messages after requeue ---");
-    let processedAfterRequeue = 0;
-    for (let i = 0; i < 5; i++) {
-      // Try to process up to 5 more messages
-      const message = await queue.dequeueMessage(1);
-      if (message) {
-        const msgId = message.id || "N/A";
-        logger.info(`Processing (post-requeue): ${msgId}`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await queue.acknowledgeMessage(message);
-        processedAfterRequeue++;
-      } else {
-        logger.info("No more messages after requeue check or timeout.");
-        break;
-      }
-    }
-    logger.info(`Processed ${processedAfterRequeue} messages after requeue.`);
-
-    logger.info("\n--- Demo: System Metrics ---");
-    const metrics = await queue.getMetrics();
-    logger.info(`Current metrics: ${JSON.stringify(metrics, null, 2)}`);
-
-    logger.info("\n--- Demo: Health Check ---");
-    const health = await queue.healthCheck();
-    logger.info(`Health status: ${JSON.stringify(health, null, 2)}`);
-  } catch (error) {
-    logger.error(`Error in demo: ${error.stack}`);
-  } finally {
-    await queue.disconnect();
-    logger.info("\n=== Demo Completed (Node.js) ===");
   }
 }
 

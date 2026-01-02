@@ -76,7 +76,7 @@ interface QueueConfigI {
   metadata_hash_name: string;
   ack_timeout_seconds: number;
   max_attempts: number;
-  batch_size: number;
+  requeue_batch_size: number;
   max_priority_levels: number;
   redis_pool_size: number;
   enable_message_encryption: string;
@@ -92,10 +92,11 @@ const queueConfig: QueueConfigI = {
   queue_name: env.QUEUE_NAME,
   processing_queue_name: env.PROCESSING_QUEUE_NAME,
   dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
+  archived_queue_name: env.ARCHIVED_QUEUE_NAME,
   metadata_hash_name: env.METADATA_HASH_NAME,
   ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
   max_attempts: env.MAX_ATTEMPTS,
-  batch_size: env.BATCH_SIZE,
+  requeue_batch_size: env.REQUEUE_BATCH_SIZE,
   max_priority_levels: env.MAX_PRIORITY_LEVELS,
   redis_pool_size: env.REDIS_POOL_SIZE,
   enable_message_encryption: env.ENABLE_ENCRYPTION,
