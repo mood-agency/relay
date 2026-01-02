@@ -13,5 +13,27 @@ export default defineConfig({
         proxy: {
             '/api': 'http://localhost:3000'
         }
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    'vendor-react': ['react', 'react-dom'],
+                    'vendor-ui': ['cmdk', 'lucide-react', 'date-fns', 'react-day-picker'],
+                    'vendor-radix': [
+                        '@radix-ui/react-checkbox',
+                        '@radix-ui/react-dialog',
+                        '@radix-ui/react-dropdown-menu',
+                        '@radix-ui/react-label',
+                        '@radix-ui/react-popover',
+                        '@radix-ui/react-scroll-area',
+                        '@radix-ui/react-select',
+                        '@radix-ui/react-slot',
+                        '@radix-ui/react-tabs',
+                        '@radix-ui/react-tooltip'
+                    ],
+                }
+            }
+        }
     }
 })
