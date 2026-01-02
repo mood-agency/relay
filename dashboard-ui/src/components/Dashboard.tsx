@@ -530,7 +530,7 @@ export default function Dashboard() {
             setStartDate(next.startDate)
             setEndDate(next.endDate)
             setSearch(next.search)
-            setSelectedIds([])
+            setSelectedIds(new Set())
             setLastSelectedId(null)
         }
 
@@ -543,7 +543,7 @@ export default function Dashboard() {
     const navigateToTab = useCallback((tab: QueueTab) => {
         const defaultSortBy = getDefaultSortBy(tab)
         setActiveTab(tab)
-        setSelectedIds([])
+        setSelectedIds(new Set())
         setLastSelectedId(null)
         setCurrentPage(1)
         setSortBy(defaultSortBy)
@@ -715,13 +715,13 @@ export default function Dashboard() {
                             setTimeout(() => {
                                 setHighlightedIds(prev => {
                                     const next = new Set(prev);
-                                    newIds.forEach(id => next.add(id));
+                                    newIds.forEach((id: string) => next.add(id));
                                     return next;
                                 });
                                 setTimeout(() => {
                                     setHighlightedIds(prev => {
                                         const next = new Set(prev);
-                                        newIds.forEach(id => next.delete(id));
+                                        newIds.forEach((id: string) => next.delete(id));
                                         return next;
                                     });
                                 }, 2000);
