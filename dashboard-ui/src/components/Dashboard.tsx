@@ -48,6 +48,7 @@ import {
     TableHeader,
     TableRow
 } from "@/components/ui/table"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import {
     Select,
@@ -2062,9 +2063,10 @@ function QueueTable({
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
-            <div
-                ref={scrollContainerRef}
-                className="relative flex-1 min-h-0 overflow-auto"
+            <ScrollArea
+                viewportRef={scrollContainerRef}
+                className="relative flex-1 min-h-0"
+                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
                 onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <Table>
@@ -2279,7 +2281,7 @@ function QueueTable({
                         )}
                     </TableBody>
                 </Table>
-            </div>
+            </ScrollArea>
             {totalPages > 0 && (
                 <PaginationFooter
                     pageSize={pageSize}
@@ -2700,9 +2702,10 @@ function DeadLetterTable({
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
-            <div
-                ref={scrollContainerRef}
-                className="relative flex-1 min-h-0 overflow-auto"
+            <ScrollArea
+                viewportRef={scrollContainerRef}
+                className="relative flex-1 min-h-0"
+                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
                 onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <Table>
@@ -2914,7 +2917,7 @@ function DeadLetterTable({
                         )}
                     </TableBody>
                 </Table>
-            </div>
+            </ScrollArea>
             {totalPages > 0 && (
                 <PaginationFooter
                     pageSize={pageSize}
