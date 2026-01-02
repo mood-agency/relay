@@ -1,6 +1,6 @@
-import createApp from "@/lib/create-app";
-import configureOpenApi from "@/lib/configure-open-api";
-import queue from "@/routes/queue/queue.index";
+import createApp from "./lib/create-app";
+import configureOpenApi from "./lib/configure-open-api";
+import queue from "./routes/queue/queue.index";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { join } from "path";

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { testClient } from 'hono/testing';
 
 // Mock env using importActual to preserve connection details but override DB/Queue
-vi.mock('@/config/env', async () => {
-  const actual = await vi.importActual<typeof import('@/config/env')>('@/config/env');
+vi.mock('../../config/env', async () => {
+  const actual = await vi.importActual<typeof import('../../config/env')>('../../config/env');
   return {
     default: {
       ...actual.default,
@@ -17,8 +17,8 @@ vi.mock('@/config/env', async () => {
 });
 
 import router from './queue.index';
-import { OptimizedRedisQueue, QueueConfig } from '@/lib/redis.js';
-import env from '@/config/env';
+import { OptimizedRedisQueue, QueueConfig } from '../../lib/redis.js';
+import env from '../../config/env';
   
 // Create a real Redis queue instance for testing (to clean up)
 let queue: OptimizedRedisQueue;

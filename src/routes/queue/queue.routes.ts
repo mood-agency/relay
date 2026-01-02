@@ -5,7 +5,7 @@ import {
   notFoundSchema,
   paginationSchema,
   UUIDParamsSchema,
-} from "@/utils/schemas.utils";
+} from "../../utils/schemas.utils";
 
 const tags = ["Queue"];
 

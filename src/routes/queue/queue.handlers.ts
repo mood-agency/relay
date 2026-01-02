@@ -18,11 +18,11 @@ import type {
   ExportMessagesRoute,
   ImportMessagesRoute,
 } from "./queue.routes";
-import type { AppRouteHandler } from "@/config/types";
+import type { AppRouteHandler } from "../../config/types";
 import { streamSSE } from "hono/streaming";
 
-import env from "@/config/env";
-import { OptimizedRedisQueue, QueueConfig } from "@/lib/redis.js";
+import env from "../../config/env";
+import { OptimizedRedisQueue, QueueConfig } from "../../lib/redis.js";
 
 /**
  * --- Redis Queue Architecture & Stream Types ---
@@ -69,10 +69,11 @@ interface QueueConfigI {
   redis_host: string;
   redis_port: number;
   redis_db: number;
-  redis_password: string | null | undefined;
+  redis_password: string | undefined;
   queue_name: string;
   processing_queue_name: string;
   dead_letter_queue_name: string;
+  archived_queue_name: string;
   metadata_hash_name: string;
   ack_timeout_seconds: number;
   max_attempts: number;
@@ -80,7 +81,7 @@ interface QueueConfigI {
   max_priority_levels: number;
   redis_pool_size: number;
   enable_message_encryption: string;
-  secret_key: string | null | undefined;
+  secret_key: string | undefined;
   events_channel: string;
 }
 
@@ -88,7 +89,7 @@ const queueConfig: QueueConfigI = {
   redis_host: env.REDIS_HOST,
   redis_port: env.REDIS_PORT,
   redis_db: env.REDIS_DB,
-  redis_password: env.REDIS_PASSWORD,
+  redis_password: env.REDIS_PASSWORD ?? undefined,
   queue_name: env.QUEUE_NAME,
   processing_queue_name: env.PROCESSING_QUEUE_NAME,
   dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
@@ -100,11 +101,11 @@ const queueConfig: QueueConfigI = {
   max_priority_levels: env.MAX_PRIORITY_LEVELS,
   redis_pool_size: env.REDIS_POOL_SIZE,
   enable_message_encryption: env.ENABLE_ENCRYPTION,
-  secret_key: env.SECRET_KEY,
+  secret_key: env.SECRET_KEY ?? undefined,
   events_channel: env.EVENTS_CHANNEL,
 };
 
-export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig));
+export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig as any));
 
 export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
   const { type, payload, priority, ackTimeout, maxAttempts, queue: queueName } = c.req.valid("json");

@@ -203,17 +203,18 @@ ACK_TIMEOUT_SECONDS=30
 MAX_ATTEMPTS=3
 ```
 
-5. Run the API server:
+5. Run the application:
 
 ```bash
-# Development mode (with hot-reloading)
-pnpm run dev
+# Development mode: Run API and Dashboard together (with hot-reloading)
+pnpm run dev:all
 
-# Production mode
+# Production mode: Build and start
+pnpm run build
 pnpm start
 ```
 
-The API will be available at `http://localhost:3000`
+The API will be available at `http://localhost:3001` and the Dashboard at `http://localhost:3001/dashboard`.
 
 ---
 
