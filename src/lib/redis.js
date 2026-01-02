@@ -1,5 +1,6 @@
 import Redis from "ioredis";
 import { nanoid } from "nanoid";
+import crypto from "crypto";
 
 // --- ID Generation Helper ---
 // Generates a 10-character URL-safe string using NanoID.

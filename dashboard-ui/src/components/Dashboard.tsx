@@ -3,6 +3,7 @@ import {
     RefreshCw,
     Play,
     Trash2,
+    Brush,
     AlertTriangle,
     Loader2,
     Pause,
@@ -22,7 +23,9 @@ import {
     Move,
     Plus,
     Pickaxe,
-    Check
+    Check,
+    Download,
+    Upload
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -170,7 +173,7 @@ export default function Dashboard() {
     const [loadingMessages, setLoadingMessages] = useState(false)
 
     const [error, setError] = useState<string | null>(null)
-    const [autoRefresh, setAutoRefresh] = useState(false)
+    const [autoRefresh, setAutoRefresh] = useState(true)
     const [lastUpdated, setLastUpdated] = useState<string>("")
     const parseQueueTab = useCallback((value: string | null): QueueTab | null => {
         if (!value) return null
@@ -289,8 +292,14 @@ export default function Dashboard() {
     // Scroll Reset State
     const [scrollResetKey, setScrollResetKey] = useState(0)
     
+    // Highlight State
+    const [highlightedIds, setHighlightedIds] = useState<string[]>([])
+    
     // Throttling Ref
     const lastStatusFetchRef = useRef(0);
+    
+    // File Input Ref
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     // Trigger scroll reset on navigation/filter changes
     useEffect(() => {
@@ -552,12 +561,20 @@ export default function Dashboard() {
                         if (!messagesToAdd.length) return;
 
                         setMessagesData(prev => {
-                            if (!prev) return prev;
+                            const base: MessagesResponse = prev ?? {
+                                messages: [],
+                                pagination: {
+                                    total: 0,
+                                    page: 1,
+                                    limit: Number(pageSize) || 25,
+                                    totalPages: 1
+                                }
+                            }
 
                             // 1. Client-side Filtering
                             const filteredNew = messagesToAdd.filter((m: Message) => {
                                 // Duplicate check
-                                if (prev.messages.some(existing => existing.id === m.id)) return false;
+                                if (base.messages.some(existing => existing.id === m.id)) return false;
 
                                 // Filter Type
                                 if (filterType && filterType !== 'all' && m.type !== filterType) return false;
@@ -584,11 +601,18 @@ export default function Dashboard() {
                                 return true;
                             });
 
-                            if (filteredNew.length === 0) return prev;
+                            if (filteredNew.length === 0) return base;
+
+                            // Highlight new messages
+                            const newIds = filteredNew.map(m => m.id);
+                            setHighlightedIds(prev => [...prev, ...newIds]);
+                            setTimeout(() => {
+                                setHighlightedIds(prev => prev.filter(id => !newIds.includes(id)));
+                            }, 2000);
 
                             // 2. Update Total Count
-                            const newTotal = prev.pagination.total + filteredNew.length;
-                            const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
+                            const newTotal = base.pagination.total + filteredNew.length;
+                            const newTotalPages = Math.ceil(newTotal / base.pagination.limit);
 
                             // 3. Determine if we should update rows
                             // Helper to compare messages based on current sort
@@ -609,12 +633,12 @@ export default function Dashboard() {
                             let shouldUpdateRows = false;
                             if (currentPage === 1) {
                                 shouldUpdateRows = true;
-                            } else if (prev.messages.length > 0) {
+                            } else if (base.messages.length > 0) {
                                 // If any new message belongs "before" the current page's start, 
                                 // it implies a shift from a previous page.
                                 // In that case, we keep the view stable (don't update rows).
                                 // We only update rows if new messages belong strictly "after" or "at" the start of this page.
-                                const firstMsg = prev.messages[0];
+                                const firstMsg = base.messages[0];
                                 const allBelongAfter = filteredNew.every((m: Message) => compare(m, firstMsg) >= 0);
                                 if (allBelongAfter) {
                                     shouldUpdateRows = true;
@@ -624,15 +648,15 @@ export default function Dashboard() {
                             }
 
                             if (shouldUpdateRows) {
-                                const combined = [...prev.messages, ...filteredNew];
+                                const combined = [...base.messages, ...filteredNew];
                                 combined.sort(compare);
                                 const updatedList = combined.slice(0, Number(pageSize));
                                 
                                 return {
-                                    ...prev,
+                                    ...base,
                                     messages: updatedList,
                                     pagination: {
-                                        ...prev.pagination,
+                                        ...base.pagination,
                                         total: newTotal,
                                         totalPages: newTotalPages
                                     }
@@ -640,9 +664,9 @@ export default function Dashboard() {
                             } else {
                                 // Stable View: Just update total
                                 return {
-                                    ...prev,
+                                    ...base,
                                     pagination: {
-                                        ...prev.pagination,
+                                        ...base.pagination,
                                         total: newTotal,
                                         totalPages: newTotalPages
                                     }
@@ -686,8 +710,8 @@ export default function Dashboard() {
                                  };
                              });
                          } else {
-                             fetchMessages(true);
-                         }
+                            fetchMessages(true);
+                        }
                     } else if (type === 'update') {
                         // Check if update is for current queue
                         if (payload.queue && payload.queue !== activeTab) return;
@@ -753,12 +777,21 @@ export default function Dashboard() {
     }, [activeTab, currentPage, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate, writeDashboardStateToUrl])
 
     useEffect(() => {
-        fetchMessages()
-    }, [fetchMessages])
+        fetchAll()
+    }, [autoRefresh, fetchAll])
 
     const handleRefresh = () => {
         fetchAll()
     }
+
+    const handleToggleAutoRefresh = useCallback(() => {
+        if (!autoRefresh) {
+            setCurrentPage(1)
+            setAutoRefresh(true)
+        } else {
+            setAutoRefresh(false)
+        }
+    }, [autoRefresh])
 
     const handleSort = (field: string) => {
         if (sortBy === field) {
@@ -984,6 +1017,58 @@ export default function Dashboard() {
         })
     }
 
+    const handleExport = () => {
+        try {
+            const params = new URLSearchParams()
+            params.append('sortBy', sortBy)
+            params.append('sortOrder', sortOrder)
+            
+            if (filterType && filterType !== 'all') params.append('filterType', filterType)
+            if (filterPriority) params.append('filterPriority', filterPriority)
+            if (filterAttempts) params.append('filterAttempts', filterAttempts)
+            if (startDate) params.append('startDate', startDate.toISOString())
+            if (endDate) params.append('endDate', endDate.toISOString())
+            if (search) params.append('search', search)
+
+            // Trigger download by opening the URL
+            window.location.href = `/api/queue/${activeTab}/export?${params.toString()}`
+        } catch (err: any) {
+            console.error("Export error:", err)
+            alert(`Failed to export: ${err.message}`)
+        }
+    }
+
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+
+            const response = await fetch('/api/queue/import', {
+                method: 'POST',
+                body: formData,
+            })
+
+            if (response.ok) {
+                const res = await response.json()
+                fetchAll()
+                alert(res.message)
+            } else {
+                const err = await response.json()
+                throw new Error(err.message)
+            }
+        } catch (err: any) {
+            console.error("Import error:", err)
+            alert(`Failed to import: ${err.message}`)
+        } finally {
+            if (fileInputRef.current) {
+                fileInputRef.current.value = ""
+            }
+        }
+    }
+
     const formatTimestamp = (ts?: number) => {
         if (!ts) return "N/A"
         return format(new Date(ts * 1000), "dd MMM, yyyy HH:mm:ss.SSS")
@@ -1026,6 +1111,7 @@ export default function Dashboard() {
                             >
                                 <Plus className="h-3.5 w-3.5" />
                             </Button>
+                            
                             <Button
                                 onClick={handleRefresh}
                                 variant="ghost"
@@ -1037,7 +1123,7 @@ export default function Dashboard() {
                                 <RefreshCw className={cn("h-3.5 w-3.5", (loadingMessages || loadingStatus) && "animate-spin")} />
                             </Button>
                             <Button
-                                onClick={() => setAutoRefresh(!autoRefresh)}
+                                onClick={handleToggleAutoRefresh}
                                 variant="ghost"
                                 size="icon"
                                 className={cn("h-8 w-8", autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
@@ -1045,6 +1131,26 @@ export default function Dashboard() {
                                 aria-label={autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
                             >
                                 {autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                            </Button>
+                            <Button
+                                onClick={() => fileInputRef.current?.click()}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Import Messages"
+                                aria-label="Import Messages"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                                onClick={handleExport}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                title="Export Messages"
+                                aria-label="Export Messages"
+                            >
+                                <Download className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                                 onClick={handleClearAll}
@@ -1068,7 +1174,7 @@ export default function Dashboard() {
                                 href={getTabHref("main")}
                                 onClick={() => navigateToTab('main')}
                                 icon={Inbox}
-                                label="Main Queue"
+                                label="Main"
                                 count={statusData?.mainQueue?.length || 0}
                             />
                             <NavButton
@@ -1084,7 +1190,7 @@ export default function Dashboard() {
                                 href={getTabHref("dead")}
                                 onClick={() => navigateToTab('dead')}
                                 icon={XCircle}
-                                label="Dead Letter"
+                                label="Failed"
                                 count={statusData?.deadLetterQueue?.length || 0}
                                 variant="destructive"
                             />
@@ -1093,7 +1199,7 @@ export default function Dashboard() {
                                 href={getTabHref("acknowledged")}
                                 onClick={() => navigateToTab('acknowledged')}
                                 icon={Check }
-                                label="Acknowledged"
+                                label="Done"
                                 count={statusData?.acknowledgedQueue?.length || 0}
                                 variant="success"
                             />
@@ -1282,7 +1388,7 @@ export default function Dashboard() {
                                 onClick={handleClearCurrentQueue}
                                 className="h-8 hover:bg-destructive hover:text-destructive-foreground"
                             >
-                                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                <Brush className="h-3.5 w-3.5 mr-2" />
                                 Clear {activeTab === 'dead' ? 'Dead Letter' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Queue
                             </Button>
                         </div>
@@ -1317,6 +1423,7 @@ export default function Dashboard() {
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
                                 scrollResetKey={scrollResetKey}
+                                highlightedIds={highlightedIds}
                             />
                         )}
                         {activeTab === 'dead' && (
@@ -1339,6 +1446,7 @@ export default function Dashboard() {
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
                                 scrollResetKey={scrollResetKey}
+                                highlightedIds={highlightedIds}
                             />
                         )}
                     </div>
@@ -1393,6 +1501,14 @@ export default function Dashboard() {
                 setDlqReason={setDlqReason}
                 count={selectedIds.length}
                 currentQueue={activeTab}
+            />
+
+            <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept=".json"
+                onChange={handleImport}
             />
         </div>
     )
@@ -1668,7 +1784,8 @@ function QueueTable({
     sortBy,
     sortOrder,
     onSort,
-    scrollResetKey
+    scrollResetKey,
+    highlightedIds
 }: {
     messages: Message[],
     queueType: string,
@@ -1688,7 +1805,8 @@ function QueueTable({
     sortBy: string,
     sortOrder: string,
     onSort: (field: string) => void,
-    scrollResetKey: number
+    scrollResetKey: number,
+    highlightedIds: string[]
 }) {
     // Add state for live updates
     const [currentTime, setCurrentTime] = useState(Date.now())
@@ -1842,7 +1960,7 @@ function QueueTable({
                                 {virtual.visibleMessages.map((msg) => {
                                     const payloadText = JSON.stringify(msg.payload)
                                     return (
-                                        <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
                                             <TableCell>
                                                 <input 
                                                     type="checkbox" 
@@ -1932,7 +2050,7 @@ function QueueTable({
                             messages.map((msg) => {
                                 const payloadText = JSON.stringify(msg.payload)
                                 return (
-                                <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
                                     <TableCell>
                                         <input 
                                             type="checkbox" 
@@ -2372,7 +2490,8 @@ function DeadLetterTable({
     sortBy,
     sortOrder,
     onSort,
-    scrollResetKey
+    scrollResetKey,
+    highlightedIds
 }: {
     messages: Message[],
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
@@ -2391,7 +2510,8 @@ function DeadLetterTable({
     sortBy: string,
     sortOrder: string,
     onSort: (field: string) => void,
-    scrollResetKey: number
+    scrollResetKey: number,
+    highlightedIds: string[]
 }) {
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
 
@@ -2480,7 +2600,7 @@ function DeadLetterTable({
                                     const payloadText = JSON.stringify(msg.payload)
                                     const errorText = msg.error_message || msg.last_error || "Unknown error"
                                     return (
-                                        <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
                                             <TableCell>
                                                 <input 
                                                     type="checkbox" 
@@ -2567,7 +2687,7 @@ function DeadLetterTable({
                                 const payloadText = JSON.stringify(msg.payload)
                                 const errorText = msg.error_message || msg.last_error || "Unknown error"
                                 return (
-                                <TableRow key={msg.id} className="group transition-colors duration-150 border-muted/30">
+                                <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
                                     <TableCell>
                                         <input 
                                             type="checkbox" 

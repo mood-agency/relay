@@ -79,3 +79,16 @@
     @apply bg-background text-foreground antialiased font-sans;
   }
 }
+
+@keyframes highlight-fade {
+  0% {
+    background-color: hsl(var(--primary) / 0.15);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-highlight {
+  animation: highlight-fade 2s ease-out;
+}

@@ -15,6 +15,8 @@ import type {
   ClearQueueRoute,
   GetConfigRoute,
   GetEventsRoute,
+  ExportMessagesRoute,
+  ImportMessagesRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "@/config/types";
 import { streamSSE } from "hono/streaming";
@@ -250,6 +252,80 @@ export const getMessages: AppRouteHandler<GetMessagesRoute> = async (c: any) => 
     return c.json(result, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to get queue messages" }, 500);
+  }
+};
+
+export const exportMessages: AppRouteHandler<ExportMessagesRoute> = async (c: any) => {
+  try {
+    const { queueType } = c.req.valid("param");
+    const query = c.req.valid("query");
+
+    // Force high limit for export to get all matching messages
+    // The underlying getQueueMessages handles filtering and sorting
+    const exportQuery = { ...query, limit: "1000000", page: "1" };
+
+    const result = await queue.getQueueMessages(queueType, exportQuery);
+    const jsonString = JSON.stringify(result.messages, null, 2);
+
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+    
+    c.header("Content-Type", "application/json");
+    c.header("Content-Disposition", `attachment; filename="${queueType}-queue-export-${timestamp}.json"`);
+    
+    return c.body(jsonString, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to export messages" }, 500);
+  }
+};
+
+export const importMessages: AppRouteHandler<ImportMessagesRoute> = async (c: any) => {
+  try {
+    const body = await c.req.parseBody();
+    const file = body['file'];
+
+    if (!file || !(file instanceof File)) {
+      return c.json({ message: "No file uploaded or invalid file" }, 400);
+    }
+
+    const text = await file.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return c.json({ message: "Invalid JSON content" }, 400);
+    }
+
+    const messages = Array.isArray(data) ? data : [data];
+    
+    // Transform to match QueueMessageSchema
+    // The export format (DequeuedMessage) is slightly different from import (QueueMessage)
+    // We need to map fields:
+    // - custom_ack_timeout -> ackTimeout
+    // - custom_max_attempts -> maxAttempts
+    // - priority -> priority
+    // - type -> type
+    // - payload -> payload
+    
+    const batch = messages.map((m: any) => ({
+      type: m.type || "default",
+      payload: m.payload || {},
+      priority: m.priority,
+      ackTimeout: m.custom_ack_timeout || m.ackTimeout,
+      maxAttempts: m.custom_max_attempts || m.maxAttempts,
+      queue: 'main' // Always import to main queue by default
+    }));
+
+    // Use existing batch enqueue logic
+    const enqueuedCount = await queue.enqueueBatch(batch);
+
+    return c.json({ 
+      message: `Imported ${enqueuedCount} messages successfully`,
+      count: enqueuedCount
+    }, 200);
+
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to import messages" }, 500);
   }
 };
 

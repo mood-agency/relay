@@ -300,7 +300,73 @@ export const getMessages = createRoute({
   },
 });
 
+export const exportMessages = createRoute({
+  path: "/queue/:queueType/export",
+  method: "get",
+  tags,
+  request: {
+    params: z.object({
+      queueType: z.enum(["main", "processing", "dead", "acknowledged"]),
+    }),
+    query: z.object({
+      sortBy: z.string().optional(),
+      sortOrder: z.enum(["asc", "desc"]).optional(),
+      filterType: z.string().optional(),
+      filterPriority: z.string().optional(),
+      filterAttempts: z.string().optional(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      search: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.any(), // File download
+        },
+      },
+      description: "Exported Messages File",
+    },
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const importMessages = createRoute({
+  path: "/queue/import",
+  method: "post",
+  tags,
+  request: {
+    body: {
+      content: {
+        "multipart/form-data": {
+          schema: z.object({
+            file: z.any().openapi({
+              type: "string",
+              format: "binary",
+            }),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        count: z.number(),
+      }),
+      "Import Successful"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type GetMessagesRoute = typeof getMessages;
+export type ExportMessagesRoute = typeof exportMessages;
+export type ImportMessagesRoute = typeof importMessages;
 
 export const moveMessages = createRoute({
   path: "/queue/move",
