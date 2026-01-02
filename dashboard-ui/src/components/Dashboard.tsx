@@ -755,21 +755,25 @@ export default function Dashboard() {
                             }
                         });
                     } else if (type === 'acknowledge' || type === 'delete') {
-                        // Remove from list if present (works for any tab/view)
+                        // Remove from list if present (only if viewing the affected queue)
                         const idsToRemove = payload.ids || (payload.id ? [payload.id] : []);
+                        const affectedQueue = payload.queue;
+
+                        // If queue is specified and doesn't match current tab, skip the message update
+                        // (status update will still happen above)
+                        if (affectedQueue && affectedQueue !== activeTab) return;
 
                         if (idsToRemove.length > 0) {
                             setMessagesData(prev => {
                                 if (!prev) return prev;
 
-                                // Update total count regardless of whether it's in view
-                                const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length);
-                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
-
                                 // Check if any are in view to decide if we need to filter messages
-                                const shouldFilter = prev.messages.some(m => idsToRemove.includes(m.id));
+                                const inViewCount = prev.messages.filter(m => idsToRemove.includes(m.id)).length;
 
-                                if (!shouldFilter) {
+                                if (inViewCount === 0) {
+                                    // Not in current view, only update total if we're on the affected queue
+                                    const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length);
+                                    const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1;
                                     return {
                                         ...prev,
                                         pagination: {
@@ -779,6 +783,10 @@ export default function Dashboard() {
                                         }
                                     };
                                 }
+
+                                // Update total count based on how many were actually in view
+                                const newTotal = Math.max(0, prev.pagination.total - inViewCount);
+                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1;
 
                                 return {
                                     ...prev,
@@ -809,6 +817,36 @@ export default function Dashboard() {
                                 };
                             });
                         } else {
+                            fetchMessages(true);
+                        }
+                    } else if (type === 'move') {
+                        // Handle move events - messages moved between queues
+                        const { from, to, ids } = payload;
+
+                        // If viewing the source queue, remove the moved messages
+                        if (from === activeTab && ids && ids.length > 0) {
+                            setMessagesData(prev => {
+                                if (!prev) return prev;
+
+                                const idsToRemove = new Set(ids);
+                                const removedCount = prev.messages.filter(m => idsToRemove.has(m.id)).length;
+                                const newTotal = Math.max(0, prev.pagination.total - removedCount);
+                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1;
+
+                                return {
+                                    ...prev,
+                                    messages: prev.messages.filter(m => !idsToRemove.has(m.id)),
+                                    pagination: {
+                                        ...prev.pagination,
+                                        total: newTotal,
+                                        totalPages: newTotalPages
+                                    }
+                                };
+                            });
+                        }
+
+                        // If viewing the destination queue, refresh to see new messages
+                        if (to === activeTab) {
                             fetchMessages(true);
                         }
                     } else {

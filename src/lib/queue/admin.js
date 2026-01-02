@@ -324,7 +324,8 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
   }
 
   if (movedCount > 0) {
-    this.publishEvent('move', { from: fromQueue, to: toQueue, count: movedCount });
+    const movedIds = enrichedMessages.filter(m => m && m.id).map(m => m.id);
+    this.publishEvent('move', { from: fromQueue, to: toQueue, count: movedCount, ids: movedIds });
   }
 
   return movedCount;
@@ -519,7 +520,7 @@ export async function deleteMessages(messageIds, queueType) {
     await pipeline.exec();
 
     if (totalDeleted > 0) {
-      this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted });
+      this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted, queue: queueType });
     }
 
     return totalDeleted;
