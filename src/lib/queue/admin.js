@@ -738,7 +738,11 @@ export async function getQueueMessages(queueType, params = {}) {
     let rawMessages = [];
 
     if (queueType === 'main') {
-        const priorityStreams = this._getAllPriorityStreams();
+        let priorityStreams = this._getAllPriorityStreams();
+        if (filterPriority !== undefined && filterPriority !== '') {
+            const p = parseInt(filterPriority);
+            priorityStreams = [this._getPriorityStreamName(p)];
+        }
 
         const getPendingSafe = async (queueName) => {
             try {
@@ -754,12 +758,12 @@ export async function getQueueMessages(queueType, params = {}) {
         };
 
         const pendingStreamIds = new Set();
-        for (const streamName of priorityStreams) {
-            const pending = await getPendingSafe(streamName);
+        const pendingResults = await Promise.all(priorityStreams.map(name => getPendingSafe(name)));
+        pendingResults.forEach(pending => {
             for (const p of pending) {
                 pendingStreamIds.add(p[0]);
             }
-        }
+        });
         
         const parse = (msgs, name) => msgs.map(([id, fields]) => {
             let json = null;
@@ -769,19 +773,58 @@ export async function getQueueMessages(queueType, params = {}) {
             return m;
         }).filter(Boolean);
 
-        for (const streamName of priorityStreams) {
-            const streamData = await redis.xrange(streamName, "-", "+");
-            rawMessages.push(...parse(streamData, streamName));
-        }
+        // Optimize: Use COUNT to avoid fetching all messages.
+        // If searching or filtering by type/date, we fetch a larger batch but still not everything.
+        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+        const useRev = sortOrder === 'desc';
+        const method = useRev ? 'xrevrange' : 'xrange';
+        const start = useRev ? '+' : '-';
+        const end = useRev ? '-' : '+';
+
+        const streamDataResults = await Promise.all(priorityStreams.map(name => 
+            redis[method](name, start, end, 'COUNT', fetchCount)
+        ));
+        streamDataResults.forEach((streamData, index) => {
+            rawMessages.push(...parse(streamData, priorityStreams[index]));
+        });
 
         if (pendingStreamIds.size > 0) {
             rawMessages = rawMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
         }
 
-        const ids = rawMessages.map(m => m?.id).filter(Boolean);
+        // Apply filters BEFORE loading metadata and sorting for performance
+        let messagesToProcess = rawMessages;
+        if (filterType && filterType !== 'all') {
+            const types = filterType.split(',');
+            messagesToProcess = messagesToProcess.filter(m => types.includes(m.type));
+        }
+        if (filterPriority !== undefined && filterPriority !== '') {
+            messagesToProcess = messagesToProcess.filter(m => m.priority === parseInt(filterPriority));
+        }
+        if (filterAttempts !== undefined && filterAttempts !== '') {
+            messagesToProcess = messagesToProcess.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
+        }
+        if (startDate) {
+            const start = new Date(startDate).getTime() / 1000;
+            messagesToProcess = messagesToProcess.filter(m => m.created_at >= start);
+        }
+        if (endDate) {
+            const end = new Date(endDate).getTime() / 1000;
+            messagesToProcess = messagesToProcess.filter(m => m.created_at <= end);
+        }
+        if (search) {
+            const searchLower = search.toLowerCase();
+            messagesToProcess = messagesToProcess.filter(m => 
+                m.id.toLowerCase().includes(searchLower) ||
+                (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower))
+            );
+        }
+
+        const ids = messagesToProcess.map(m => m?.id).filter(Boolean);
         if (ids.length > 0) {
             const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
-            rawMessages.forEach((m, index) => {
+            messagesToProcess.forEach((m, index) => {
                 const metaStr = metaResults[index];
                 if (!metaStr) return;
                 try {
@@ -793,6 +836,7 @@ export async function getQueueMessages(queueType, params = {}) {
                 } catch (e) {}
             });
         }
+        rawMessages = messagesToProcess;
     } else if (queueType === 'processing') {
         const priorityStreams = this._getAllPriorityStreams();
         
@@ -894,7 +938,14 @@ export async function getQueueMessages(queueType, params = {}) {
         }
 
     } else if (queueType === 'dead') {
-        const stream = await redis.xrange(this.config.dead_letter_queue_name, "-", "+");
+        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+        const useRev = sortOrder === 'desc';
+        const method = useRev ? 'xrevrange' : 'xrange';
+        const start = useRev ? '+' : '-';
+        const end = useRev ? '-' : '+';
+        
+        const stream = await redis[method](this.config.dead_letter_queue_name, start, end, 'COUNT', fetchCount);
         rawMessages = stream.map(([id, fields]) => {
             let json = null;
             for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
@@ -922,7 +973,14 @@ export async function getQueueMessages(queueType, params = {}) {
             });
         }
     } else if (queueType === 'acknowledged') {
-        const stream = await redis.xrange(this.config.acknowledged_queue_name, "-", "+");
+        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+        const useRev = sortOrder === 'desc';
+        const method = useRev ? 'xrevrange' : 'xrange';
+        const start = useRev ? '+' : '-';
+        const end = useRev ? '-' : '+';
+        
+        const stream = await redis[method](this.config.acknowledged_queue_name, start, end, 'COUNT', fetchCount);
         rawMessages = stream.map(([id, fields]) => {
             let json = null;
             for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
@@ -931,7 +989,14 @@ export async function getQueueMessages(queueType, params = {}) {
             return m;
         }).filter(Boolean);
     } else if (queueType === 'archived') {
-        const stream = await redis.xrange(this.config.archived_queue_name, "-", "+");
+        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+        const useRev = sortOrder === 'desc';
+        const method = useRev ? 'xrevrange' : 'xrange';
+        const start = useRev ? '+' : '-';
+        const end = useRev ? '-' : '+';
+        
+        const stream = await redis[method](this.config.archived_queue_name, start, end, 'COUNT', fetchCount);
         rawMessages = stream.map(([id, fields]) => {
             let json = null;
             for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
@@ -964,42 +1029,44 @@ export async function getQueueMessages(queueType, params = {}) {
 
     let messages = rawMessages;
 
-    // Filter
-    if (filterType && filterType !== 'all') {
-        const types = filterType.split(',');
-        messages = messages.filter(m => types.includes(m.type));
-    }
-    if (filterPriority !== undefined && filterPriority !== '') {
-        messages = messages.filter(m => m.priority === parseInt(filterPriority));
-    }
-    if (filterAttempts !== undefined && filterAttempts !== '') {
-        messages = messages.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
-    }
-    if (startDate) {
-        const start = new Date(startDate).getTime() / 1000;
-        messages = messages.filter(m => {
-           const ts = queueType === 'processing' ? m.processing_started_at : 
-                      queueType === 'acknowledged' ? m.acknowledged_at : 
-                      queueType === 'archived' ? m.archived_at : m.created_at;
-           return ts >= start;
-        });
-    }
-    if (endDate) {
-        const end = new Date(endDate).getTime() / 1000;
-        messages = messages.filter(m => {
-           const ts = queueType === 'processing' ? m.processing_started_at : 
-                      queueType === 'acknowledged' ? m.acknowledged_at : 
-                      queueType === 'archived' ? m.archived_at : m.created_at;
-           return ts <= end;
-        });
-    }
-    if (search) {
-        const searchLower = search.toLowerCase();
-        messages = messages.filter(m => 
-            m.id.toLowerCase().includes(searchLower) ||
-            (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)) ||
-            (m.error_message && m.error_message.toLowerCase().includes(searchLower))
-        );
+    // Filter (Skip if already filtered in main queue block)
+    if (queueType !== 'main') {
+        if (filterType && filterType !== 'all') {
+            const types = filterType.split(',');
+            messages = messages.filter(m => types.includes(m.type));
+        }
+        if (filterPriority !== undefined && filterPriority !== '') {
+            messages = messages.filter(m => m.priority === parseInt(filterPriority));
+        }
+        if (filterAttempts !== undefined && filterAttempts !== '') {
+            messages = messages.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
+        }
+        if (startDate) {
+            const start = new Date(startDate).getTime() / 1000;
+            messages = messages.filter(m => {
+            const ts = queueType === 'processing' ? m.processing_started_at : 
+                        queueType === 'acknowledged' ? m.acknowledged_at : 
+                        queueType === 'archived' ? m.archived_at : m.created_at;
+            return ts >= start;
+            });
+        }
+        if (endDate) {
+            const end = new Date(endDate).getTime() / 1000;
+            messages = messages.filter(m => {
+            const ts = queueType === 'processing' ? m.processing_started_at : 
+                        queueType === 'acknowledged' ? m.acknowledged_at : 
+                        queueType === 'archived' ? m.archived_at : m.created_at;
+            return ts <= end;
+            });
+        }
+        if (search) {
+            const searchLower = search.toLowerCase();
+            messages = messages.filter(m => 
+                m.id.toLowerCase().includes(searchLower) ||
+                (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)) ||
+                (m.error_message && m.error_message.toLowerCase().includes(searchLower))
+            );
+        }
     }
 
     // Sort
