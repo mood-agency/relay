@@ -9,7 +9,10 @@ const ScrollArea = React.forwardRef<
     viewportRef?: React.Ref<HTMLDivElement>
     scrollBarClassName?: string
   }
->(({ className, children, viewportRef, onScroll, scrollBarClassName, ...props }, ref) => (
+>(({ className, children, viewportRef, onScroll, scrollBarClassName, ...props }: React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & {
+    viewportRef?: React.Ref<HTMLDivElement>
+    scrollBarClassName?: string
+  }, ref: React.ForwardedRef<React.ElementRef<typeof ScrollAreaPrimitive.Root>>) => (
   <ScrollAreaPrimitive.Root
     ref={ref}
     className={cn("relative overflow-hidden", className)}
@@ -31,7 +34,7 @@ ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName
 const ScrollBar = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>,
   React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>
->(({ className, orientation = "vertical", ...props }, ref) => (
+>(({ className, orientation = "vertical", ...props }: React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>, ref: React.ForwardedRef<React.ElementRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>>) => (
   <ScrollAreaPrimitive.ScrollAreaScrollbar
     ref={ref}
     orientation={orientation}

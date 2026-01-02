@@ -148,7 +148,7 @@ function isOptionsExist(groupOption: GroupOption, targetOption: Option[]) {
 const CommandEmpty = forwardRef<
   HTMLDivElement,
   React.ComponentProps<typeof CommandPrimitive.Empty>
->(({ className, ...props }, forwardedRef) => {
+>(({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Empty>, forwardedRef: React.ForwardedRef<HTMLDivElement>) => {
   const render = useCommandState((state) => state.filtered.count === 0);
 
   if (!render) return null;
