@@ -82,13 +82,24 @@
 
 @keyframes highlight-fade {
   0% {
-    background-color: hsl(var(--primary) / 0.15);
+    opacity: 0.15;
   }
   100% {
-    background-color: transparent;
+    opacity: 0;
   }
 }
 
 .animate-highlight {
-  animation: highlight-fade 2s ease-out;
+  position: relative;
+}
+
+.animate-highlight::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: hsl(var(--primary));
+  animation: highlight-fade 2s ease-out forwards;
+  pointer-events: none;
+  z-index: 1;
+  will-change: opacity;
 }

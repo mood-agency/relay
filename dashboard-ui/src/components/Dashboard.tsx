@@ -306,14 +306,22 @@ export default function Dashboard() {
     const [config, setConfig] = useState<{ ack_timeout_seconds: number; max_attempts: number } | null>(null);
 
     // Selection State
-    const [selectedIds, setSelectedIds] = useState<string[]>([])
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
+    const messagesRef = useRef<Message[]>([])
+
+    const effectiveMessagesData = messagesQueueType === activeTab ? messagesData : null
+    const showMessagesLoading = loadingMessages || (messagesQueueType !== null && messagesQueueType !== activeTab)
+
+    useEffect(() => {
+        messagesRef.current = effectiveMessagesData?.messages ?? []
+    }, [effectiveMessagesData])
     
     // Scroll Reset State
     const [scrollResetKey, setScrollResetKey] = useState(0)
     
     // Highlight State
-    const [highlightedIds, setHighlightedIds] = useState<string[]>([])
+    const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
     
     // Throttling Ref
     const lastStatusFetchRef = useRef(0);
@@ -334,7 +342,7 @@ export default function Dashboard() {
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
     useEffect(() => {
-        setSelectedIds([])
+        setSelectedIds(new Set())
         setLastSelectedId(null)
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
@@ -665,13 +673,6 @@ export default function Dashboard() {
 
                             if (filteredNew.length === 0) return base;
 
-                            // Highlight new messages
-                            const newIds = filteredNew.map((m: Message) => m.id);
-                            setHighlightedIds(prev => [...prev, ...newIds]);
-                            setTimeout(() => {
-                                setHighlightedIds(prev => prev.filter(id => !newIds.includes(id)));
-                            }, 2000);
-
                             // 2. Update Total Count
                             const newTotal = base.pagination.total + filteredNew.length;
                             const newTotalPages = Math.ceil(newTotal / base.pagination.limit);
@@ -708,6 +709,23 @@ export default function Dashboard() {
                             } else {
                                 shouldUpdateRows = true;
                             }
+
+                            // Trigger highlight OUTSIDE of setMessagesData
+                            const newIds = filteredNew.map((m: Message) => m.id);
+                            setTimeout(() => {
+                                setHighlightedIds(prev => {
+                                    const next = new Set(prev);
+                                    newIds.forEach(id => next.add(id));
+                                    return next;
+                                });
+                                setTimeout(() => {
+                                    setHighlightedIds(prev => {
+                                        const next = new Set(prev);
+                                        newIds.forEach(id => next.delete(id));
+                                        return next;
+                                    });
+                                }, 2000);
+                            }, 0);
 
                             if (shouldUpdateRows) {
                                 const combined = [...base.messages, ...filteredNew];
@@ -819,9 +837,6 @@ export default function Dashboard() {
         }
     }, [autoRefresh, fetchAll])
 
-    const effectiveMessagesData = messagesQueueType === activeTab ? messagesData : null
-    const showMessagesLoading = loadingMessages || (messagesQueueType !== null && messagesQueueType !== activeTab)
-
     useEffect(() => {
         writeDashboardStateToUrl({
             queue: activeTab,
@@ -872,7 +887,7 @@ export default function Dashboard() {
         }
     }
 
-    const handleDelete = (id: string, queue: string) => {
+    const handleDelete = useCallback((id: string, queue: string) => {
         setConfirmDialog({
             isOpen: true,
             title: "Delete Message",
@@ -892,9 +907,9 @@ export default function Dashboard() {
                 }
             }
         })
-    }
+    }, [fetchAll])
 
-    const handleClearAll = () => {
+    const handleClearAll = useCallback(() => {
         setConfirmDialog({
             isOpen: true,
             title: "Clear All Queues",
@@ -912,9 +927,9 @@ export default function Dashboard() {
                 }
             }
         })
-    }
+    }, [fetchAll])
 
-    const handleSaveEdit = async (id: string, queueType: string, updates: any) => {
+    const handleSaveEdit = useCallback(async (id: string, queueType: string, updates: any) => {
         try {
             const response = await fetch(`/api/queue/message/${id}?queueType=${queueType}`, {
                 method: 'PUT',
@@ -934,9 +949,9 @@ export default function Dashboard() {
         } catch (err) {
             alert("Failed to update message")
         }
-    }
+    }, [fetchAll])
 
-    const handleCreateMessage = async (data: any) => {
+    const handleCreateMessage = useCallback(async (data: any) => {
         try {
             const response = await fetch('/api/queue/message', {
                 method: 'POST',
@@ -956,12 +971,12 @@ export default function Dashboard() {
         } catch (err) {
             alert("Failed to create message");
         }
-    }
+    }, [fetchAll])
 
-    const handleMoveMessages = async () => {
-        if (!selectedIds.length) return false;
+    const handleMoveMessages = useCallback(async () => {
+        if (!selectedIds.size) return false;
         
-        const selectedMessages = messagesData?.messages.filter(m => selectedIds.includes(m.id)) || [];
+        const selectedMessages = messagesData?.messages.filter(m => selectedIds.has(m.id)) || [];
         if (selectedMessages.length === 0) return false;
 
         try {
@@ -978,9 +993,8 @@ export default function Dashboard() {
             });
             
             if (response.ok) {
-                const res = await response.json();
                 setMoveDialog(prev => ({ ...prev, isOpen: false }));
-                setSelectedIds([]);
+                setSelectedIds(new Set());
                 setDlqReason("")
                 fetchAll();
                 return true;
@@ -993,13 +1007,22 @@ export default function Dashboard() {
             alert("Failed to move messages");
             return false;
         }
-    }
+    }, [selectedIds, messagesData, dlqReason, activeTab, moveDialog.targetQueue, fetchAll])
 
-    const handleToggleSelect = (id: string, shiftKey?: boolean) => {
-        const currentMessages = effectiveMessagesData?.messages ?? []
+    const handleTableDelete = useCallback((id: string) => {
+        handleDelete(id, activeTab)
+    }, [handleDelete, activeTab])
+
+    const handleTableEdit = useCallback((msg: Message) => {
+        setEditDialog({ isOpen: true, message: msg, queueType: activeTab })
+    }, [activeTab])
+
+    const handleToggleSelect = useCallback((id: string, shiftKey?: boolean) => {
+        const currentMessages = messagesRef.current
 
         setSelectedIds(prev => {
-            const isSelected = prev.includes(id)
+            const next = new Set(prev)
+            const isSelected = next.has(id)
 
             if (shiftKey && lastSelectedId && currentMessages.length > 0) {
                 const fromIndex = currentMessages.findIndex(m => m.id === lastSelectedId)
@@ -1012,39 +1035,45 @@ export default function Dashboard() {
                     const shouldSelect = !isSelected
 
                     if (shouldSelect) {
-                        const next = new Set(prev)
                         for (const rangeId of rangeIds) next.add(rangeId)
-                        return Array.from(next)
+                    } else {
+                        for (const rangeId of rangeIds) next.delete(rangeId)
                     }
-
-                    const rangeSet = new Set(rangeIds)
-                    return prev.filter(existingId => !rangeSet.has(existingId))
+                    return next
                 }
             }
 
-            return isSelected ? prev.filter(i => i !== id) : [...prev, id]
+            if (isSelected) {
+                next.delete(id)
+            } else {
+                next.add(id)
+            }
+            return next
         })
 
         setLastSelectedId(id)
-    }
+    }, [lastSelectedId])
 
-    const handleSelectAll = (ids: string[]) => {
-        const allSelected = ids.every(id => selectedIds.includes(id))
-        
-        if (allSelected) {
-            setSelectedIds(prev => prev.filter(id => !ids.includes(id)))
-        } else {
-            const newIds = ids.filter(id => !selectedIds.includes(id))
-            setSelectedIds(prev => [...prev, ...newIds])
-        }
-    }
+    const handleSelectAll = useCallback((ids: string[]) => {
+        setSelectedIds(prev => {
+            const allSelected = ids.every(id => prev.has(id))
+            const next = new Set(prev)
+            
+            if (allSelected) {
+                for (const id of ids) next.delete(id)
+            } else {
+                for (const id of ids) next.add(id)
+            }
+            return next
+        })
+    }, [])
 
     const handleBulkDelete = () => {
-        if (selectedIds.length === 0) return
+        if (selectedIds.size === 0) return
 
         setConfirmDialog({
             isOpen: true,
-            title: `Delete ${selectedIds.length} Messages`,
+            title: `Delete ${selectedIds.size} Messages`,
             description: "Are you sure you want to delete the selected messages? This action cannot be undone.",
             action: async () => {
                 try {
@@ -1053,13 +1082,13 @@ export default function Dashboard() {
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ messageIds: selectedIds }),
+                        body: JSON.stringify({ messageIds: Array.from(selectedIds) }),
                     })
                     
                     if (response.ok) {
                         const json = await response.json()
                         fetchAll()
-                        setSelectedIds([])
+                        setSelectedIds(new Set())
                     } else {
                         const err = await response.json()
                         alert(`Error: ${err.message}`)
@@ -1082,7 +1111,7 @@ export default function Dashboard() {
                         method: 'DELETE',
                     })
                     fetchAll()
-                    setSelectedIds([])
+                    setSelectedIds(new Set())
                 } catch (err) {
                     alert("Failed to clear queue")
                 }
@@ -1142,10 +1171,10 @@ export default function Dashboard() {
         }
     }
 
-    const formatTimestamp = (ts?: number) => {
+    const formatTimestamp = useCallback((ts?: number) => {
         if (!ts) return "N/A"
         return format(new Date(ts * 1000), "dd MMM, yyyy HH:mm:ss.SSS")
-    }
+    }, [])
 
     // Available types for filter dropdown
     const availableTypes = statusData?.availableTypes || []
@@ -1485,7 +1514,7 @@ export default function Dashboard() {
                             </p>
                         </div>
                         <div className="flex items-center gap-2">
-                            {selectedIds.length > 0 && (
+                            {selectedIds.size > 0 && (
                                 <>
                                     <Button
                                         variant="secondary"
@@ -1499,7 +1528,7 @@ export default function Dashboard() {
                                         className="h-8 animate-in fade-in zoom-in duration-200"
                                     >
                                         <Move className="h-3.5 w-3.5 mr-2" />
-                                        Move Selected ({selectedIds.length})
+                                        Move Selected ({selectedIds.size})
                                     </Button>
                                     <Button
                                         variant="destructive"
@@ -1508,7 +1537,7 @@ export default function Dashboard() {
                                         className="h-8 animate-in fade-in zoom-in duration-200"
                                     >
                                         <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                        Delete Selected ({selectedIds.length})
+                                        Delete Selected ({selectedIds.size})
                                     </Button>
                                 </>
                             )}
@@ -1537,8 +1566,8 @@ export default function Dashboard() {
                                 messages={effectiveMessagesData?.messages || []}
                                 queueType={activeTab}
                                 config={config}
-                                onDelete={(id: string) => handleDelete(id, activeTab)}
-                                onEdit={activeTab === 'main' || activeTab === 'processing' ? (msg: Message) => setEditDialog({ isOpen: true, message: msg, queueType: activeTab }) : undefined}
+                                onDelete={handleTableDelete}
+                                onEdit={activeTab === 'main' || activeTab === 'processing' ? handleTableEdit : undefined}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1560,8 +1589,8 @@ export default function Dashboard() {
                             <DeadLetterTable
                                 messages={effectiveMessagesData?.messages || []}
                                 config={config}
-                                onDelete={(id: string) => handleDelete(id, 'dead')}
-                                onEdit={(msg: Message) => setEditDialog({ isOpen: true, message: msg, queueType: 'dead' })}
+                                onDelete={handleTableDelete}
+                                onEdit={handleTableEdit}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1629,7 +1658,7 @@ export default function Dashboard() {
                 }}
                 dlqReason={dlqReason}
                 setDlqReason={setDlqReason}
-                count={selectedIds.length}
+                count={selectedIds.size}
                 currentQueue={activeTab}
             />
 
@@ -1918,7 +1947,117 @@ function useElementHeight(elementRef: { current: HTMLElement | null }) {
     return height
 }
 
-function QueueTable({ 
+const MessageRow = React.memo(({ 
+    msg, 
+    isHighlighted, 
+    isSelected, 
+    queueType, 
+    config, 
+    onDelete, 
+    onEdit, 
+    formatTime, 
+    getTimeValue, 
+    getPriorityBadge, 
+    calculateTimeRemaining,
+    onToggleSelect
+}: {
+    msg: Message,
+    isHighlighted: boolean,
+    isSelected: boolean,
+    queueType: string,
+    config?: { ack_timeout_seconds: number; max_attempts: number } | null,
+    onDelete: (id: string) => void,
+    onEdit?: (message: Message) => void,
+    formatTime: (ts?: number) => string,
+    getTimeValue: (m: Message) => number | undefined,
+    getPriorityBadge: (p: number) => React.ReactNode,
+    calculateTimeRemaining: (m: Message) => React.ReactNode,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void
+}) => {
+    const payloadText = JSON.stringify(msg.payload)
+    return (
+        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
+            <TableCell>
+                <input 
+                    type="checkbox" 
+                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                    checked={isSelected}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        e.stopPropagation()
+                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
+                    }}
+                />
+            </TableCell>
+            <TableCell>
+                <span className="text-xs text-foreground font-mono" title={msg.id}>
+                    {msg.id}
+                </span>
+            </TableCell>
+            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
+            <TableCell className="max-w-[300px]">
+                <div className="truncate text-xs font-mono" title={payloadText}>
+                    {payloadText}
+                </div>
+            </TableCell>
+            <TableCell className="text-xs text-foreground whitespace-nowrap">
+                {formatTime(getTimeValue(msg))}
+            </TableCell>
+            <TableCell>
+                    <span className="text-xs text-foreground pl-4 block">
+                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
+                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                        )}
+                    </span>
+            </TableCell>
+            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
+                <TableCell className="text-xs text-foreground whitespace-nowrap">
+                    {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+                </TableCell>
+            )}
+            {queueType === 'processing' && (
+                <TableCell className="text-xs text-foreground whitespace-nowrap">
+                    {calculateTimeRemaining(msg)}
+                </TableCell>
+            )}
+            <TableCell className="text-right pr-6">
+                <div className="flex justify-end gap-1">
+                    {onEdit && (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation()
+                                onEdit(msg)
+                            }}
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                            title="Edit Message"
+                        >
+                            <Pencil className="h-4 w-4" />
+                        </Button>
+                    )}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation()
+                            onDelete(msg.id)
+                        }}
+                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
+                        title="Delete Message"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                </div>
+            </TableCell>
+        </TableRow>
+    )
+})
+
+const QueueTable = React.memo(({ 
     messages, 
     queueType, 
     config,
@@ -1948,7 +2087,7 @@ function QueueTable({
     formatTime: (ts?: number) => string,
     pageSize: string,
     setPageSize: (size: string) => void,
-    selectedIds: string[],
+    selectedIds: Set<string>,
     onToggleSelect: (id: string, shiftKey?: boolean) => void,
     onToggleSelectAll: (ids: string[]) => void,
     currentPage: number,
@@ -1959,8 +2098,8 @@ function QueueTable({
     sortOrder: string,
     onSort: (field: string) => void,
     scrollResetKey: number,
-    highlightedIds: string[]
-}) {
+    highlightedIds: Set<string>
+}) => {
     // Add state for live updates
     const [currentTime, setCurrentTime] = useState(Date.now())
 
@@ -2000,16 +2139,16 @@ function QueueTable({
         }
     }
 
-    const getTimeValue = (m: Message) => {
+    const getTimeValue = useCallback((m: Message) => {
         switch (queueType) {
             case 'processing': return m.dequeued_at || m.processing_started_at
             case 'acknowledged': return m.acknowledged_at
             case 'archived': return m.archived_at
             default: return m.created_at
         }
-    }
+    }, [queueType])
 
-    const calculateTimeRemaining = (m: Message) => {
+    const calculateTimeRemaining = useCallback((m: Message) => {
         if (queueType !== 'processing' || !config) return null
         
         // Use dequeued_at if available, otherwise fall back to processing_started_at
@@ -2029,15 +2168,15 @@ function QueueTable({
         if (remaining <= 0) return <span className="text-destructive font-medium">Overdue</span>
         
         return <span className="text-primary font-mono">{Math.ceil(remaining)}s</span>
-    }
+    }, [config, currentTime, queueType])
 
-    const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
+    const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
-    const getPriorityBadge = (p: number) => (
+    const getPriorityBadge = useCallback((p: number) => (
         <span className="text-xs text-foreground">
             {p ?? 0}
         </span>
-    )
+    ), [])
 
     const shouldVirtualize = messages.length >= 100
     const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -2114,89 +2253,23 @@ function QueueTable({
                                         <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
-                                {virtual.visibleMessages.map((msg: Message) => {
-                                    const payloadText = JSON.stringify(msg.payload)
-                                    return (
-                                        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
-                                            <TableCell>
-                                                <input 
-                                                    type="checkbox" 
-                                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
-                                                    checked={selectedIds.includes(msg.id)}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                        e.stopPropagation()
-                                                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
-                                                    }}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <span className="text-xs text-foreground font-mono" title={msg.id}>
-                                                    {msg.id}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
-                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-                                            <TableCell className="max-w-[300px]">
-                                                <div className="truncate text-xs font-mono" title={payloadText}>
-                                                    {payloadText}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                {formatTime(getTimeValue(msg))}
-                                            </TableCell>
-                                            <TableCell>
-                                                    <span className="text-xs text-foreground pl-4 block">
-                                                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
-                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                                                        )}
-                                                    </span>
-                                            </TableCell>
-                                            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
-                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                    {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                                </TableCell>
-                                            )}
-                                            {queueType === 'processing' && (
-                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                    {calculateTimeRemaining(msg)}
-                                                </TableCell>
-                                            )}
-                                            <TableCell className="text-right pr-6">
-                                                <div className="flex justify-end gap-1">
-                                                    {onEdit && (
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            onClick={(e: React.MouseEvent) => {
-                                                                e.stopPropagation()
-                                                                onEdit(msg)
-                                                            }}
-                                                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                                                            title="Edit Message"
-                                                        >
-                                                            <Pencil className="h-4 w-4" />
-                                                        </Button>
-                                                    )}
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={(e: React.MouseEvent) => {
-                                                            e.stopPropagation()
-                                                            onDelete(msg.id)
-                                                        }}
-                                                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                                                        title="Delete Message"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    )
-                                })}
+                                {virtual.visibleMessages.map((msg: Message) => (
+                                    <MessageRow 
+                                    key={msg.id}
+                                    msg={msg}
+                                    isHighlighted={highlightedIds.has(msg.id)}
+                                    isSelected={selectedIds.has(msg.id)}
+                                    queueType={queueType}
+                                        config={config}
+                                        onDelete={onDelete}
+                                        onEdit={onEdit}
+                                        formatTime={formatTime}
+                                        getTimeValue={getTimeValue}
+                                        getPriorityBadge={getPriorityBadge}
+                                        calculateTimeRemaining={calculateTimeRemaining}
+                                        onToggleSelect={onToggleSelect}
+                                    />
+                                ))}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
                                         <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
@@ -2204,89 +2277,23 @@ function QueueTable({
                                 )}
                             </>
                         ) : (
-                            messages.map((msg: Message) => {
-                                const payloadText = JSON.stringify(msg.payload)
-                                return (
-                                <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
-                                    <TableCell>
-                                        <input 
-                                            type="checkbox" 
-                                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
-                                            checked={selectedIds.includes(msg.id)}
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                e.stopPropagation()
-                                                onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
-                                            }}
-                                        />
-                                    </TableCell>
-                                    <TableCell>
-                                                <span className="text-xs text-foreground font-mono" title={msg.id}>
-                                                    {msg.id}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
-                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-                                            <TableCell className="max-w-[300px]">
-                                                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
-                                                    {payloadText}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                {formatTime(getTimeValue(msg))}
-                                            </TableCell>
-                                            <TableCell>
-                                                    <span className="text-xs text-foreground pl-4 block">
-                                                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
-                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                                                        )}
-                                                    </span>
-                                            </TableCell>
-                                            {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
-                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                    {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                                </TableCell>
-                                            )}
-                                            {queueType === 'processing' && (
-                                                <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                    {calculateTimeRemaining(msg)}
-                                                </TableCell>
-                                            )}
-                                    <TableCell className="text-right pr-6">
-                                        <div className="flex justify-end gap-1">
-                                            {onEdit && (
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={(e: React.MouseEvent) => {
-                                                        e.stopPropagation()
-                                                        onEdit(msg)
-                                                    }}
-                                                    className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                                                    title="Edit Message"
-                                                >
-                                                    <Pencil className="h-4 w-4" />
-                                                </Button>
-                                            )}
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={(e: React.MouseEvent) => {
-                                                    e.stopPropagation()
-                                                    onDelete(msg.id)
-                                                }}
-                                                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                                                title="Delete Message"
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                                )
-                            })
+                            messages.map((msg: Message) => (
+                                <MessageRow 
+                                    key={msg.id}
+                                    msg={msg}
+                                    isHighlighted={highlightedIds.has(msg.id)}
+                                    isSelected={selectedIds.has(msg.id)}
+                                    queueType={queueType}
+                                    config={config}
+                                    onDelete={onDelete}
+                                    onEdit={onEdit}
+                                    formatTime={formatTime}
+                                    getTimeValue={getTimeValue}
+                                    getPriorityBadge={getPriorityBadge}
+                                    calculateTimeRemaining={calculateTimeRemaining}
+                                    onToggleSelect={onToggleSelect}
+                                />
+                            ))
                         )}
                     </TableBody>
                 </Table>
@@ -2303,7 +2310,7 @@ function QueueTable({
             )}
         </div>
     )
-}
+})
 
 function EditMessageDialog({
     isOpen,
@@ -2629,7 +2636,108 @@ function CreateMessageDialog({
     );
 }
 
-function DeadLetterTable({ 
+const DeadLetterRow = React.memo(({
+    msg,
+    isHighlighted,
+    isSelected,
+    config,
+    onDelete,
+    onEdit,
+    formatTime,
+    getPriorityBadge,
+    onToggleSelect
+}: {
+    msg: Message,
+    isHighlighted: boolean,
+    isSelected: boolean,
+    config?: { ack_timeout_seconds: number; max_attempts: number } | null,
+    onDelete: (id: string) => void,
+    onEdit?: (message: Message) => void,
+    formatTime: (ts?: number) => string,
+    getPriorityBadge: (p: number) => React.ReactNode,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void
+}) => {
+    const payloadText = JSON.stringify(msg.payload)
+    const errorText = msg.error_message || msg.last_error || "Unknown error"
+    return (
+        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
+            <TableCell>
+                <input 
+                    type="checkbox" 
+                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                    checked={isSelected}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        e.stopPropagation()
+                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
+                    }}
+                />
+            </TableCell>
+            <TableCell>
+                <span className="text-xs text-foreground font-mono">
+                    {msg.id}
+                </span>
+            </TableCell>
+            <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
+            <TableCell className="max-w-[300px]">
+                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
+                    {payloadText}
+                </div>
+            </TableCell>
+            <TableCell className="text-xs text-foreground whitespace-nowrap">
+                {formatTime(msg.failed_at || msg.processing_started_at)}
+            </TableCell>
+            <TableCell>
+                <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
+                    {errorText}
+                </div>
+            </TableCell>
+            <TableCell>
+                <span className="text-xs text-foreground pl-4 block">
+                    {msg.attempt_count || 1}
+                    {config?.max_attempts && <span className="text-muted-foreground"> / {config.max_attempts}</span>}
+                </span>
+            </TableCell>
+            <TableCell className="text-xs text-foreground whitespace-nowrap">
+                {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
+            </TableCell>
+            <TableCell className="text-right pr-6">
+                <div className="flex justify-end gap-1">
+                    {onEdit && (
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation()
+                                onEdit(msg)
+                            }}
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                            title="Edit Message"
+                        >
+                            <Pencil className="h-4 w-4" />
+                        </Button>
+                    )}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation()
+                            onDelete(msg.id)
+                        }}
+                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
+                        title="Delete Message"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                </div>
+            </TableCell>
+        </TableRow>
+    )
+})
+
+const DeadLetterTable = React.memo(({ 
     messages, 
     config,
     onDelete, 
@@ -2655,10 +2763,10 @@ function DeadLetterTable({
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
     formatTime: (ts?: number) => string,
-    pageSize: string,
-    setPageSize: (size: string) => void,
-    selectedIds: string[],
-    onToggleSelect: (id: string, shiftKey?: boolean) => void,
+    pageSize: string, 
+    setPageSize: (size: string) => void, 
+    selectedIds: Set<string>, 
+    onToggleSelect: (id: string, shiftKey?: boolean) => void, 
     onToggleSelectAll: (ids: string[]) => void,
     currentPage: number,
     setCurrentPage: (page: number) => void,
@@ -2668,15 +2776,15 @@ function DeadLetterTable({
     sortOrder: string,
     onSort: (field: string) => void,
     scrollResetKey: number,
-    highlightedIds: string[]
-}) {
-    const allSelected = messages.length > 0 && messages.every(msg => selectedIds.includes(msg.id))
+    highlightedIds: Set<string>
+}) => {
+    const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
-    const getPriorityBadge = (p: number) => (
+    const getPriorityBadge = useCallback((p: number) => (
         <span className="text-xs text-foreground">
             {p ?? 0}
         </span>
-    )
+    ), [])
 
     const shouldVirtualize = messages.length >= 100
     const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -2754,86 +2862,20 @@ function DeadLetterTable({
                                         <TableCell colSpan={10} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
-                                {virtual.visibleMessages.map((msg: Message) => {
-                                    const payloadText = JSON.stringify(msg.payload)
-                                    const errorText = msg.error_message || msg.last_error || "Unknown error"
-                                    return (
-                                        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
-                                            <TableCell>
-                                                <input 
-                                                    type="checkbox" 
-                                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
-                                                    checked={selectedIds.includes(msg.id)}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                        e.stopPropagation()
-                                                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
-                                                    }}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <span className="text-xs text-foreground font-mono">
-                                                    {msg.id}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
-                                            <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-                                            <TableCell className="max-w-[300px]">
-                                                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
-                                                    {payloadText}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                {formatTime(msg.failed_at || msg.processing_started_at)}
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
-                                                    {errorText}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <span className="text-xs text-foreground pl-4 block">
-                                                    {msg.attempt_count || 1}
-                                                    {config?.max_attempts && <span className="text-muted-foreground"> / {config.max_attempts}</span>}
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                            </TableCell>
-                                            <TableCell className="text-right pr-6">
-                                                <div className="flex justify-end gap-1">
-                                                    {onEdit && (
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            onClick={(e: React.MouseEvent) => {
-                                                                e.stopPropagation()
-                                                                onEdit(msg)
-                                                            }}
-                                                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                                                            title="Edit Message"
-                                                        >
-                                                            <Pencil className="h-4 w-4" />
-                                                        </Button>
-                                                    )}
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={(e: React.MouseEvent) => {
-                                                            e.stopPropagation()
-                                                            onDelete(msg.id)
-                                                        }}
-                                                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                                                        title="Delete Message"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    )
-                                })}
+                                {virtual.visibleMessages.map((msg: Message) => (
+                                    <DeadLetterRow 
+                                        key={msg.id}
+                                        msg={msg}
+                                        isHighlighted={highlightedIds.has(msg.id)}
+                                        isSelected={selectedIds.has(msg.id)}
+                                        config={config}
+                                        onDelete={onDelete}
+                                        onEdit={onEdit}
+                                        formatTime={formatTime}
+                                        getPriorityBadge={getPriorityBadge}
+                                        onToggleSelect={onToggleSelect}
+                                    />
+                                ))}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
                                         <TableCell colSpan={10} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
@@ -2841,88 +2883,20 @@ function DeadLetterTable({
                                 )}
                             </>
                         ) : (
-                            messages.map((msg: Message) => {
-                                const payloadText = JSON.stringify(msg.payload)
-                                const errorText = msg.error_message || msg.last_error || "Unknown error"
-                                return (
-                                <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
-                                    <TableCell>
-                                        <input 
-                                            type="checkbox" 
-                                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
-                                            checked={selectedIds.includes(msg.id)}
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                e.stopPropagation()
-                                                onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
-                                            }}
-                                        />
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="text-xs text-foreground font-mono">
-                                            {msg.id}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
-                                    <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-                                    <TableCell className="max-w-[300px]">
-                                        <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
-                                            {payloadText}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                        {formatTime(msg.failed_at || msg.processing_started_at)}
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
-                                            {errorText}
-                                        </div>
-                                    </TableCell>
-                                            <TableCell>
-                                                    <span className="text-xs text-foreground pl-4 block">
-                                                        {msg.attempt_count || 1}
-                                                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                                                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                                                        )}
-                                                    </span>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                                                {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
-                                            </TableCell>
-                                            <TableCell className="text-right pr-6">
-                                                <div className="flex justify-end gap-1">
-                                                    {onEdit && (
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onClick={(e: React.MouseEvent) => {
-                                                        e.stopPropagation()
-                                                        onEdit(msg)
-                                                    }}
-                                                    className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                                                    title="Edit Message"
-                                                >
-                                                    <Pencil className="h-4 w-4" />
-                                                </Button>
-                                            )}
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={(e: React.MouseEvent) => {
-                                                    e.stopPropagation()
-                                                    onDelete(msg.id)
-                                                }}
-                                                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                                                title="Delete Message"
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                                )
-                            })
+                            messages.map((msg: Message) => (
+                                <DeadLetterRow 
+                                    key={msg.id}
+                                    msg={msg}
+                                    isHighlighted={highlightedIds.has(msg.id)}
+                                    isSelected={selectedIds.has(msg.id)}
+                                    config={config}
+                                    onDelete={onDelete}
+                                    onEdit={onEdit}
+                                    formatTime={formatTime}
+                                    getPriorityBadge={getPriorityBadge}
+                                    onToggleSelect={onToggleSelect}
+                                />
+                            ))
                         )}
                     </TableBody>
                 </Table>
@@ -2939,4 +2913,4 @@ function DeadLetterTable({
             )}
         </div>
     )
-}
+})
