@@ -380,10 +380,10 @@ Most queues are "black boxes": you push a message and hope it works. This API sh
 
 ### Dashboard Features
 
-- **📊 Real-time statistics**: queued, processing, dead, acknowledged + totals
+- **📊 Real-time statistics**: queued, processing, dead, acknowledged, archived
 - **🧭 Server-side pagination & sorting**: browse large queues without loading everything
 - **🧪 Safe operations via API**: actions go through validation instead of raw Redis edits
-- **🔄 Auto-refresh**: updates every 5 seconds
+- **🔄 Real-time updates**: instant refreshes via Server-Sent Events (SSE)
 
 ### Why this beats generic Redis tools
 
@@ -477,7 +477,7 @@ MAX_PRIORITY_LEVELS=10  # Number of priority levels (0 to N-1)
 
 ### Don't Compete on Features
 
-We won't beat BullMQ on plugins/UI. We won't beat Kafka on throughput. We won't beat RabbitMQ on routing complexity.
+We won't beat BullMQ on plugins. We won't beat Kafka on throughput. We won't beat RabbitMQ on routing complexity.
 
 ### Compete on Flexibility
 

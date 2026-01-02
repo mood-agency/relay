@@ -323,6 +323,7 @@ export default function Dashboard() {
 
     // Active Tab Ref (for race condition handling)
     const activeTabRef = useRef(activeTab)
+    const prevAutoRefreshRef = useRef(autoRefresh)
     useEffect(() => {
         activeTabRef.current = activeTab
     }, [activeTab])
@@ -838,7 +839,15 @@ export default function Dashboard() {
     }, [activeTab, currentPage, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate, writeDashboardStateToUrl])
 
     useEffect(() => {
-        fetchAll()
+        // When autoRefresh is turned off, we don't want to refresh the table.
+        // We only want to refresh if autoRefresh is turned on OR if other dependencies (filters) change.
+        const justTurnedOff = prevAutoRefreshRef.current && !autoRefresh
+        
+        if (!justTurnedOff) {
+            fetchAll()
+        }
+        
+        prevAutoRefreshRef.current = autoRefresh
     }, [autoRefresh, fetchAll])
 
     const handleRefresh = () => {

@@ -235,7 +235,7 @@ class QueueTester {
             console.log(`   - Main Queue: Queued messages`);
             console.log(`   - Processing: In-flight messages`);
             console.log(`   - Acknowledged: Successfully processed messages`);
-            console.log(`🔄 The dashboard will auto-refresh every 5 seconds`);
+            console.log(`⚡ The dashboard updates in real-time via SSE`);
         }
 
         console.log(`\n💡 Tips:`);
