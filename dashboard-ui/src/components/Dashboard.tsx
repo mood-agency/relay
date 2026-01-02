@@ -802,7 +802,7 @@ export default function Dashboard() {
                 }
             })
 
-            eventSource.onerror = (err) => {
+            eventSource.onerror = (err: Event) => {
                 console.error("SSE Error:", err)
                 // If SSE fails, fallback to polling
                 if (eventSource.readyState === EventSource.CLOSED) {
@@ -1338,7 +1338,7 @@ export default function Dashboard() {
                                         <input
                                             placeholder="Search ID, payload..."
                                             value={search}
-                                            onChange={(e) => setSearch(e.target.value)}
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
                                             className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                         />
                                     </div>
@@ -1353,7 +1353,7 @@ export default function Dashboard() {
                                                 ? [] 
                                                 : filterType.split(",").map(t => ({ label: t, value: t }))
                                         }
-                                        onChange={(selected) => {
+                                        onChange={(selected: Option[]) => {
                                             if (selected.length === 0) {
                                                 setFilterType("all");
                                             } else {
@@ -1537,8 +1537,8 @@ export default function Dashboard() {
                                 messages={effectiveMessagesData?.messages || []}
                                 queueType={activeTab}
                                 config={config}
-                                onDelete={(id) => handleDelete(id, activeTab)}
-                                onEdit={activeTab === 'main' || activeTab === 'processing' ? (msg) => setEditDialog({ isOpen: true, message: msg, queueType: activeTab }) : undefined}
+                                onDelete={(id: string) => handleDelete(id, activeTab)}
+                                onEdit={activeTab === 'main' || activeTab === 'processing' ? (msg: Message) => setEditDialog({ isOpen: true, message: msg, queueType: activeTab }) : undefined}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1560,8 +1560,8 @@ export default function Dashboard() {
                             <DeadLetterTable
                                 messages={effectiveMessagesData?.messages || []}
                                 config={config}
-                                onDelete={(id) => handleDelete(id, 'dead')}
-                                onEdit={(msg) => setEditDialog({ isOpen: true, message: msg, queueType: 'dead' })}
+                                onDelete={(id: string) => handleDelete(id, 'dead')}
+                                onEdit={(msg: Message) => setEditDialog({ isOpen: true, message: msg, queueType: 'dead' })}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1583,7 +1583,7 @@ export default function Dashboard() {
                 </div>
             </div>
 
-            <Dialog open={confirmDialog.isOpen} onOpenChange={(open) => setConfirmDialog(prev => ({ ...prev, isOpen: open }))}>
+            <Dialog open={confirmDialog.isOpen} onOpenChange={(open: boolean) => setConfirmDialog(prev => ({ ...prev, isOpen: open }))}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>{confirmDialog.title}</DialogTitle>
@@ -1623,7 +1623,7 @@ export default function Dashboard() {
                 }}
                 onConfirm={handleMoveMessages}
                 targetQueue={moveDialog.targetQueue}
-                setTargetQueue={(q) => {
+                setTargetQueue={(q: string) => {
                     setMoveDialog(prev => ({ ...prev, targetQueue: q }))
                     if (q !== "dead") setDlqReason("")
                 }}
@@ -1696,7 +1696,7 @@ function MoveMessageDialog({
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && !isSubmitting && onClose()}>
+        <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && !isSubmitting && onClose()}>
             <DialogContent>
                 <DialogHeader>
                     <DialogTitle>Move Messages</DialogTitle>
@@ -1728,7 +1728,7 @@ function MoveMessageDialog({
                             <textarea
                                 id="dlqReason"
                                 value={dlqReason}
-                                onChange={(e) => setDlqReason(e.target.value)}
+                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDlqReason(e.target.value)}
                                 placeholder="Why are you moving these messages to DLQ?"
                                 className="col-span-3 flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             />
@@ -1808,7 +1808,7 @@ function PaginationFooter({
                         <SelectValue placeholder={pageSize} />
                     </SelectTrigger>
                     <SelectContent side="top">
-                        {[25, 50, 100, 250, 500, 1000].map((pageSize) => (
+                        {[25, 50, 100, 250, 500, 1000].map((pageSize: number) => (
                             <SelectItem key={pageSize} value={`${pageSize}`}>
                                 {pageSize}
                             </SelectItem>
@@ -2076,7 +2076,7 @@ function QueueTable({
                 viewportRef={scrollContainerRef}
                 className="relative flex-1 min-h-0"
                 scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
-                onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+                onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <Table>
                     <TableHeader>
@@ -2086,7 +2086,7 @@ function QueueTable({
                                     type="checkbox" 
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                     checked={allSelected}
-                                    onChange={() => onToggleSelectAll(messages.map(m => m.id))}
+                                    onChange={() => onToggleSelectAll(messages.map((m: Message) => m.id))}
                                 />
                             </TableHead>
                             <SortableHeader label="ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
@@ -2114,7 +2114,7 @@ function QueueTable({
                                         <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
-                                {virtual.visibleMessages.map((msg) => {
+                                {virtual.visibleMessages.map((msg: Message) => {
                                     const payloadText = JSON.stringify(msg.payload)
                                     return (
                                         <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
@@ -2204,7 +2204,7 @@ function QueueTable({
                                 )}
                             </>
                         ) : (
-                            messages.map((msg) => {
+                            messages.map((msg: Message) => {
                                 const payloadText = JSON.stringify(msg.payload)
                                 return (
                                 <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", highlightedIds.includes(msg.id) && "animate-highlight")}>
@@ -2366,7 +2366,7 @@ function EditMessageDialog({
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                     <DialogTitle>Edit Message</DialogTitle>
@@ -2397,7 +2397,7 @@ function EditMessageDialog({
                                 id="ackTimeout"
                                 type="number"
                                 value={customAckTimeout}
-                                onChange={(e) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
                                 className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             />
                         </div>
@@ -2410,7 +2410,7 @@ function EditMessageDialog({
                                 <input
                                     id="type"
                                     value={type}
-                                    onChange={(e) => setType(e.target.value)}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setType(e.target.value)}
                                     className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             </div>
@@ -2422,7 +2422,7 @@ function EditMessageDialog({
                                     id="priority"
                                     type="number"
                                     value={priority}
-                                    onChange={(e) => setPriority(Number(e.target.value))}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriority(Number(e.target.value))}
                                     className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             </div>
@@ -2433,7 +2433,7 @@ function EditMessageDialog({
                                 <textarea
                                     id="payload"
                                     value={payload}
-                                    onChange={(e) => setPayload(e.target.value)}
+                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
                                     className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
                                 />
                             </div>
@@ -2523,7 +2523,7 @@ function CreateMessageDialog({
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                     <DialogTitle>Create New Message</DialogTitle>
@@ -2539,7 +2539,7 @@ function CreateMessageDialog({
                         <input
                             id="create-type"
                             value={type}
-                            onChange={(e) => setType(e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setType(e.target.value)}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             placeholder="default"
                         />
@@ -2548,7 +2548,7 @@ function CreateMessageDialog({
                         <label htmlFor="create-queue" className="text-right text-sm font-medium">
                             Queue
                         </label>
-                        <Select value={queue || "main"} onValueChange={(val) => setQueue(val === "main" ? "" : val)}>
+                        <Select value={queue || "main"} onValueChange={(val: string) => setQueue(val === "main" ? "" : val)}>
                             <SelectTrigger className="col-span-3" id="create-queue">
                                 <SelectValue placeholder="Select queue" />
                             </SelectTrigger>
@@ -2567,7 +2567,7 @@ function CreateMessageDialog({
                             id="create-priority"
                             type="number"
                             value={priority}
-                            onChange={(e) => setPriority(Number(e.target.value))}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriority(Number(e.target.value))}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                         />
                     </div>
@@ -2579,7 +2579,7 @@ function CreateMessageDialog({
                             id="create-ackTimeout"
                             type="number"
                             value={ackTimeout}
-                            onChange={(e) => setAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             placeholder="Optional"
                         />
@@ -2594,7 +2594,7 @@ function CreateMessageDialog({
                             min={1}
                             step={1}
                             value={maxAttempts}
-                            onChange={(e) => setMaxAttempts(e.target.value === "" ? "" : Number(e.target.value))}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxAttempts(e.target.value === "" ? "" : Number(e.target.value))}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             placeholder="Optional"
                         />
@@ -2606,7 +2606,7 @@ function CreateMessageDialog({
                         <textarea
                             id="create-payload"
                             value={payload}
-                            onChange={(e) => setPayload(e.target.value)}
+                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
                             className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
                         />
                     </div>
@@ -2715,7 +2715,7 @@ function DeadLetterTable({
                 viewportRef={scrollContainerRef}
                 className="relative flex-1 min-h-0"
                 scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
-                onScroll={shouldVirtualize ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+                onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <Table>
                     <TableHeader>
@@ -2754,7 +2754,7 @@ function DeadLetterTable({
                                         <TableCell colSpan={10} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
-                                {virtual.visibleMessages.map((msg) => {
+                                {virtual.visibleMessages.map((msg: Message) => {
                                     const payloadText = JSON.stringify(msg.payload)
                                     const errorText = msg.error_message || msg.last_error || "Unknown error"
                                     return (
@@ -2841,7 +2841,7 @@ function DeadLetterTable({
                                 )}
                             </>
                         ) : (
-                            messages.map((msg) => {
+                            messages.map((msg: Message) => {
                                 const payloadText = JSON.stringify(msg.payload)
                                 const errorText = msg.error_message || msg.last_error || "Unknown error"
                                 return (
