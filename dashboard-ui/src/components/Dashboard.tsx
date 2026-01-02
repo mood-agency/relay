@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
     RefreshCw,
     Play,
@@ -1375,7 +1375,7 @@ export default function Dashboard() {
                                         step="1"
                                         placeholder="Any"
                                         value={filterPriority}
-                                        onChange={(e) => {
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                             const val = e.target.value;
                                             if (val === "" || /^-?\d+$/.test(val)) {
                                                 setFilterPriority(val);
@@ -1393,7 +1393,7 @@ export default function Dashboard() {
                                         step="1"
                                         placeholder="Any"
                                         value={filterAttempts}
-                                        onChange={(e) => {
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                             const val = e.target.value;
                                             if (val === "" || /^\d+$/.test(val)) {
                                                 setFilterAttempts(val);
@@ -1764,7 +1764,7 @@ function NavButton({ active, href, onClick, icon: Icon, label, count, variant = 
         >
             <a
                 href={href}
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                     if (!onClick) return
                     e.preventDefault()
                     onClick()
@@ -2123,7 +2123,7 @@ function QueueTable({
                                                     type="checkbox" 
                                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                                     checked={selectedIds.includes(msg.id)}
-                                                    onChange={(e) => {
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                                         e.stopPropagation()
                                                         onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                                     }}
@@ -2259,7 +2259,7 @@ function QueueTable({
                                                     type="button"
                                                     variant="ghost"
                                                     size="icon"
-                                                    onClick={(e) => {
+                                                    onClick={(e: React.MouseEvent) => {
                                                         e.stopPropagation()
                                                         onEdit(msg)
                                                     }}
@@ -2273,7 +2273,7 @@ function QueueTable({
                                                 type="button"
                                                 variant="ghost"
                                                 size="icon"
-                                                onClick={(e) => {
+                                                onClick={(e: React.MouseEvent) => {
                                                     e.stopPropagation()
                                                     onDelete(msg.id)
                                                 }}
@@ -2764,7 +2764,7 @@ function DeadLetterTable({
                                                     type="checkbox" 
                                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                                     checked={selectedIds.includes(msg.id)}
-                                                    onChange={(e) => {
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                                         e.stopPropagation()
                                                         onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                                     }}
@@ -2851,7 +2851,7 @@ function DeadLetterTable({
                                             type="checkbox" 
                                             className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                             checked={selectedIds.includes(msg.id)}
-                                            onChange={(e) => {
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                                 e.stopPropagation()
                                                 onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                             }}
@@ -2895,7 +2895,7 @@ function DeadLetterTable({
                                                     type="button"
                                                     variant="ghost"
                                                     size="icon"
-                                                    onClick={(e) => {
+                                                    onClick={(e: React.MouseEvent) => {
                                                         e.stopPropagation()
                                                         onEdit(msg)
                                                     }}
@@ -2909,7 +2909,7 @@ function DeadLetterTable({
                                                 type="button"
                                                 variant="ghost"
                                                 size="icon"
-                                                onClick={(e) => {
+                                                onClick={(e: React.MouseEvent) => {
                                                     e.stopPropagation()
                                                     onDelete(msg.id)
                                                 }}
