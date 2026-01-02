@@ -949,10 +949,10 @@ export default function Dashboard() {
     }
 
     const handleMoveMessages = async () => {
-        if (!selectedIds.length) return;
+        if (!selectedIds.length) return false;
         
         const selectedMessages = messagesData?.messages.filter(m => selectedIds.includes(m.id)) || [];
-        if (selectedMessages.length === 0) return;
+        if (selectedMessages.length === 0) return false;
 
         try {
             const reason = dlqReason.trim()
@@ -973,12 +973,15 @@ export default function Dashboard() {
                 setSelectedIds([]);
                 setDlqReason("")
                 fetchAll();
+                return true;
             } else {
                 const err = await response.json();
                 alert(`Error: ${err.message}`);
+                return false;
             }
         } catch (e) {
             alert("Failed to move messages");
+            return false;
         }
     }
 
@@ -1644,7 +1647,7 @@ function MoveMessageDialog({
 }: {
     isOpen: boolean;
     onClose: () => void;
-    onConfirm: () => Promise<void>;
+    onConfirm: () => Promise<boolean>;
     targetQueue: string;
     setTargetQueue: (q: string) => void;
     dlqReason: string;
@@ -1652,6 +1655,12 @@ function MoveMessageDialog({
     count: number;
     currentQueue: string;
 }) {
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) setIsSubmitting(false);
+    }, [isOpen]);
+
     const allQueues = [
         { value: "main", label: "Main Queue" },
         { value: "processing", label: "Processing Queue" },
@@ -1663,8 +1672,21 @@ function MoveMessageDialog({
     // Filter out the current queue from available options
     const availableQueues = allQueues.filter(q => q.value !== currentQueue);
 
+    const handleConfirm = async () => {
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const success = await onConfirm();
+            if (!success) {
+                setIsSubmitting(false);
+            }
+        } catch (e) {
+            setIsSubmitting(false);
+        }
+    };
+
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <Dialog open={isOpen} onOpenChange={(open) => !open && !isSubmitting && onClose()}>
             <DialogContent>
                 <DialogHeader>
                     <DialogTitle>Move Messages</DialogTitle>
@@ -1704,8 +1726,11 @@ function MoveMessageDialog({
                     )}
                 </div>
                 <DialogFooter>
-                    <Button variant="outline" onClick={onClose}>Cancel</Button>
-                    <Button onClick={onConfirm}>Move Messages</Button>
+                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+                    <Button onClick={handleConfirm} disabled={isSubmitting}>
+                        {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Move Messages
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
