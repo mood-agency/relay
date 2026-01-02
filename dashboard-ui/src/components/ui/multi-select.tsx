@@ -149,7 +149,7 @@ const CommandEmpty = forwardRef<
   HTMLDivElement,
   React.ComponentProps<typeof CommandPrimitive.Empty>
 >(({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Empty>, forwardedRef: React.ForwardedRef<HTMLDivElement>) => {
-  const render = useCommandState((state) => state.filtered.count === 0);
+  const render = useCommandState((state: any) => state.filtered.count === 0);
 
   if (!render) return null;
 
@@ -233,7 +233,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
 
     const handleUnselect = React.useCallback(
       (option: Option) => {
-        const newOptions = selected.filter((s) => s.value !== option.value);
+        const newOptions = selected.filter((s: Option) => s.value !== option.value);
         setSelected(newOptions);
         onChange?.(newOptions);
       },
@@ -348,7 +348,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
       if (!creatable) return undefined;
       if (
         isOptionsExist(options, [{ value: inputValue, label: inputValue }]) ||
-        selected.find((s) => s.value === inputValue)
+        selected.find((s: Option) => s.value === inputValue)
       ) {
         return undefined;
       }
@@ -357,7 +357,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
         <CommandItem
           value={inputValue}
           className="cursor-pointer"
-          onMouseDown={(e) => {
+          onMouseDown={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
           }}
@@ -428,7 +428,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
       <Command
         ref={dropdownRef}
         {...commandProps}
-        onKeyDown={(e) => {
+        onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
           handleKeyDown(e);
           commandProps?.onKeyDown?.(e);
         }}
@@ -452,7 +452,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
           }}
         >
           <div className="relative flex flex-wrap gap-1 flex-1 items-center">
-            {selected.map((option) => {
+            {selected.map((option: Option) => {
               return (
                 <Badge
                   key={option.value}
@@ -471,12 +471,12 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
                       'ml-1 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2',
                       (disabled || option.fixed) && 'hidden',
                     )}
-                    onKeyDown={(e) => {
+                    onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
                       if (e.key === 'Enter') {
                         handleUnselect(option);
                       }
                     }}
-                    onMouseDown={(e) => {
+                    onMouseDown={(e: React.MouseEvent<HTMLButtonElement>) => {
                       e.preventDefault();
                       e.stopPropagation();
                     }}
@@ -493,17 +493,17 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
               ref={inputRef}
               value={inputValue}
               disabled={disabled}
-              onValueChange={(value) => {
+              onValueChange={(value: string) => {
                 setInputValue(value);
                 inputProps?.onValueChange?.(value);
               }}
-              onBlur={(event) => {
+              onBlur={(event: React.FocusEvent<HTMLInputElement>) => {
                 if (!onScrollbar) {
                   setOpen(false);
                 }
                 inputProps?.onBlur?.(event);
               }}
-              onFocus={(event) => {
+              onFocus={(event: React.FocusEvent<HTMLInputElement>) => {
                 setOpen(true);
                 inputProps?.onFocus?.(event);
               }}
@@ -570,13 +570,13 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
                   {Object.entries(selectables).map(([key, dropdowns]) => (
                     <CommandGroup key={key} heading={key} className="h-full overflow-auto">
                       <>
-                        {dropdowns.map((option) => {
+                        {dropdowns.map((option: Option) => {
                           return (
                             <CommandItem
                               key={option.value}
                               value={option.label}
                               disabled={option.disable}
-                              onMouseDown={(e) => {
+                              onMouseDown={(e: React.MouseEvent) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                               }}
