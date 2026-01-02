@@ -1842,14 +1842,14 @@ class OptimizedRedisQueue {
       pipeline.xlen(this.config.archived_queue_name);
       pipeline.get(this.config.total_acknowledged_key);
 
-      // Get queue contents (limited to 100 items each) for all priority streams
+      // Get queue contents (limited to 1000 items each) for all priority streams
       if (includeMessages) {
         for (const stream of priorityStreams) {
-          pipeline.xrevrange(stream, "+", "-", "COUNT", 100);
+          pipeline.xrevrange(stream, "+", "-", "COUNT", 1000);
         }
-        pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 100);
-        pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 100);
-        pipeline.xrevrange(this.config.archived_queue_name, "+", "-", "COUNT", 100);
+        pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 1000);
+        pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 1000);
+        pipeline.xrevrange(this.config.archived_queue_name, "+", "-", "COUNT", 1000);
       }
 
       // Get metadata
@@ -2140,7 +2140,7 @@ class OptimizedRedisQueue {
 
           const getPendingSafe = async (queueName) => {
               try {
-                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 1000);
+                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
                   return Array.isArray(res) ? res : [];
               } catch (e) {
                   const msg = e.message || '';
@@ -2198,7 +2198,7 @@ class OptimizedRedisQueue {
           
           const getPendingSafe = async (queueName) => {
               try {
-                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 1000);
+                  const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
                   return Array.isArray(res) ? res : [];
               } catch (e) {
                   const msg = e.message || '';
@@ -2378,7 +2378,8 @@ class OptimizedRedisQueue {
 
       // Filter
       if (filterType && filterType !== 'all') {
-          messages = messages.filter(m => m.type === filterType);
+          const types = filterType.split(',');
+          messages = messages.filter(m => types.includes(m.type));
       }
       if (filterPriority !== undefined && filterPriority !== '') {
           messages = messages.filter(m => m.priority === parseInt(filterPriority));

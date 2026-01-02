@@ -239,8 +239,8 @@ export const getQueueStatus: AppRouteHandler<GetQueueStatusRoute> = async (c: an
     const includeMessages = include_messages !== "false";
     const status = await queue.getQueueStatus(null, includeMessages);
     return c.json(status, 200);
-  } catch (error) {
-    return c.json({ message: "Failed to get queue status" }, 500);
+  } catch (error: any) {
+    return c.json({ message: `Failed to get queue status: ${error.message || error}` }, 500);
   }
 };
 

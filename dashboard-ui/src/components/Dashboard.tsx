@@ -31,8 +31,14 @@ import {
 
 import { format } from "date-fns"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
+import MultipleSelector, { Option } from "@/components/ui/multi-select"
 
 import { Button } from "@/components/ui/button"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { Card, CardContent } from "@/components/ui/card"
 import {
     Table,
@@ -347,7 +353,16 @@ export default function Dashboard() {
     const fetchStatus = useCallback(async (includeMessages = true) => {
         try {
             const response = await fetch(`/api/queue/status${!includeMessages ? '?include_messages=false' : ''}`)
-            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+            if (!response.ok) {
+                let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorJson = await response.json();
+                    if (errorJson && errorJson.message) {
+                        errorMsg += ` - ${errorJson.message}`;
+                    }
+                } catch (e) { /* ignore */ }
+                throw new Error(errorMsg)
+            }
             const json = await response.json()
             
             if (includeMessages) {
@@ -398,7 +413,16 @@ export default function Dashboard() {
             if (search) params.append('search', search)
 
             const response = await fetch(`/api/queue/${currentTab}/messages?${params.toString()}`)
-            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+            if (!response.ok) {
+                let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorJson = await response.json();
+                    if (errorJson && errorJson.message) {
+                        errorMsg += ` - ${errorJson.message}`;
+                    }
+                } catch (e) { /* ignore */ }
+                throw new Error(errorMsg)
+            }
             const json = await response.json()
             
             // Check for stale response
@@ -610,7 +634,10 @@ export default function Dashboard() {
                                 if (base.messages.some(existing => existing.id === m.id)) return false;
 
                                 // Filter Type
-                                if (filterType && filterType !== 'all' && m.type !== filterType) return false;
+                                if (filterType && filterType !== 'all') {
+                                    const types = filterType.split(',');
+                                    if (!types.includes(m.type)) return false;
+                                }
                                 
                                 // Filter Priority
                                 if (filterPriority && m.priority !== parseInt(filterPriority)) return false;
@@ -1134,67 +1161,103 @@ export default function Dashboard() {
                     <div className="space-y-6">
                         {/* Actions */}
                         <div className="flex items-center gap-1 px-2">
-                            <Button
-                                onClick={() => setCreateDialog(true)}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="Create Message"
-                                aria-label="Create Message"
-                            >
-                                <Plus className="h-3.5 w-3.5" />
-                            </Button>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={() => setCreateDialog(true)}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="Create Message"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Create Message</p>
+                                </TooltipContent>
+                            </Tooltip>
                             
-                            <Button
-                                onClick={handleRefresh}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="Refresh"
-                                aria-label="Refresh"
-                            >
-                                <RefreshCw className={cn("h-3.5 w-3.5", (loadingMessages || loadingStatus) && "animate-spin")} />
-                            </Button>
-                            <Button
-                                onClick={handleToggleAutoRefresh}
-                                variant="ghost"
-                                size="icon"
-                                className={cn("h-8 w-8", autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
-                                title={autoRefresh ? "Auto refresh on" : "Auto refresh off"}
-                                aria-label={autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
-                            >
-                                {autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                            </Button>
-                            <Button
-                                onClick={() => fileInputRef.current?.click()}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="Import Messages"
-                                aria-label="Import Messages"
-                            >
-                                <Upload className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                                onClick={handleExport}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title="Export Messages"
-                                aria-label="Export Messages"
-                            >
-                                <Download className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                                onClick={handleClearAll}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                title="Clear all queues"
-                                aria-label="Clear all queues"
-                            >
-                                <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={handleRefresh}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="Refresh"
+                                    >
+                                        <RefreshCw className={cn("h-3.5 w-3.5", (loadingMessages || loadingStatus) && "animate-spin")} />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Refresh</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={handleToggleAutoRefresh}
+                                        variant="ghost"
+                                        size="icon"
+                                        className={cn("h-8 w-8", autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
+                                        aria-label={autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
+                                    >
+                                        {autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>{autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="Import Messages"
+                                    >
+                                        <Upload className="h-3.5 w-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Import Messages</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={handleExport}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="Export Messages"
+                                    >
+                                        <Download className="h-3.5 w-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Export Messages</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={handleClearAll}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                        aria-label="Clear all queues"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Clear all queues</p>
+                                </TooltipContent>
+                            </Tooltip>
                         </div>
 
                         <div className="h-px bg-border/50" />
@@ -1270,15 +1333,26 @@ export default function Dashboard() {
 
                                 <div className="space-y-2">
                                     <label className="text-xs font-medium text-foreground/80">Message Type</label>
-                                    <Select value={filterType} onValueChange={setFilterType}>
-                                        <SelectTrigger className="w-full">
-                                            <SelectValue placeholder="All Types" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="all">All Types</SelectItem>
-                                            {availableTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                                        </SelectContent>
-                                    </Select>
+                                    <MultipleSelector
+                                        defaultOptions={availableTypes.map(t => ({ label: t, value: t }))}
+                                        value={
+                                            filterType === "all" || !filterType 
+                                                ? [] 
+                                                : filterType.split(",").map(t => ({ label: t, value: t }))
+                                        }
+                                        onChange={(selected) => {
+                                            if (selected.length === 0) {
+                                                setFilterType("all");
+                                            } else {
+                                                setFilterType(selected.map(s => s.value).join(","));
+                                            }
+                                        }}
+                                        hideClearAllButton
+                                        badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
+                                        emptyIndicator={
+                                            <p className="text-center text-sm text-muted-foreground">No types found</p>
+                                        }
+                                    />
                                 </div>
 
                                 <div className="space-y-2">

@@ -1,8 +1,8 @@
-# Redis Queue API
+# Relay
 
 > **A lightweight, language-agnostic message broker built on native Redis Streams.**
 
-Most queue libraries lock you into a specific language ecosystem. This library provides a standard protocol over Redis Streams, allowing you to produce messages in one language (e.g., Node.js API) and consume them in another (e.g., Python/Go Worker) with zero friction. It handles the heavy lifting of Consumer Groups, Acknowledgments, and Dead Letter Queues (DLQ) without the bloat.
+Most queue libraries lock you into a specific language ecosystem. Relay provides a standard protocol over Redis Streams, allowing you to produce messages in one language (e.g., Node.js API) and consume them in another (e.g., Python/Go Worker) with zero friction. It handles the heavy lifting of Consumer Groups, Acknowledgments, and Dead Letter Queues (DLQ) without the bloat.
 
 ---
 
@@ -10,13 +10,13 @@ Most queue libraries lock you into a specific language ecosystem. This library p
 
 **The Problem:** Existing queue libraries are excellent within their own language (BullMQ for Node, Celery for Python, Sidekiq for Ruby), but they make it very hard to mix languages. If you want a Node.js API to send jobs to a Python AI worker, those libraries are painful.
 
-**This Solution:** This library provides a **REST API** built on Native Redis Streams. Any language that can make HTTP requests can produce or consume messages—no language-specific SDKs required. Your Node.js API sends messages via HTTP, your Python worker consumes via HTTP, your Go service monitors via HTTP. Simple, standard, and truly polyglot.
+**This Solution:** Relay provides a **REST API** built on Native Redis Streams. Any language that can make HTTP requests can produce or consume messages—no language-specific SDKs required. Your Node.js API sends messages via HTTP, your Python worker consumes via HTTP, your Go service monitors via HTTP. Simple, standard, and truly polyglot.
 
 ---
 
 ## 📊 How It Compares
 
-| Feature | This Library | BullMQ / Sidekiq / Celery | Raw Redis Lists (RPOP) |
+| Feature | Relay | BullMQ / Sidekiq / Celery | Raw Redis Lists (RPOP) |
 |---------|-------------|---------------------------|------------------------|
 | **Primary Goal** | Polyglot Compatibility | Language-Specific Features | Basic FIFO Queue |
 | **Architecture** | Redis Streams (Consumer Groups) | Proprietary Lua Scripts / Lists | Simple Lists |
@@ -34,13 +34,13 @@ Most queue libraries lock you into a specific language ecosystem. This library p
 
 **The Problem with them:** These are "heavy" frameworks. If you use BullMQ, your workers must be Node.js. If you want a Python worker, you have to find a Python port of BullMQ (which might be outdated) or rewrite your worker.
 
-**This Solution:** This library uses Native Redis Streams under the hood. It doesn't use custom Lua scripts that hide logic. This means a producer in Go and a worker in Python see the exact same standard Redis data, accessed through a simple REST API.
+**This Solution:** Relay uses Native Redis Streams under the hood. It doesn't use custom Lua scripts that hide logic. This means a producer in Go and a worker in Python see the exact same standard Redis data, accessed through a simple REST API.
 
 ### vs. RabbitMQ / Kafka
 
 **The Problem with them:** They require setting up entirely new infrastructure. They are complex to maintain and often overkill for simple use cases.
 
-**This Solution:** You probably already have Redis. This library gives you Kafka-like reliability (Consumer Groups, Replay, Acknowledgements) using your existing Redis instance.
+**This Solution:** You probably already have Redis. Relay gives you Kafka-like reliability (Consumer Groups, Replay, Acknowledgements) using your existing Redis instance.
 
 ### vs. Raw Redis (LPUSH/RPOP)
 
@@ -170,14 +170,16 @@ func main() {
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/mood-agency/redis-queue-api.git
-cd redis-queue-api
+git clone https://github.com/mood-agency/relay.git
+cd relay
 ```
 
 2. Install dependencies:
 
 ```bash
 pnpm install
+# or
+bun install
 ```
 
 3. Start a Redis instance (Docker recommended):
@@ -256,7 +258,7 @@ curl -X POST http://localhost:3000/api/queue/ack \
 
 ## 🏗️ Architecture Overview
 
-This Redis Queue API implements a **reliable message queue system** using **Redis Streams** to ensure message durability, at-least-once delivery, and consumer groups for scaling.
+Relay implements a **reliable message queue system** using **Redis Streams** to ensure message durability, at-least-once delivery, and consumer groups for scaling.
 
 ### Redis Data Structures
 
@@ -458,11 +460,16 @@ MAX_PRIORITY_LEVELS=10  # Number of priority levels (0 to N-1)
 ## 📝 Available Scripts
 
 - `pnpm run dev` - Starts the application in development mode with hot-reloading
+- `bun run dev:bun` - Starts the application with Bun (development mode)
 - `pnpm run build` - Compiles the TypeScript code
 - `pnpm start` - Builds and starts the application in production mode
+- `bun run start:bun` - Starts the application with Bun (production mode)
 - `pnpm test` - Runs the test suite
+- `bun run test:bun` - Runs tests with Bun
 - `pnpm dashboard:dev` - Starts the dashboard UI in development mode
+- `bun run dashboard:dev:bun` - Starts the dashboard UI with Bun
 - `pnpm dashboard:build` - Builds the dashboard UI for production
+- `bun run dashboard:build:bun` - Builds the dashboard UI with Bun
 
 ---
 

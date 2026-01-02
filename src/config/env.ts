@@ -10,7 +10,7 @@ export const EnvSchema = z.object({
     .enum(["development", "production", "local", "test"])
     .default("development"),
   APP_URL: z.string().optional().default("http://localhost"),
-  PORT: z.coerce.number().default(3000),
+  PORT: z.coerce.number().default(3001),
 
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])

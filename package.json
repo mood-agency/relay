@@ -1,15 +1,20 @@
 {
-  "name": "redis-queue-api",
+  "name": "relay",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:bun": "bun --watch src/index.ts",
     "build": "tsc",
     "start": "npm run build && tsx dist/index.js",
+    "start:bun": "bun src/index.ts",
     "test": "vitest",
+    "test:bun": "bun test",
     "dashboard:dev": "pnpm --filter dashboard-ui dev",
-    "dashboard:build": "pnpm --filter dashboard-ui build"
+    "dashboard:dev:bun": "bun run --cwd dashboard-ui dev",
+    "dashboard:build": "pnpm --filter dashboard-ui build",
+    "dashboard:build:bun": "bun run --cwd dashboard-ui build"
   },
   "keywords": [],
   "author": "",

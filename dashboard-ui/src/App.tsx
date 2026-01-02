@@ -1,10 +1,13 @@
 import Dashboard from './components/Dashboard'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 function App() {
     return (
-        <div className="min-h-screen bg-background">
-            <Dashboard />
-        </div>
+        <TooltipProvider>
+            <div className="min-h-screen bg-background">
+                <Dashboard />
+            </div>
+        </TooltipProvider>
     )
 }
 
