@@ -2,7 +2,7 @@
   "name": "relay",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:all": "concurrently \"pnpm run dev\" \"pnpm run dashboard:dev\"",
