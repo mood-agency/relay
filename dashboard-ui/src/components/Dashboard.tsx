@@ -2169,7 +2169,7 @@ function QueueTable({
                                                             type="button"
                                                             variant="ghost"
                                                             size="icon"
-                                                            onClick={(e) => {
+                                                            onClick={(e: React.MouseEvent) => {
                                                                 e.stopPropagation()
                                                                 onEdit(msg)
                                                             }}
@@ -2183,7 +2183,7 @@ function QueueTable({
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={(e) => {
+                                                        onClick={(e: React.MouseEvent) => {
                                                             e.stopPropagation()
                                                             onDelete(msg.id)
                                                         }}
@@ -2213,7 +2213,7 @@ function QueueTable({
                                             type="checkbox" 
                                             className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                             checked={selectedIds.includes(msg.id)}
-                                            onChange={(e) => {
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                                 e.stopPropagation()
                                                 onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                             }}
@@ -2806,7 +2806,7 @@ function DeadLetterTable({
                                                             type="button"
                                                             variant="ghost"
                                                             size="icon"
-                                                            onClick={(e) => {
+                                                            onClick={(e: React.MouseEvent) => {
                                                                 e.stopPropagation()
                                                                 onEdit(msg)
                                                             }}
@@ -2820,7 +2820,7 @@ function DeadLetterTable({
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={(e) => {
+                                                        onClick={(e: React.MouseEvent) => {
                                                             e.stopPropagation()
                                                             onDelete(msg.id)
                                                         }}
