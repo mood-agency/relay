@@ -1023,7 +1023,8 @@ class OptimizedRedisQueue {
     return msg;
   }
 
-  async moveMessages(messages, fromQueue, toQueue) {
+  async moveMessages(messages, fromQueue, toQueue, options = {}) {
+    const errorReason = typeof options?.errorReason === "string" ? options.errorReason.trim() : "";
     const uniqueMessages = [];
     const seenIds = new Set();
     for (const msg of messages || []) {
@@ -1127,7 +1128,7 @@ class OptimizedRedisQueue {
             newMsg.acknowledged_at = Date.now() / 1000;
         } else if (toQueue === 'dead') {
              newMsg.failed_at = Date.now() / 1000;
-             newMsg.last_error = newMsg.last_error || "Manually moved to DLQ";
+             newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to DLQ";
         }
 
         const msgJson = this._serializeMessage(newMsg);
@@ -1835,6 +1836,9 @@ class OptimizedRedisQueue {
       
       // Get Processing (Pending) for all priority streams
       for (const stream of priorityStreams) {
+        pipeline.xpending(stream, this.config.consumer_group_name);
+      }
+      for (const stream of priorityStreams) {
         pipeline.xpending(stream, this.config.consumer_group_name, "-", "+", 100);
       }
 
@@ -1854,7 +1858,8 @@ class OptimizedRedisQueue {
       let deadMessages = [];
       let acknowledgedMessages = [];
       let metadata = {};
-      let pendingStartIdx;
+      let pendingSummaryStartIdx;
+      let pendingDetailStartIdx;
 
       // Helper to parse Stream messages
       const parseStreamMessages = (rawMessages, streamName) => {
@@ -1894,18 +1899,27 @@ class OptimizedRedisQueue {
           deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
           acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
 
-          pendingStartIdx = contentStartIdx + priorityCount + 3;
+          pendingSummaryStartIdx = contentStartIdx + priorityCount + 3;
+          pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
       } else {
           metadata = results[priorityCount + 3][1];
-          pendingStartIdx = priorityCount + 4;
+          pendingSummaryStartIdx = priorityCount + 4;
+          pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
       }
 
       // Processing messages from all priority streams
       const processingMessages = [];
       const pendingToCheck = [];
+      let totalProcessingCount = 0;
 
       for (let i = 0; i < priorityCount; i++) {
-        const pendingResult = results[pendingStartIdx + i][1];
+        const pendingSummary = results[pendingSummaryStartIdx + i];
+        if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
+          const pendingCount = Number(pendingSummary[1][0] || 0);
+          if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
+        }
+
+        const pendingResult = results[pendingDetailStartIdx + i][1];
         const pending = Array.isArray(pendingResult) ? pendingResult : [];
         const streamName = priorityStreams[i];
         const priority = priorityCount - 1 - i; // Convert index to priority
@@ -2000,12 +2014,37 @@ class OptimizedRedisQueue {
 
       // Filter out messages from mainQueue that are present in processingQueue
       // This prevents "duplication" in the UI status since processing messages are technically still in the stream (mainQueue)
-      if (includeMessages && processingMessages.length > 0) {
-        const processingStreamIds = new Set(processingMessages.map(m => m._stream_id));
-        mainMessages = mainMessages.filter(m => !processingStreamIds.has(m._stream_id));
+      if (includeMessages && mainMessages.length > 0) {
+        const checkPipeline = redis.pipeline();
+        const checkTargets = [];
+        for (const m of mainMessages) {
+          if (!m?._stream_id || !m?._stream_name) continue;
+          checkTargets.push({ streamName: m._stream_name, streamId: m._stream_id });
+          checkPipeline.xpending(
+            m._stream_name,
+            this.config.consumer_group_name,
+            m._stream_id,
+            m._stream_id,
+            1
+          );
+        }
+
+        if (checkTargets.length > 0) {
+          const checkResults = await checkPipeline.exec();
+          const pendingStreamIds = new Set();
+          checkTargets.forEach((t, idx) => {
+            const res = checkResults[idx];
+            if (res && !res[0] && Array.isArray(res[1]) && res[1].length > 0) {
+              pendingStreamIds.add(t.streamId);
+            }
+          });
+          if (pendingStreamIds.size > 0) {
+            mainMessages = mainMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
+          }
+        }
       }
 
-      const processingLength = includeMessages ? processingMessages.length : pendingToCheck.length;
+      const processingLength = totalProcessingCount;
 
       // Adjust main queue length to reflect only waiting messages
       const waitingLength = Math.max(0, totalMainLen - processingLength);
@@ -2142,13 +2181,11 @@ class OptimizedRedisQueue {
 
           // Collect pending from all priority streams
           const allPending = [];
-          const streamPendingMap = new Map(); // Map stream ID to stream name
           
           for (const streamName of priorityStreams) {
               const pending = await getPendingSafe(streamName);
               for (const p of pending) {
-                  allPending.push(p);
-                  streamPendingMap.set(p[0], streamName);
+                  allPending.push({ pending: p, streamName });
               }
           }
           
@@ -2157,9 +2194,10 @@ class OptimizedRedisQueue {
           } else {
               // Fetch full message data for all pending
               const pipeline = redis.pipeline();
-              for (const p of allPending) {
-                  const streamName = streamPendingMap.get(p[0]);
-                  pipeline.xrange(streamName, p[0], p[0]);
+              for (const item of allPending) {
+                  const streamName = item.streamName;
+                  const msgId = item.pending?.[0];
+                  pipeline.xrange(streamName, msgId, msgId);
               }
               
               const results = await pipeline.exec();
@@ -2173,12 +2211,13 @@ class OptimizedRedisQueue {
                       for(let j=0; j<fields.length; j+=2) if(fields[j]==='data') json=fields[j+1];
                       const m = this._deserializeMessage(json);
                       
-                      const pendingInfo = allPending[i];
+                      const pendingInfo = allPending[i]?.pending;
+                      const streamName = allPending[i]?.streamName;
                       const idleTime = pendingInfo ? pendingInfo[2] : 0;
 
                       if(m) { 
                           m._stream_id = id; 
-                          m._stream_name = streamPendingMap.get(id);
+                          m._stream_name = streamName;
                           // Calculate dequeued_at from idle time for accurate timeout calculation
                           m.dequeued_at = (Date.now() - idleTime) / 1000;
                           if (!m.processing_started_at) m.processing_started_at = m.dequeued_at;
@@ -2196,7 +2235,12 @@ class OptimizedRedisQueue {
                       
                       // Create a map for pending info for fast lookup
                       const pendingMap = new Map();
-                      allPending.forEach(p => pendingMap.set(p[0], { idle: p[2], count: p[3] }));
+                      allPending.forEach(item => {
+                        const p = item.pending;
+                        const streamName = item.streamName;
+                        if (!p || !streamName) return;
+                        pendingMap.set(`${streamName}|${p[0]}`, { idle: p[2], count: p[3] });
+                      });
 
                       messagesWithIds.forEach((m, index) => {
                           const metaRes = metaResults[index];
@@ -2213,7 +2257,7 @@ class OptimizedRedisQueue {
                                   // ignore
                               }
                           } else {
-                              const pendingInfo = pendingMap.get(m._stream_id);
+                              const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
                               if (pendingInfo) {
                                   m.attempt_count = pendingInfo.count;
                                   m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;

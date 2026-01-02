@@ -70,7 +70,8 @@ class QueueTester {
             try {
                 // Random ackTimeout between 30 and 120 seconds
                 const ackTimeout = Math.floor(Math.random() * (120 - 30 + 1)) + 30;
-                const response = await fetch(`${this.apiBase}/queue/message?timeout=1&ackTimeout=${ackTimeout}`);
+                console.log(`Requesting AckTimeout: ${ackTimeout}s`);
+                const response = await fetch(`${this.apiBase}/queue/message`);
                 if (response.status === 200) {
                     const message = (await response.json()) as any;
                     console.log(
@@ -213,16 +214,16 @@ class QueueTester {
         // Check initial status
         await this.checkQueueStatus();
 
-        // Move some messages to DLQ (demo)
+        // // Move some messages to DLQ (demo)
         await this.moveSomeMessagesToDeadLetter(2);
 
         // Dequeue some messages
-        const dequeued = await this.dequeueSomeMessages(5);
+        const dequeued = await this.dequeueSomeMessages(2);
 
-        // Acknowledge some messages
-        if (dequeued && dequeued.length > 0) {
-            await this.acknowledgeSomeMessages(dequeued.slice(0, 3)); // Acknowledge 3 of 5
-        }
+        // // Acknowledge some messages
+        // if (dequeued && dequeued.length > 0) {
+        //     await this.acknowledgeSomeMessages(dequeued.slice(0, 3)); // Acknowledge 3 of 5
+        // }
 
         // Check status after dequeuing
         await this.checkQueueStatus();

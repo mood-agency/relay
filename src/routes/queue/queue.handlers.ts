@@ -255,8 +255,8 @@ export const getMessages: AppRouteHandler<GetMessagesRoute> = async (c: any) => 
 
 export const moveMessages: AppRouteHandler<MoveMessagesRoute> = async (c: any) => {
   try {
-    const { messages, fromQueue, toQueue } = c.req.valid("json");
-    const movedCount = await queue.moveMessages(messages, fromQueue, toQueue);
+    const { messages, fromQueue, toQueue, errorReason } = c.req.valid("json");
+    const movedCount = await queue.moveMessages(messages, fromQueue, toQueue, { errorReason });
     return c.json(
       { message: `${movedCount} messages moved successfully`, movedCount },
       200

@@ -312,6 +312,7 @@ export const moveMessages = createRoute({
         messages: z.array(z.any()),
         fromQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
         toQueue: z.enum(["main", "processing", "dead", "acknowledged"]),
+        errorReason: z.string().max(2000).optional(),
       }),
       "Move Messages Request"
     ),

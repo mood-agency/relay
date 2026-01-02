@@ -237,6 +237,35 @@ describe('Queue Routes - Integration Tests', () => {
       expect(inProcessing).toBe(true);
     }, 15000);
 
+    it('should store errorReason as last_error when moving to DLQ', async () => {
+      await testClient(router).queue.message.$post({ json: { type: 'dlq-reason', payload: { n: 1 } } });
+
+      const mainListRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(mainListRes.status).toBe(200);
+      const mainList = await mainListRes.json() as any;
+      const selected = (mainList.messages || []).find((m: any) => m.type === 'dlq-reason');
+      expect(selected).toBeTruthy();
+
+      const errorReason = "Invalid payload schema";
+      const moveRes = await testClient(router).queue.move.$post({
+        json: { messages: [selected], fromQueue: 'main', toQueue: 'dead', errorReason }
+      });
+      expect(moveRes.status).toBe(200);
+
+      const deadRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'dead' },
+        query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(deadRes.status).toBe(200);
+      const deadList = await deadRes.json() as any;
+      const deadMsg = (deadList.messages || []).find((m: any) => m.id === selected.id);
+      expect(deadMsg).toBeTruthy();
+      expect(deadMsg.last_error).toBe(errorReason);
+    }, 15000);
+
     it('should enrich DLQ messages with attempt_count from metadata after manual move', async () => {
       await testClient(router).queue.message.$post({ json: { type: 'dlq-meta', payload: { n: 1 } } });
 
@@ -689,10 +718,82 @@ describe('Queue Routes - Integration Tests', () => {
       const status = await statusRes.json();
       expect(status.processingQueue.length).toBe(1);
     });
+
+    it('should not show processing messages in main when processing exceeds 100', async () => {
+      for (let i = 0; i < 150; i++) {
+        await testClient(router).queue.message.$post({ json: { type: 'bulk-processing', payload: { i } } });
+      }
+
+      const listRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { page: '1', limit: '200', sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(listRes.status).toBe(200);
+      const list = await listRes.json() as any;
+      const messages = (list.messages || []).filter((m: any) => m.type === 'bulk-processing');
+      expect(messages.length).toBe(150);
+
+      const moveRes = await testClient(router).queue.move.$post({
+        json: { messages, fromQueue: 'main', toQueue: 'processing' }
+      });
+      expect(moveRes.status).toBe(200);
+
+      const statusRes = await testClient(router).queue.status.$get();
+      expect(statusRes.status).toBe(200);
+      const status = await statusRes.json() as any;
+
+      expect(status.processingQueue.length).toBe(150);
+      expect(status.mainQueue.length).toBe(0);
+
+      const mainTypes = (status.mainQueue.messages || []).map((m: any) => m.type);
+      expect(mainTypes).not.toContain('bulk-processing');
+    }, 30000);
   });
 
   // Robustness Tests
   describe('Robustness Tests - Retry and DLQ', () => {
+    it('should return processing messages even if stream IDs collide across streams', async () => {
+        const redis = queue.redisManager.redis;
+        const group = (queue.config as any).consumer_group_name;
+        const consumer = (queue.config as any).consumer_name;
+
+        const streamA = (queue as any)._getPriorityStreamName(0) as string;
+        const streamB = (queue as any)._getManualStreamName() as string;
+
+        await redis.xgroup('CREATE', streamA, group, '0', 'MKSTREAM').catch(() => {});
+        await redis.xgroup('CREATE', streamB, group, '0', 'MKSTREAM').catch(() => {});
+
+        const now = Date.now() / 1000;
+        const streamId = '1-0';
+
+        await redis.xadd(streamA, streamId, 'data', JSON.stringify({
+          id: 'collision-a',
+          type: 'collision-test',
+          payload: { from: 'A' },
+          created_at: now,
+          priority: 0
+        }));
+        await redis.xadd(streamB, streamId, 'data', JSON.stringify({
+          id: 'collision-b',
+          type: 'collision-test',
+          payload: { from: 'B' },
+          created_at: now,
+          priority: 0
+        }));
+
+        await redis.xreadgroup('GROUP', group, consumer, 'COUNT', 10, 'STREAMS', streamA, streamB, '>', '>');
+
+        const res = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'processing' },
+          query: { page: '1', limit: '50', sortBy: 'created_at', sortOrder: 'desc' }
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json() as any;
+        const ids = (body.messages || []).map((m: any) => m.id);
+        expect(ids).toContain('collision-a');
+        expect(ids).toContain('collision-b');
+    }, 15000);
+
     it('should not duplicate messages when requeue runs concurrently', async () => {
         const originalTimeout = queue.config.ack_timeout_seconds;
         const originalMaxAttempts = queue.config.max_attempts;
@@ -739,6 +840,59 @@ describe('Queue Routes - Integration Tests', () => {
         } finally {
             (queue.config as any).ack_timeout_seconds = originalTimeout;
             (queue.config as any).max_attempts = originalMaxAttempts;
+        }
+    }, 15000);
+
+    it('should not duplicate messages when two queue instances requeue concurrently', async () => {
+        const originalTimeout = queue.config.ack_timeout_seconds;
+        const originalMaxAttempts = queue.config.max_attempts;
+
+        (queue.config as any).ack_timeout_seconds = 1;
+        (queue.config as any).max_attempts = 10;
+
+        const queue2 = new OptimizedRedisQueue(testConfig);
+        (queue2.config as any).ack_timeout_seconds = 1;
+        (queue2.config as any).max_attempts = 10;
+
+        try {
+            await queue.enqueueMessage({ type: 'multi-instance-requeue', payload: { a: 1 } });
+
+            const msg1 = await queue.dequeueMessage(1, 1);
+            expect(msg1).not.toBeNull();
+            expect(msg1?.id).toBeTruthy();
+
+            await new Promise(resolve => setTimeout(resolve, 1100));
+
+            const results = await Promise.all([
+              queue.requeueFailedMessages(),
+              queue2.requeueFailedMessages(),
+            ]);
+            expect(results.reduce((a, b) => a + b, 0)).toBe(1);
+
+            const streams = (queue as any)._getAllPriorityStreams() as string[];
+            let occurrences = 0;
+
+            for (const streamName of streams) {
+              const entries = await queue.redisManager.redis.xrange(streamName, '-', '+');
+              for (const [, fields] of entries) {
+                let json: string | null = null;
+                for (let i = 0; i < fields.length; i += 2) {
+                  if (fields[i] === 'data') {
+                    json = fields[i + 1] as any;
+                    break;
+                  }
+                }
+                if (!json) continue;
+                const parsed = (queue as any)._deserializeMessage(json) as any;
+                if (parsed?.id === msg1?.id) occurrences++;
+              }
+            }
+
+            expect(occurrences).toBe(1);
+        } finally {
+            (queue.config as any).ack_timeout_seconds = originalTimeout;
+            (queue.config as any).max_attempts = originalMaxAttempts;
+            await queue2.redisManager.disconnect();
         }
     }, 15000);
 

@@ -156,6 +156,8 @@ export default function Dashboard() {
         targetQueue: "main",
     });
 
+    const [dlqReason, setDlqReason] = useState("")
+
     const [createDialog, setCreateDialog] = useState(false);
 
     // System Status (Counts)
@@ -164,6 +166,7 @@ export default function Dashboard() {
     
     // Table Data (Server-side)
     const [messagesData, setMessagesData] = useState<MessagesResponse | null>(null)
+    const [messagesQueueType, setMessagesQueueType] = useState<QueueTab | null>(null)
     const [loadingMessages, setLoadingMessages] = useState(false)
 
     const [error, setError] = useState<string | null>(null)
@@ -281,6 +284,7 @@ export default function Dashboard() {
 
     // Selection State
     const [selectedIds, setSelectedIds] = useState<string[]>([])
+    const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
     
     // Scroll Reset State
     const [scrollResetKey, setScrollResetKey] = useState(0)
@@ -295,6 +299,7 @@ export default function Dashboard() {
 
     useEffect(() => {
         setSelectedIds([])
+        setLastSelectedId(null)
     }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
 
     // Fetch Config
@@ -346,7 +351,9 @@ export default function Dashboard() {
 
     // Fetch Messages (Table Data)
     const fetchMessages = useCallback(async (silent = false) => {
+        setMessagesQueueType(activeTab)
         if (!silent) setLoadingMessages(true)
+        if (!silent) setMessagesData(null)
         try {
             const params = new URLSearchParams()
             params.append('page', currentPage.toString())
@@ -451,6 +458,7 @@ export default function Dashboard() {
             setEndDate(next.endDate)
             setSearch(next.search)
             setSelectedIds([])
+            setLastSelectedId(null)
         }
 
         window.addEventListener("popstate", onPopState)
@@ -462,6 +470,7 @@ export default function Dashboard() {
     const navigateToTab = useCallback((tab: QueueTab) => {
         setActiveTab(tab)
         setSelectedIds([])
+        setLastSelectedId(null)
         setCurrentPage(1)
         writeDashboardStateToUrl({
             queue: tab,
@@ -724,6 +733,9 @@ export default function Dashboard() {
         }
     }, [autoRefresh, fetchAll])
 
+    const effectiveMessagesData = messagesQueueType === activeTab ? messagesData : null
+    const showMessagesLoading = loadingMessages || (messagesQueueType !== null && messagesQueueType !== activeTab)
+
     useEffect(() => {
         writeDashboardStateToUrl({
             queue: activeTab,
@@ -850,13 +862,15 @@ export default function Dashboard() {
         if (selectedMessages.length === 0) return;
 
         try {
+            const reason = dlqReason.trim()
             const response = await fetch('/api/queue/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: selectedMessages,
                     fromQueue: activeTab,
-                    toQueue: moveDialog.targetQueue
+                    toQueue: moveDialog.targetQueue,
+                    errorReason: moveDialog.targetQueue === 'dead' && reason ? reason : undefined
                 })
             });
             
@@ -864,6 +878,7 @@ export default function Dashboard() {
                 const res = await response.json();
                 setMoveDialog(prev => ({ ...prev, isOpen: false }));
                 setSelectedIds([]);
+                setDlqReason("")
                 fetchAll();
             } else {
                 const err = await response.json();
@@ -874,12 +889,37 @@ export default function Dashboard() {
         }
     }
 
-    const handleToggleSelect = (id: string) => {
-        setSelectedIds(prev => 
-            prev.includes(id) 
-                ? prev.filter(i => i !== id)
-                : [...prev, id]
-        )
+    const handleToggleSelect = (id: string, shiftKey?: boolean) => {
+        const currentMessages = effectiveMessagesData?.messages ?? []
+
+        setSelectedIds(prev => {
+            const isSelected = prev.includes(id)
+
+            if (shiftKey && lastSelectedId && currentMessages.length > 0) {
+                const fromIndex = currentMessages.findIndex(m => m.id === lastSelectedId)
+                const toIndex = currentMessages.findIndex(m => m.id === id)
+
+                if (fromIndex !== -1 && toIndex !== -1) {
+                    const start = Math.min(fromIndex, toIndex)
+                    const end = Math.max(fromIndex, toIndex)
+                    const rangeIds = currentMessages.slice(start, end + 1).map(m => m.id)
+                    const shouldSelect = !isSelected
+
+                    if (shouldSelect) {
+                        const next = new Set(prev)
+                        for (const rangeId of rangeIds) next.add(rangeId)
+                        return Array.from(next)
+                    }
+
+                    const rangeSet = new Set(rangeIds)
+                    return prev.filter(existingId => !rangeSet.has(existingId))
+                }
+            }
+
+            return isSelected ? prev.filter(i => i !== id) : [...prev, id]
+        })
+
+        setLastSelectedId(id)
     }
 
     const handleSelectAll = (ids: string[]) => {
@@ -1250,7 +1290,7 @@ export default function Dashboard() {
 
                     <div className="relative flex flex-col flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
                         {/* Unified Table Loading State */}
-                        {loadingMessages && (
+                        {showMessagesLoading && (
                             <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
                                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                             </div>
@@ -1258,7 +1298,7 @@ export default function Dashboard() {
                         
                         {(activeTab === 'main' || activeTab === 'processing' || activeTab === 'acknowledged') && (
                             <QueueTable
-                                messages={messagesData?.messages || []}
+                                messages={effectiveMessagesData?.messages || []}
                                 queueType={activeTab}
                                 config={config}
                                 onDelete={(id) => handleDelete(id, activeTab)}
@@ -1271,8 +1311,8 @@ export default function Dashboard() {
                                 onToggleSelectAll={handleSelectAll}
                                 currentPage={currentPage}
                                 setCurrentPage={setCurrentPage}
-                                totalPages={messagesData?.pagination?.totalPages || 0}
-                                totalItems={messagesData?.pagination?.total || 0}
+                                totalPages={effectiveMessagesData?.pagination?.totalPages || 0}
+                                totalItems={effectiveMessagesData?.pagination?.total || 0}
                                 sortBy={sortBy}
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
@@ -1281,7 +1321,7 @@ export default function Dashboard() {
                         )}
                         {activeTab === 'dead' && (
                             <DeadLetterTable
-                                messages={messagesData?.messages || []}
+                                messages={effectiveMessagesData?.messages || []}
                                 config={config}
                                 onDelete={(id) => handleDelete(id, 'dead')}
                                 onEdit={(msg) => setEditDialog({ isOpen: true, message: msg, queueType: 'dead' })}
@@ -1293,8 +1333,8 @@ export default function Dashboard() {
                                 onToggleSelectAll={handleSelectAll}
                                 currentPage={currentPage}
                                 setCurrentPage={setCurrentPage}
-                                totalPages={messagesData?.pagination?.totalPages || 0}
-                                totalItems={messagesData?.pagination?.total || 0}
+                                totalPages={effectiveMessagesData?.pagination?.totalPages || 0}
+                                totalItems={effectiveMessagesData?.pagination?.total || 0}
                                 sortBy={sortBy}
                                 sortOrder={sortOrder}
                                 onSort={handleSort}
@@ -1339,10 +1379,18 @@ export default function Dashboard() {
 
             <MoveMessageDialog
                 isOpen={moveDialog.isOpen}
-                onClose={() => setMoveDialog(prev => ({ ...prev, isOpen: false }))}
+                onClose={() => {
+                    setMoveDialog(prev => ({ ...prev, isOpen: false }))
+                    setDlqReason("")
+                }}
                 onConfirm={handleMoveMessages}
                 targetQueue={moveDialog.targetQueue}
-                setTargetQueue={(q) => setMoveDialog(prev => ({ ...prev, targetQueue: q }))}
+                setTargetQueue={(q) => {
+                    setMoveDialog(prev => ({ ...prev, targetQueue: q }))
+                    if (q !== "dead") setDlqReason("")
+                }}
+                dlqReason={dlqReason}
+                setDlqReason={setDlqReason}
                 count={selectedIds.length}
                 currentQueue={activeTab}
             />
@@ -1356,6 +1404,8 @@ function MoveMessageDialog({
     onConfirm,
     targetQueue,
     setTargetQueue,
+    dlqReason,
+    setDlqReason,
     count,
     currentQueue
 }: {
@@ -1364,6 +1414,8 @@ function MoveMessageDialog({
     onConfirm: () => Promise<void>;
     targetQueue: string;
     setTargetQueue: (q: string) => void;
+    dlqReason: string;
+    setDlqReason: (value: string) => void;
     count: number;
     currentQueue: string;
 }) {
@@ -1402,6 +1454,20 @@ function MoveMessageDialog({
                             </SelectContent>
                         </Select>
                     </div>
+                    {targetQueue === "dead" && (
+                        <div className="grid grid-cols-4 items-start gap-4">
+                            <label htmlFor="dlqReason" className="text-right text-sm font-medium pt-2">
+                                Error Reason
+                            </label>
+                            <textarea
+                                id="dlqReason"
+                                value={dlqReason}
+                                onChange={(e) => setDlqReason(e.target.value)}
+                                placeholder="Why are you moving these messages to DLQ?"
+                                className="col-span-3 flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                        </div>
+                    )}
                 </div>
                 <DialogFooter>
                     <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -1613,7 +1679,7 @@ function QueueTable({
     pageSize: string,
     setPageSize: (size: string) => void,
     selectedIds: string[],
-    onToggleSelect: (id: string) => void,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void,
     onToggleSelectAll: (ids: string[]) => void,
     currentPage: number,
     setCurrentPage: (page: number) => void,
@@ -1784,7 +1850,7 @@ function QueueTable({
                                                     checked={selectedIds.includes(msg.id)}
                                                     onChange={(e) => {
                                                         e.stopPropagation()
-                                                        onToggleSelect(msg.id)
+                                                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                                     }}
                                                 />
                                             </TableCell>
@@ -1874,7 +1940,7 @@ function QueueTable({
                                             checked={selectedIds.includes(msg.id)}
                                             onChange={(e) => {
                                                 e.stopPropagation()
-                                                onToggleSelect(msg.id)
+                                                onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                             }}
                                         />
                                     </TableCell>
@@ -2316,7 +2382,7 @@ function DeadLetterTable({
     pageSize: string,
     setPageSize: (size: string) => void,
     selectedIds: string[],
-    onToggleSelect: (id: string) => void,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void,
     onToggleSelectAll: (ids: string[]) => void,
     currentPage: number,
     setCurrentPage: (page: number) => void,
@@ -2422,7 +2488,7 @@ function DeadLetterTable({
                                                     checked={selectedIds.includes(msg.id)}
                                                     onChange={(e) => {
                                                         e.stopPropagation()
-                                                        onToggleSelect(msg.id)
+                                                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                                     }}
                                                 />
                                             </TableCell>
@@ -2509,7 +2575,7 @@ function DeadLetterTable({
                                             checked={selectedIds.includes(msg.id)}
                                             onChange={(e) => {
                                                 e.stopPropagation()
-                                                onToggleSelect(msg.id)
+                                                onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
                                             }}
                                         />
                                     </TableCell>
