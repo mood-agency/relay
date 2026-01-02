@@ -24,6 +24,7 @@ import {
     Plus,
     Pickaxe,
     Check,
+    Copy,
     Download,
     Upload,
     Archive
@@ -158,7 +159,7 @@ export default function Dashboard() {
         isOpen: false,
         title: "",
         description: "",
-        action: async () => {},
+        action: async () => { },
     });
 
     const [editDialog, setEditDialog] = useState<{
@@ -186,7 +187,7 @@ export default function Dashboard() {
     // System Status (Counts)
     const [statusData, setStatusData] = useState<SystemStatus | null>(null)
     const [loadingStatus, setLoadingStatus] = useState(true)
-    
+
     // Table Data (Server-side)
     const [messagesData, setMessagesData] = useState<MessagesResponse | null>(null)
     const [messagesQueueType, setMessagesQueueType] = useState<QueueTab | null>(null)
@@ -289,7 +290,7 @@ export default function Dashboard() {
     const initialDashboardState = useMemo(() => getDashboardStateFromLocation(), [getDashboardStateFromLocation])
 
     const [activeTab, setActiveTab] = useState<QueueTab>(() => initialDashboardState.queue)
-    
+
     // Filter & Sort State
     const [filterType, setFilterType] = useState(() => initialDashboardState.filterType)
     const [filterPriority, setFilterPriority] = useState(() => initialDashboardState.filterPriority)
@@ -301,7 +302,7 @@ export default function Dashboard() {
     const [sortBy, setSortBy] = useState(() => initialDashboardState.sortBy)
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">(() => initialDashboardState.sortOrder)
     const [search, setSearch] = useState(() => initialDashboardState.search)
-    
+
     // Config State
     const [config, setConfig] = useState<{ ack_timeout_seconds: number; max_attempts: number } | null>(null);
 
@@ -316,16 +317,16 @@ export default function Dashboard() {
     useEffect(() => {
         messagesRef.current = effectiveMessagesData?.messages ?? []
     }, [effectiveMessagesData])
-    
+
     // Scroll Reset State
     const [scrollResetKey, setScrollResetKey] = useState(0)
-    
+
     // Highlight State
     const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
-    
+
     // Throttling Ref
     const lastStatusFetchRef = useRef(0);
-    
+
     // File Input Ref
     const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -374,7 +375,7 @@ export default function Dashboard() {
                 throw new Error(errorMsg)
             }
             const json = await response.json()
-            
+
             if (includeMessages) {
                 setStatusData(json)
             } else {
@@ -391,7 +392,7 @@ export default function Dashboard() {
                     }
                 })
             }
-            
+
             setLastUpdated(new Date().toLocaleTimeString())
             setError(null)
         } catch (err: any) {
@@ -414,7 +415,7 @@ export default function Dashboard() {
             params.append('limit', pageSize)
             params.append('sortBy', sortBy)
             params.append('sortOrder', sortOrder)
-            
+
             if (filterType && filterType !== 'all') params.append('filterType', filterType)
             if (filterPriority) params.append('filterPriority', filterPriority)
             if (filterAttempts) params.append('filterAttempts', filterAttempts)
@@ -434,7 +435,7 @@ export default function Dashboard() {
                 throw new Error(errorMsg)
             }
             const json = await response.json()
-            
+
             // Check for stale response
             if (currentTab !== activeTabRef.current) return
 
@@ -587,7 +588,7 @@ export default function Dashboard() {
         if (autoRefresh) {
             // Use SSE for reactive updates
             eventSource = new EventSource('/api/queue/events')
-            
+
             eventSource.addEventListener('queue-update', (event: MessageEvent) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -602,12 +603,12 @@ export default function Dashboard() {
                     }
 
                     const isStandardSort = sortBy === 'created_at';
-                    const hasNoFilters = 
-                        !search && 
-                        filterType === 'all' && 
-                        !filterPriority && 
-                        !filterAttempts && 
-                        !startDate && 
+                    const hasNoFilters =
+                        !search &&
+                        filterType === 'all' &&
+                        !filterPriority &&
+                        !filterAttempts &&
+                        !startDate &&
                         !endDate;
 
                     if (type === 'enqueue') {
@@ -648,17 +649,17 @@ export default function Dashboard() {
                                     const types = filterType.split(',');
                                     if (!types.includes(m.type)) return false;
                                 }
-                                
+
                                 // Filter Priority
                                 if (filterPriority && m.priority !== parseInt(filterPriority)) return false;
-                                
+
                                 // Filter Attempts
                                 if (filterAttempts && (m.attempt_count || 0) < parseInt(filterAttempts)) return false;
-                                
+
                                 // Date Range
                                 if (startDate && m.created_at * 1000 < startDate.getTime()) return false;
                                 if (endDate && m.created_at * 1000 > endDate.getTime()) return false;
-                                
+
                                 // Search
                                 if (search) {
                                     const searchLower = search.toLowerCase();
@@ -667,7 +668,7 @@ export default function Dashboard() {
                                     const matchesError = m.error_message && m.error_message.toLowerCase().includes(searchLower);
                                     if (!matchesId && !matchesPayload && !matchesError) return false;
                                 }
-                                
+
                                 return true;
                             });
 
@@ -682,12 +683,12 @@ export default function Dashboard() {
                             const compare = (a: Message, b: Message) => {
                                 let valA = (a as any)[sortBy];
                                 let valB = (b as any)[sortBy];
-                                
+
                                 if (sortBy === 'payload') {
                                     valA = JSON.stringify(valA);
                                     valB = JSON.stringify(valB);
                                 }
-                                
+
                                 if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
                                 if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
                                 return 0;
@@ -731,7 +732,7 @@ export default function Dashboard() {
                                 const combined = [...base.messages, ...filteredNew];
                                 combined.sort(compare);
                                 const updatedList = combined.slice(0, Number(pageSize));
-                                
+
                                 return {
                                     ...base,
                                     messages: updatedList,
@@ -754,42 +755,42 @@ export default function Dashboard() {
                             }
                         });
                     } else if (type === 'acknowledge' || type === 'delete') {
-                         // Remove from list if present (works for any tab/view)
-                         const idsToRemove = payload.ids || (payload.id ? [payload.id] : []);
-                         
-                         if (idsToRemove.length > 0) {
-                             setMessagesData(prev => {
-                                 if (!prev) return prev;
-                                 
-                                 // Update total count regardless of whether it's in view
-                                 const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length);
-                                 const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
+                        // Remove from list if present (works for any tab/view)
+                        const idsToRemove = payload.ids || (payload.id ? [payload.id] : []);
 
-                                 // Check if any are in view to decide if we need to filter messages
-                                 const shouldFilter = prev.messages.some(m => idsToRemove.includes(m.id));
-                                 
-                                 if (!shouldFilter) {
-                                     return {
+                        if (idsToRemove.length > 0) {
+                            setMessagesData(prev => {
+                                if (!prev) return prev;
+
+                                // Update total count regardless of whether it's in view
+                                const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length);
+                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit);
+
+                                // Check if any are in view to decide if we need to filter messages
+                                const shouldFilter = prev.messages.some(m => idsToRemove.includes(m.id));
+
+                                if (!shouldFilter) {
+                                    return {
                                         ...prev,
                                         pagination: {
                                             ...prev.pagination,
                                             total: newTotal,
                                             totalPages: newTotalPages
                                         }
-                                     };
-                                 }
-                                 
-                                 return {
-                                     ...prev,
-                                     messages: prev.messages.filter(m => !idsToRemove.includes(m.id)),
-                                     pagination: {
-                                         ...prev.pagination,
-                                         total: newTotal,
-                                         totalPages: newTotalPages
-                                     }
-                                 };
-                             });
-                         } else {
+                                    };
+                                }
+
+                                return {
+                                    ...prev,
+                                    messages: prev.messages.filter(m => !idsToRemove.includes(m.id)),
+                                    pagination: {
+                                        ...prev.pagination,
+                                        total: newTotal,
+                                        totalPages: newTotalPages
+                                    }
+                                };
+                            });
+                        } else {
                             fetchMessages(true);
                         }
                     } else if (type === 'update') {
@@ -801,7 +802,7 @@ export default function Dashboard() {
                                 if (!prev) return prev;
                                 // Only update if in view
                                 if (!prev.messages.some(m => m.id === payload.id)) return prev;
-                                
+
                                 return {
                                     ...prev,
                                     messages: prev.messages.map(m => m.id === payload.id ? { ...m, ...payload.updates } : m)
@@ -825,7 +826,7 @@ export default function Dashboard() {
                 // If SSE fails, fallback to polling
                 if (eventSource.readyState === EventSource.CLOSED) {
                     if (!interval) {
-                         interval = setInterval(fetchAll, 5000)
+                        interval = setInterval(fetchAll, 5000)
                     }
                 }
             }
@@ -857,11 +858,11 @@ export default function Dashboard() {
         // When autoRefresh is turned off, we don't want to refresh the table.
         // We only want to refresh if autoRefresh is turned on OR if other dependencies (filters) change.
         const justTurnedOff = prevAutoRefreshRef.current && !autoRefresh
-        
+
         if (!justTurnedOff) {
             fetchAll()
         }
-        
+
         prevAutoRefreshRef.current = autoRefresh
     }, [autoRefresh, fetchAll])
 
@@ -938,7 +939,7 @@ export default function Dashboard() {
                 },
                 body: JSON.stringify(updates),
             })
-            
+
             if (response.ok) {
                 fetchAll()
                 setEditDialog(prev => ({ ...prev, isOpen: false }))
@@ -960,7 +961,7 @@ export default function Dashboard() {
                 },
                 body: JSON.stringify(data),
             });
-            
+
             if (response.ok) {
                 fetchAll();
                 setCreateDialog(false);
@@ -975,7 +976,7 @@ export default function Dashboard() {
 
     const handleMoveMessages = useCallback(async () => {
         if (!selectedIds.size) return false;
-        
+
         const selectedMessages = messagesData?.messages.filter(m => selectedIds.has(m.id)) || [];
         if (selectedMessages.length === 0) return false;
 
@@ -991,7 +992,7 @@ export default function Dashboard() {
                     errorReason: moveDialog.targetQueue === 'dead' && reason ? reason : undefined
                 })
             });
-            
+
             if (response.ok) {
                 setMoveDialog(prev => ({ ...prev, isOpen: false }));
                 setSelectedIds(new Set());
@@ -1058,7 +1059,7 @@ export default function Dashboard() {
         setSelectedIds(prev => {
             const allSelected = ids.every(id => prev.has(id))
             const next = new Set(prev)
-            
+
             if (allSelected) {
                 for (const id of ids) next.delete(id)
             } else {
@@ -1084,7 +1085,7 @@ export default function Dashboard() {
                         },
                         body: JSON.stringify({ messageIds: Array.from(selectedIds) }),
                     })
-                    
+
                     if (response.ok) {
                         const json = await response.json()
                         fetchAll()
@@ -1124,7 +1125,7 @@ export default function Dashboard() {
             const params = new URLSearchParams()
             params.append('sortBy', sortBy)
             params.append('sortOrder', sortOrder)
-            
+
             if (filterType && filterType !== 'all') params.append('filterType', filterType)
             if (filterPriority) params.append('filterPriority', filterPriority)
             if (filterAttempts) params.append('filterAttempts', filterAttempts)
@@ -1179,6 +1180,26 @@ export default function Dashboard() {
     // Available types for filter dropdown
     const availableTypes = statusData?.availableTypes || []
 
+    const isFilterActive = useMemo(() => {
+        return filterType !== 'all' ||
+            filterPriority !== '' ||
+            filterAttempts !== '' ||
+            startDate !== undefined ||
+            endDate !== undefined ||
+            search !== ''
+    }, [filterType, filterPriority, filterAttempts, startDate, endDate, search])
+
+    const activeFiltersDescription = useMemo(() => {
+        const filters = []
+        if (filterType !== 'all') filters.push(`Type: ${filterType}`)
+        if (filterPriority) filters.push(`Priority: ${filterPriority}`)
+        if (filterAttempts) filters.push(`Min Attempts: ${filterAttempts}`)
+        if (startDate) filters.push(`From: ${format(startDate, 'MMM d, HH:mm')}`)
+        if (endDate) filters.push(`To: ${format(endDate, 'MMM d, HH:mm')}`)
+        if (search) filters.push(`Search: "${search}"`)
+        return filters.join(', ')
+    }, [filterType, filterPriority, filterAttempts, startDate, endDate, search])
+
     if (loadingStatus && !statusData) {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen">
@@ -1219,7 +1240,7 @@ export default function Dashboard() {
                                     <p>Create Message</p>
                                 </TooltipContent>
                             </Tooltip>
-                            
+
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <Button
@@ -1313,7 +1334,7 @@ export default function Dashboard() {
                                 onClick={() => navigateToTab('main')}
                                 icon={Inbox}
                                 label="Main"
-                                count={statusData?.mainQueue?.length || 0}
+                                count={statusData?.mainQueue?.length}
                             />
                             <NavButton
                                 active={activeTab === 'processing'}
@@ -1321,7 +1342,7 @@ export default function Dashboard() {
                                 onClick={() => navigateToTab('processing')}
                                 icon={Pickaxe}
                                 label="Processing"
-                                count={statusData?.processingQueue?.length || 0}
+                                count={statusData?.processingQueue?.length}
                             />
                             <NavButton
                                 active={activeTab === 'dead'}
@@ -1329,16 +1350,16 @@ export default function Dashboard() {
                                 onClick={() => navigateToTab('dead')}
                                 icon={XCircle}
                                 label="Failed"
-                                count={statusData?.deadLetterQueue?.length || 0}
+                                count={statusData?.deadLetterQueue?.length}
                                 variant="destructive"
                             />
                             <NavButton
                                 active={activeTab === 'acknowledged'}
                                 href={getTabHref("acknowledged")}
                                 onClick={() => navigateToTab('acknowledged')}
-                                icon={Check }
+                                icon={Check}
                                 label="Done"
-                                count={statusData?.acknowledgedQueue?.length || 0}
+                                count={statusData?.acknowledgedQueue?.length}
                                 variant="success"
                             />
                             <NavButton
@@ -1347,7 +1368,7 @@ export default function Dashboard() {
                                 onClick={() => navigateToTab('archived')}
                                 icon={Archive}
                                 label="Archived"
-                                count={statusData?.archivedQueue?.length || 0}
+                                count={statusData?.archivedQueue?.length}
                             />
                         </div>
 
@@ -1378,8 +1399,8 @@ export default function Dashboard() {
                                     <MultipleSelector
                                         defaultOptions={availableTypes.map(t => ({ label: t, value: t }))}
                                         value={
-                                            filterType === "all" || !filterType 
-                                                ? [] 
+                                            filterType === "all" || !filterType
+                                                ? []
                                                 : filterType.split(",").map(t => ({ label: t, value: t }))
                                         }
                                         onChange={(selected: Option[]) => {
@@ -1437,17 +1458,17 @@ export default function Dashboard() {
                                     <div className="grid grid-cols-2 gap-2">
                                         <div className="space-y-1">
                                             <label className="text-[10px] text-muted-foreground">Start</label>
-                                            <DateTimePicker 
-                                                date={startDate} 
-                                                setDate={setStartDate} 
+                                            <DateTimePicker
+                                                date={startDate}
+                                                setDate={setStartDate}
                                                 placeholder="Start Date"
                                             />
                                         </div>
                                         <div className="space-y-1">
                                             <label className="text-[10px] text-muted-foreground">End</label>
-                                            <DateTimePicker 
-                                                date={endDate} 
-                                                setDate={setEndDate} 
+                                            <DateTimePicker
+                                                date={endDate}
+                                                setDate={setEndDate}
                                                 placeholder="End Date"
                                             />
                                         </div>
@@ -1478,7 +1499,7 @@ export default function Dashboard() {
 
                         <div className="h-px bg-border/50" />
 
-                    
+
                     </div>
                 </div>
 
@@ -1503,7 +1524,7 @@ export default function Dashboard() {
                                     {activeTab === 'acknowledged' && 'Acknowledged Messages'}
                                     {activeTab === 'archived' && 'Archived Messages'}
                                 </h2>
-                               
+
                             </div>
                             <p className="text-sm text-muted-foreground">
                                 {activeTab === 'main' && 'Messages waiting to be processed.'}
@@ -1528,7 +1549,7 @@ export default function Dashboard() {
                                         className="h-8 animate-in fade-in zoom-in duration-200"
                                     >
                                         <Move className="h-3.5 w-3.5 mr-2" />
-                                        Move Selected ({selectedIds.size})
+                                        Move Selected ({selectedIds.size.toLocaleString()})
                                     </Button>
                                     <Button
                                         variant="destructive"
@@ -1537,13 +1558,13 @@ export default function Dashboard() {
                                         className="h-8 animate-in fade-in zoom-in duration-200"
                                     >
                                         <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                        Delete Selected ({selectedIds.size})
+                                        Delete Selected ({selectedIds.size.toLocaleString()})
                                     </Button>
                                 </>
                             )}
-                            <Button 
-                                variant="outline" 
-                                size="sm" 
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={handleClearCurrentQueue}
                                 className="h-8 hover:bg-destructive hover:text-destructive-foreground"
                             >
@@ -1560,7 +1581,7 @@ export default function Dashboard() {
                                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                             </div>
                         )}
-                        
+
                         {(activeTab === 'main' || activeTab === 'processing' || activeTab === 'acknowledged' || activeTab === 'archived') && (
                             <QueueTable
                                 messages={effectiveMessagesData?.messages || []}
@@ -1583,6 +1604,9 @@ export default function Dashboard() {
                                 onSort={handleSort}
                                 scrollResetKey={scrollResetKey}
                                 highlightedIds={highlightedIds}
+                                isFilterActive={isFilterActive}
+                                activeFiltersDescription={activeFiltersDescription}
+                                isLoading={showMessagesLoading}
                             />
                         )}
                         {activeTab === 'dead' && (
@@ -1606,6 +1630,9 @@ export default function Dashboard() {
                                 onSort={handleSort}
                                 scrollResetKey={scrollResetKey}
                                 highlightedIds={highlightedIds}
+                                isFilterActive={isFilterActive}
+                                activeFiltersDescription={activeFiltersDescription}
+                                isLoading={showMessagesLoading}
                             />
                         )}
                     </div>
@@ -1707,7 +1734,7 @@ function MoveMessageDialog({
         { value: "acknowledged", label: "Acknowledged Queue" },
         { value: "archived", label: "Archived Queue" },
     ];
-    
+
     // Filter out the current queue from available options
     const availableQueues = allQueues.filter(q => q.value !== currentQueue);
 
@@ -1730,7 +1757,7 @@ function MoveMessageDialog({
                 <DialogHeader>
                     <DialogTitle>Move Messages</DialogTitle>
                     <DialogDescription>
-                        Move {count} selected messages to another queue.
+                        Move {count.toLocaleString()} selected messages to another queue.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
@@ -1777,10 +1804,10 @@ function MoveMessageDialog({
 }
 
 function NavButton({ active, href, onClick, icon: Icon, label, count, variant = "default" }: any) {
-    const badgeColor = 
+    const badgeColor =
         variant === "destructive" ? "bg-red-100 text-red-700 hover:bg-red-100" :
-        variant === "success" ? "bg-green-100 text-green-700 hover:bg-green-100" : 
-        "bg-secondary text-secondary-foreground hover:bg-secondary/80";
+            variant === "success" ? "bg-green-100 text-green-700 hover:bg-green-100" :
+                "bg-secondary text-secondary-foreground hover:bg-secondary/80";
 
     return (
         <Button
@@ -1803,9 +1830,9 @@ function NavButton({ active, href, onClick, icon: Icon, label, count, variant = 
                     <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")} />
                     <span className={cn(active ? "text-foreground" : "text-muted-foreground")}>{label}</span>
                 </span>
-                {count > 0 && (
+                {typeof count === 'number' && (
                     <Badge variant="secondary" className={cn("ml-auto text-[10px] h-5 px-1.5 min-w-[1.25rem] justify-center", badgeColor)}>
-                        {count}
+                        {count.toLocaleString()}
                     </Badge>
                 )}
             </a>
@@ -1845,10 +1872,10 @@ function PaginationFooter({
                     </SelectContent>
                 </Select>
             </div>
-            
+
             <div className="flex items-center space-x-6 lg:space-x-8">
                 <div className="flex w-[200px] items-center justify-center text-sm font-medium">
-                    Page {currentPage} of {totalPages} ({totalItems} items)
+                    Page {currentPage.toLocaleString()} of {totalPages.toLocaleString()} ({totalItems.toLocaleString()} items)
                 </div>
                 <div className="flex items-center space-x-2">
                     <Button
@@ -1893,6 +1920,40 @@ function PaginationFooter({
     )
 }
 
+function EmptyState({
+    icon: Icon = Inbox,
+    title = "No messages found",
+    description,
+    isFilterActive
+}: {
+    icon?: any,
+    title?: string,
+    description?: string,
+    isFilterActive?: boolean
+}) {
+    return (
+        <div className="flex flex-col items-center justify-center py-20 px-4 text-center animate-in fade-in zoom-in duration-300">
+            <div className="bg-muted/30 p-6 rounded-full mb-6 ring-8 ring-muted/10">
+                <Icon className="h-10 w-10" />
+            </div>
+            <h3 className="text-xl font-bold text-foreground mb-2">{title}</h3>
+            <p className="text-sm text-muted-foreground max-w-[400px] mb-8 leading-relaxed">
+                {isFilterActive
+                    ? "We couldn't find any messages matching your current filters. Try adjusting your search or filters to see more results."
+                    : "There are no messages in this queue at the moment."}
+            </p>
+            {isFilterActive && description && (
+                <div className="flex flex-col items-center gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Active Filters</span>
+                    <Badge variant="outline" className="font-mono text-[11px] px-3 py-1 bg-muted/20 border-border/50 text-muted-foreground">
+                        {description}
+                    </Badge>
+                </div>
+            )}
+        </div>
+    )
+}
+
 function SortableHeader({ label, field, currentSort, currentOrder, onSort }: { label: string, field: string, currentSort: string, currentOrder: string, onSort: (f: string) => void }) {
     return (
         <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors text-xs" onClick={() => onSort(field)}>
@@ -1913,7 +1974,7 @@ function useElementHeight(elementRef: { current: HTMLElement | null }) {
 
     useEffect(() => {
         let rafId = 0
-        let cleanup = () => {}
+        let cleanup = () => { }
 
         const attach = () => {
             const element = elementRef.current
@@ -1947,17 +2008,17 @@ function useElementHeight(elementRef: { current: HTMLElement | null }) {
     return height
 }
 
-const MessageRow = React.memo(({ 
-    msg, 
-    isHighlighted, 
-    isSelected, 
-    queueType, 
-    config, 
-    onDelete, 
-    onEdit, 
-    formatTime, 
-    getTimeValue, 
-    getPriorityBadge, 
+const MessageRow = React.memo(({
+    msg,
+    isHighlighted,
+    isSelected,
+    queueType,
+    config,
+    onDelete,
+    onEdit,
+    formatTime,
+    getTimeValue,
+    getPriorityBadge,
     calculateTimeRemaining,
     onToggleSelect
 }: {
@@ -1978,8 +2039,8 @@ const MessageRow = React.memo(({
     return (
         <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
             <TableCell>
-                <input 
-                    type="checkbox" 
+                <input
+                    type="checkbox"
                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                     checked={isSelected}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2004,12 +2065,12 @@ const MessageRow = React.memo(({
                 {formatTime(getTimeValue(msg))}
             </TableCell>
             <TableCell>
-                    <span className="text-xs text-foreground pl-4 block">
-                        {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
-                        {(msg.custom_max_attempts ?? config?.max_attempts) && (
-                            <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
-                        )}
-                    </span>
+                <span className="text-xs text-foreground pl-4 block">
+                    {msg.attempt_count || (queueType === 'main' ? 0 : 1)}
+                    {(msg.custom_max_attempts ?? config?.max_attempts) && (
+                        <span className="text-muted-foreground"> / {msg.custom_max_attempts ?? config?.max_attempts}</span>
+                    )}
+                </span>
             </TableCell>
             {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && (
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
@@ -2057,17 +2118,17 @@ const MessageRow = React.memo(({
     )
 })
 
-const QueueTable = React.memo(({ 
-    messages, 
-    queueType, 
+const QueueTable = React.memo(({
+    messages,
+    queueType,
     config,
-    onDelete, 
-    onEdit, 
-    formatTime, 
-    pageSize, 
-    setPageSize, 
-    selectedIds, 
-    onToggleSelect, 
+    onDelete,
+    onEdit,
+    formatTime,
+    pageSize,
+    setPageSize,
+    selectedIds,
+    onToggleSelect,
     onToggleSelectAll,
     currentPage,
     setCurrentPage,
@@ -2077,7 +2138,10 @@ const QueueTable = React.memo(({
     sortOrder,
     onSort,
     scrollResetKey,
-    highlightedIds
+    highlightedIds,
+    isFilterActive,
+    activeFiltersDescription,
+    isLoading
 }: {
     messages: Message[],
     queueType: string,
@@ -2098,7 +2162,10 @@ const QueueTable = React.memo(({
     sortOrder: string,
     onSort: (field: string) => void,
     scrollResetKey: number,
-    highlightedIds: Set<string>
+    highlightedIds: Set<string>,
+    isFilterActive?: boolean,
+    activeFiltersDescription?: string,
+    isLoading?: boolean
 }) => {
     // Add state for live updates
     const [currentTime, setCurrentTime] = useState(Date.now())
@@ -2120,7 +2187,7 @@ const QueueTable = React.memo(({
 
         return () => clearInterval(interval)
     }, [queueType, messages.length])
-    
+
     const getTimeLabel = () => {
         switch (queueType) {
             case 'processing': return 'Started At'
@@ -2150,7 +2217,7 @@ const QueueTable = React.memo(({
 
     const calculateTimeRemaining = useCallback((m: Message) => {
         if (queueType !== 'processing' || !config) return null
-        
+
         // Use dequeued_at if available, otherwise fall back to processing_started_at
         const startTime = m.dequeued_at || m.processing_started_at
         if (!startTime) return "N/A"
@@ -2158,15 +2225,15 @@ const QueueTable = React.memo(({
         // startTime is in seconds (from backend), ack_timeout_seconds is in seconds
         // currentTime is in ms, so divide by 1000
         const now = currentTime / 1000
-        
+
         // Use custom timeout if available, else global config
         const timeoutSeconds = m.custom_ack_timeout || config.ack_timeout_seconds
-        
+
         const deadline = startTime + timeoutSeconds
         const remaining = deadline - now
 
         if (remaining <= 0) return <span className="text-destructive font-medium">Overdue</span>
-        
+
         return <span className="text-primary font-mono">{Math.ceil(remaining)}s</span>
     }, [config, currentTime, queueType])
 
@@ -2221,8 +2288,8 @@ const QueueTable = React.memo(({
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
                             <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
-                                <input 
-                                    type="checkbox" 
+                                <input
+                                    type="checkbox"
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                     checked={allSelected}
                                     onChange={() => onToggleSelectAll(messages.map((m: Message) => m.id))}
@@ -2241,11 +2308,18 @@ const QueueTable = React.memo(({
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={9} className="h-32 text-center text-muted-foreground opacity-50 italic text-xs">
-                                    No messages found.
-                                </TableCell>
-                            </TableRow>
+                            !isLoading && (
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={9} className="h-[400px] p-0">
+                                        <EmptyState
+                                            icon={isFilterActive ? Search : Inbox}
+                                            title="No messages found"
+                                            description={activeFiltersDescription}
+                                            isFilterActive={isFilterActive}
+                                        />
+                                    </TableCell>
+                                </TableRow>
+                            )
                         ) : shouldVirtualize && virtual ? (
                             <>
                                 {virtual.topSpacerHeight > 0 && (
@@ -2254,12 +2328,12 @@ const QueueTable = React.memo(({
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg: Message) => (
-                                    <MessageRow 
-                                    key={msg.id}
-                                    msg={msg}
-                                    isHighlighted={highlightedIds.has(msg.id)}
-                                    isSelected={selectedIds.has(msg.id)}
-                                    queueType={queueType}
+                                    <MessageRow
+                                        key={msg.id}
+                                        msg={msg}
+                                        isHighlighted={highlightedIds.has(msg.id)}
+                                        isSelected={selectedIds.has(msg.id)}
+                                        queueType={queueType}
                                         config={config}
                                         onDelete={onDelete}
                                         onEdit={onEdit}
@@ -2278,7 +2352,7 @@ const QueueTable = React.memo(({
                             </>
                         ) : (
                             messages.map((msg: Message) => (
-                                <MessageRow 
+                                <MessageRow
                                     key={msg.id}
                                     msg={msg}
                                     isHighlighted={highlightedIds.has(msg.id)}
@@ -2330,6 +2404,8 @@ function EditMessageDialog({
     const [type, setType] = useState("");
     const [customAckTimeout, setCustomAckTimeout] = useState<number | "">("");
     const [error, setError] = useState<string | null>(null);
+    const [copiedId, setCopiedId] = useState(false);
+    const [copiedPayload, setCopiedPayload] = useState(false);
 
     useEffect(() => {
         if (message) {
@@ -2341,12 +2417,22 @@ function EditMessageDialog({
         }
     }, [message]);
 
+    const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setter(true);
+            setTimeout(() => setter(false), 2000);
+        } catch (err) {
+            console.error("Failed to copy:", err);
+        }
+    };
+
     const handleSave = async () => {
         if (!message) return;
 
         try {
             const updates: any = {};
-            
+
             if (queueType === 'processing') {
                 if (customAckTimeout === "" || Number(customAckTimeout) <= 0) {
                     setError("Ack Timeout must be a positive number");
@@ -2378,8 +2464,8 @@ function EditMessageDialog({
                 <DialogHeader>
                     <DialogTitle>Edit Message</DialogTitle>
                     <DialogDescription>
-                        {queueType === 'processing' 
-                            ? "Edit the timeout for this processing message." 
+                        {queueType === 'processing'
+                            ? "Edit the timeout for this processing message."
                             : "Make changes to the message here. Click save when you're done."}
                     </DialogDescription>
                 </DialogHeader>
@@ -2388,26 +2474,67 @@ function EditMessageDialog({
                         <label htmlFor="edit-id" className="text-right text-sm font-medium">
                             ID
                         </label>
-                        <input
-                            id="edit-id"
-                            value={message?.id || ""}
-                            readOnly
-                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm shadow-sm font-mono focus-visible:outline-none cursor-text"
-                        />
+                        <div className="col-span-3 relative group">
+                            <input
+                                id="edit-id"
+                                value={message?.id || ""}
+                                readOnly
+                                className="w-full flex h-9 rounded-md border border-input bg-muted px-3 pr-10 py-1 text-sm shadow-sm font-mono focus-visible:outline-none cursor-text"
+                            />
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={() => copyToClipboard(message?.id || "", setCopiedId)}
+                                title="Copy ID"
+                            >
+                                {copiedId ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                            </Button>
+                        </div>
                     </div>
                     {queueType === 'processing' ? (
-                        <div className="grid grid-cols-4 items-center gap-4">
-                            <label htmlFor="ackTimeout" className="text-right text-sm font-medium">
-                                Ack Timeout (s)
-                            </label>
-                            <input
-                                id="ackTimeout"
-                                type="number"
-                                value={customAckTimeout}
-                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
-                                className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            />
-                        </div>
+                        <>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <label htmlFor="ackTimeout" className="text-right text-sm font-medium">
+                                    Ack Timeout (s)
+                                </label>
+                                <input
+                                    id="ackTimeout"
+                                    type="number"
+                                    value={customAckTimeout}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                                    className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-start gap-4">
+                                <label htmlFor="payload-readonly" className="text-right text-sm font-medium pt-2">
+                                    Payload
+                                </label>
+                                <div className="col-span-3 relative group">
+                                    <textarea
+                                        id="payload-readonly"
+                                        value={payload}
+                                        readOnly
+                                        className="flex min-h-[150px] w-full rounded-md border border-input bg-muted px-3 py-2 pr-10 text-sm shadow-sm font-mono focus-visible:outline-none cursor-text"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={() => copyToClipboard(payload, setCopiedPayload)}
+                                        title="Copy Payload"
+                                    >
+                                        {copiedPayload ? (
+                                            <Check className="h-4 w-4 text-green-500" />
+                                        ) : (
+                                            <Copy className="h-4 w-4" />
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+                        </>
                     ) : (
                         <>
                             <div className="grid grid-cols-4 items-center gap-4">
@@ -2437,12 +2564,28 @@ function EditMessageDialog({
                                 <label htmlFor="payload" className="text-right text-sm font-medium pt-2">
                                     Payload
                                 </label>
-                                <textarea
-                                    id="payload"
-                                    value={payload}
-                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
-                                    className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                                />
+                                <div className="col-span-3 relative group">
+                                    <textarea
+                                        id="payload"
+                                        value={payload}
+                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
+                                        className="flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 pr-10 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={() => copyToClipboard(payload, setCopiedPayload)}
+                                        title="Copy Payload"
+                                    >
+                                        {copiedPayload ? (
+                                            <Check className="h-4 w-4 text-green-500" />
+                                        ) : (
+                                            <Copy className="h-4 w-4" />
+                                        )}
+                                    </Button>
+                                </div>
                             </div>
                         </>
                     )}
@@ -2662,8 +2805,8 @@ const DeadLetterRow = React.memo(({
     return (
         <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
             <TableCell>
-                <input 
-                    type="checkbox" 
+                <input
+                    type="checkbox"
                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                     checked={isSelected}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2737,16 +2880,16 @@ const DeadLetterRow = React.memo(({
     )
 })
 
-const DeadLetterTable = React.memo(({ 
-    messages, 
+const DeadLetterTable = React.memo(({
+    messages,
     config,
-    onDelete, 
-    onEdit, 
-    formatTime, 
-    pageSize, 
-    setPageSize, 
-    selectedIds, 
-    onToggleSelect, 
+    onDelete,
+    onEdit,
+    formatTime,
+    pageSize,
+    setPageSize,
+    selectedIds,
+    onToggleSelect,
     onToggleSelectAll,
     currentPage,
     setCurrentPage,
@@ -2756,17 +2899,20 @@ const DeadLetterTable = React.memo(({
     sortOrder,
     onSort,
     scrollResetKey,
-    highlightedIds
+    highlightedIds,
+    isFilterActive,
+    activeFiltersDescription,
+    isLoading
 }: {
     messages: Message[],
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
     formatTime: (ts?: number) => string,
-    pageSize: string, 
-    setPageSize: (size: string) => void, 
-    selectedIds: Set<string>, 
-    onToggleSelect: (id: string, shiftKey?: boolean) => void, 
+    pageSize: string,
+    setPageSize: (size: string) => void,
+    selectedIds: Set<string>,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void,
     onToggleSelectAll: (ids: string[]) => void,
     currentPage: number,
     setCurrentPage: (page: number) => void,
@@ -2776,7 +2922,10 @@ const DeadLetterTable = React.memo(({
     sortOrder: string,
     onSort: (field: string) => void,
     scrollResetKey: number,
-    highlightedIds: Set<string>
+    highlightedIds: Set<string>,
+    isFilterActive?: boolean,
+    activeFiltersDescription?: string,
+    isLoading?: boolean
 }) => {
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
@@ -2829,8 +2978,8 @@ const DeadLetterTable = React.memo(({
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
                             <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
-                                <input 
-                                    type="checkbox" 
+                                <input
+                                    type="checkbox"
                                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
                                     checked={allSelected}
                                     onChange={() => onToggleSelectAll(messages.map(m => m.id))}
@@ -2850,11 +2999,18 @@ const DeadLetterTable = React.memo(({
                     </TableHeader>
                     <TableBody>
                         {messages.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={10} className="h-32 text-center text-muted-foreground opacity-50 italic text-xs">
-                                    No failed messages found.
-                                </TableCell>
-                            </TableRow>
+                            !isLoading && (
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={10} className="h-[400px] p-0">
+                                        <EmptyState
+                                            icon={isFilterActive ? Search : XCircle}
+                                            title="No failed messages found"
+                                            description={activeFiltersDescription}
+                                            isFilterActive={isFilterActive}
+                                        />
+                                    </TableCell>
+                                </TableRow>
+                            )
                         ) : shouldVirtualize && virtual ? (
                             <>
                                 {virtual.topSpacerHeight > 0 && (
@@ -2863,7 +3019,7 @@ const DeadLetterTable = React.memo(({
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg: Message) => (
-                                    <DeadLetterRow 
+                                    <DeadLetterRow
                                         key={msg.id}
                                         msg={msg}
                                         isHighlighted={highlightedIds.has(msg.id)}
@@ -2884,7 +3040,7 @@ const DeadLetterTable = React.memo(({
                             </>
                         ) : (
                             messages.map((msg: Message) => (
-                                <DeadLetterRow 
+                                <DeadLetterRow
                                     key={msg.id}
                                     msg={msg}
                                     isHighlighted={highlightedIds.has(msg.id)}

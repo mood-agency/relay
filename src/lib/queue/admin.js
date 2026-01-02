@@ -27,124 +27,124 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
   // Fetch and merge metadata from Hash to preserve history (attempts, errors)
   // because _ensureFullMessage only gets the static Stream data.
   if (enrichedMessages.length > 0) {
-      try {
-          const ids = enrichedMessages.map(m => m?.id).filter(Boolean);
-          if (ids.length > 0) {
-              const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...ids);
-              enrichedMessages.forEach((msg, i) => {
-                  if (msg && metadataJsons[i]) {
-                      try {
-                          const meta = JSON.parse(metadataJsons[i]);
-                          if (meta) {
-                              msg.attempt_count = meta.attempt_count;
-                              msg.last_error = meta.last_error || msg.last_error;
-                              msg.custom_ack_timeout = meta.custom_ack_timeout || msg.custom_ack_timeout;
-                              msg.custom_max_attempts = meta.custom_max_attempts || msg.custom_max_attempts;
-                          }
-                      } catch (e) { /* ignore */ }
-                  }
-              });
+    try {
+      const ids = enrichedMessages.map(m => m?.id).filter(Boolean);
+      if (ids.length > 0) {
+        const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...ids);
+        enrichedMessages.forEach((msg, i) => {
+          if (msg && metadataJsons[i]) {
+            try {
+              const meta = JSON.parse(metadataJsons[i]);
+              if (meta) {
+                msg.attempt_count = meta.attempt_count;
+                msg.last_error = meta.last_error || msg.last_error;
+                msg.custom_ack_timeout = meta.custom_ack_timeout || msg.custom_ack_timeout;
+                msg.custom_max_attempts = meta.custom_max_attempts || msg.custom_max_attempts;
+              }
+            } catch (e) { /* ignore */ }
           }
-      } catch (e) {
-          logger.warn(`Failed to enrich messages with metadata during move: ${e.message}`);
+        });
       }
+    } catch (e) {
+      logger.warn(`Failed to enrich messages with metadata during move: ${e.message}`);
+    }
   }
-  
+
   // Helper to get queue name by type
   const getQueueName = (type, priority = 0) => {
-      if (type === 'main') return this._getPriorityStreamName(priority);
-      if (type === 'dead') return this.config.dead_letter_queue_name;
-      if (type === 'acknowledged') return this.config.acknowledged_queue_name;
-      if (type === 'archived') return this.config.archived_queue_name;
-      if (type === 'processing') return this._getPriorityStreamName(priority);
-      return this.config.queue_name;
+    if (type === 'main') return this._getPriorityStreamName(priority);
+    if (type === 'dead') return this.config.dead_letter_queue_name;
+    if (type === 'acknowledged') return this.config.acknowledged_queue_name;
+    if (type === 'archived') return this.config.archived_queue_name;
+    if (type === 'processing') return this._getPriorityStreamName(priority);
+    return this.config.queue_name;
   };
 
   let movedCount = 0;
   const pipeline = this.redisManager.pipeline();
 
   for (const msg of enrichedMessages) {
-      if (!msg || !msg.id) continue;
+    if (!msg || !msg.id) continue;
 
-      // 1. Remove from Source
-      if (fromQueue === 'acknowledged') {
-          // For acknowledged queue (Stream), use _stream_id if available
-          const streamId = msg._stream_id;
-          if (streamId) {
-              pipeline.xdel(this.config.acknowledged_queue_name, streamId);
-          } else {
-              throw new Error(`Message ${msg.id} not found in acknowledged queue`);
-          }
+    // 1. Remove from Source
+    if (fromQueue === 'acknowledged') {
+      // For acknowledged queue (Stream), use _stream_id if available
+      const streamId = msg._stream_id;
+      if (streamId) {
+        pipeline.xdel(this.config.acknowledged_queue_name, streamId);
       } else {
-          // Stream Source
-          const streamId = msg._stream_id;
-          if (streamId) {
-              const qName = (fromQueue === 'processing') ? this._getPriorityStreamName(msg.priority || 0) : getQueueName(fromQueue, msg.priority);
-              // For processing, we use _stream_name if available, otherwise use priority-based stream name
-              const actualStreamName = msg._stream_name || qName;
-
-              if (fromQueue === 'processing') {
-                  // For processing, we must ACK to remove from PEL, and DEL to remove from Stream.
-                  pipeline.xack(actualStreamName, this.config.consumer_group_name, streamId);
-              }
-              pipeline.xdel(actualStreamName, streamId);
-          } else {
-              throw new Error(`Message ${msg.id} not found in ${fromQueue} queue`);
-          }
+        throw new Error(`Message ${msg.id} not found in acknowledged queue`);
       }
+    } else {
+      // Stream Source
+      const streamId = msg._stream_id;
+      if (streamId) {
+        const qName = (fromQueue === 'processing') ? this._getPriorityStreamName(msg.priority || 0) : getQueueName(fromQueue, msg.priority);
+        // For processing, we use _stream_name if available, otherwise use priority-based stream name
+        const actualStreamName = msg._stream_name || qName;
 
-      // 2. Add to Destination
-      const newMsg = { ...msg };
-      // Cleanup internal fields
-      delete newMsg._stream_id;
-      delete newMsg._stream_name;
-      
-      // Update metadata based on destination
-      if (toQueue === 'main') {
-          // Reset processing info if requeuing
-          delete newMsg.dequeued_at;
-          delete newMsg.processing_started_at;
-      } else if (toQueue === 'acknowledged') {
-          newMsg.acknowledged_at = Date.now() / 1000;
-      } else if (toQueue === 'archived') {
-          newMsg.archived_at = Date.now() / 1000;
-      } else if (toQueue === 'dead') {
-           newMsg.failed_at = Date.now() / 1000;
-           newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to DLQ";
+        if (fromQueue === 'processing') {
+          // For processing, we must ACK to remove from PEL, and DEL to remove from Stream.
+          pipeline.xack(actualStreamName, this.config.consumer_group_name, streamId);
+        }
+        pipeline.xdel(actualStreamName, streamId);
+      } else {
+        throw new Error(`Message ${msg.id} not found in ${fromQueue} queue`);
       }
+    }
 
-      const msgJson = this._serializeMessage(newMsg);
-      
-      // All destinations now use Streams
+    // 2. Add to Destination
+    const newMsg = { ...msg };
+    // Cleanup internal fields
+    delete newMsg._stream_id;
+    delete newMsg._stream_name;
+
+    // Update metadata based on destination
+    if (toQueue === 'main') {
+      // Reset processing info if requeuing
+      delete newMsg.dequeued_at;
+      delete newMsg.processing_started_at;
+    } else if (toQueue === 'acknowledged') {
+      newMsg.acknowledged_at = Date.now() / 1000;
+    } else if (toQueue === 'archived') {
+      newMsg.archived_at = Date.now() / 1000;
+    } else if (toQueue === 'dead') {
+      newMsg.failed_at = Date.now() / 1000;
+      newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to DLQ";
+    }
+
+    const msgJson = this._serializeMessage(newMsg);
+
+    // All destinations now use Streams
     let destQueue;
     if (toQueue === 'processing') {
-         // Use dedicated manual stream for UI moves to ensure isolation from backlog
-         destQueue = this._getManualStreamName();
+      // Use dedicated manual stream for UI moves to ensure isolation from backlog
+      destQueue = this._getManualStreamName();
     } else {
-         destQueue = getQueueName(toQueue, newMsg.priority);
+      destQueue = getQueueName(toQueue, newMsg.priority);
     }
-      
-      pipeline.xadd(destQueue, "*", "data", msgJson);
-      
-      if (toQueue === 'acknowledged') {
-          pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
-          pipeline.incr(this.config.total_acknowledged_key);
-          // Cleanup metadata hash
-          pipeline.hdel(this.config.metadata_hash_name, newMsg.id);
-      }
-      
-      movedCount++;
+
+    pipeline.xadd(destQueue, "*", "data", msgJson);
+
+    if (toQueue === 'acknowledged') {
+      pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
+      pipeline.incr(this.config.total_acknowledged_key);
+      // Cleanup metadata hash
+      pipeline.hdel(this.config.metadata_hash_name, newMsg.id);
+    }
+
+    movedCount++;
   }
 
   const results = await pipeline.exec();
-  
+
   // Check for errors in pipeline execution
   if (results) {
-      results.forEach(([err, res], index) => {
-          if (err) {
-              logger.error(`Pipeline error at index ${index}: ${err.message}`);
-          }
-      });
+    results.forEach(([err, res], index) => {
+      if (err) {
+        logger.error(`Pipeline error at index ${index}: ${err.message}`);
+      }
+    });
   }
 
   // Special handling when moving TO processing queue:
@@ -317,7 +317,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
         break;
       }
     }
-    
+
     if (foundCount < targetIds.size) {
       logger.warn(`Moved ${movedCount} messages to processing (manual), but only dequeued ${foundCount} of them immediately.`);
     }
@@ -339,7 +339,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
  */
 export async function getMessagesByDateRange(startTimestamp, endTimestamp, limit) {
   const messages = [];
-  
+
   // Build list of all queues to check (all priority streams + DLQ + acknowledged)
   const queuesToCheck = this._getAllPriorityStreams().map((name, index) => ({
     name,
@@ -350,28 +350,28 @@ export async function getMessagesByDateRange(startTimestamp, endTimestamp, limit
 
   // Helper to enrich messages with metadata
   const enrichMessages = async (msgs) => {
-      if (!msgs || msgs.length === 0) return msgs;
-      try {
-          const ids = msgs.map(m => m.id);
-          const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...ids);
-          
-          for (let i = 0; i < msgs.length; i++) {
-              if (metadataJsons[i]) {
-                  try {
-                      const meta = JSON.parse(metadataJsons[i]);
-                      if (meta) {
-                          msgs[i].attempt_count = meta.attempt_count;
-                          msgs[i].last_error = meta.last_error;
-                          msgs[i].custom_ack_timeout = meta.custom_ack_timeout;
-                          msgs[i].custom_max_attempts = meta.custom_max_attempts;
-                      }
-                  } catch (e) { /* ignore */ }
-              }
-          }
-      } catch (e) {
-          logger.warn(`Failed to fetch metadata: ${e.message}`);
+    if (!msgs || msgs.length === 0) return msgs;
+    try {
+      const ids = msgs.map(m => m.id);
+      const metadataJsons = await this.redisManager.redis.hmget(this.config.metadata_hash_name, ...ids);
+
+      for (let i = 0; i < msgs.length; i++) {
+        if (metadataJsons[i]) {
+          try {
+            const meta = JSON.parse(metadataJsons[i]);
+            if (meta) {
+              msgs[i].attempt_count = meta.attempt_count;
+              msgs[i].last_error = meta.last_error;
+              msgs[i].custom_ack_timeout = meta.custom_ack_timeout;
+              msgs[i].custom_max_attempts = meta.custom_max_attempts;
+            }
+          } catch (e) { /* ignore */ }
+        }
       }
-      return msgs;
+    } catch (e) {
+      logger.warn(`Failed to fetch metadata: ${e.message}`);
+    }
+    return msgs;
   };
 
   outerLoop:
@@ -379,9 +379,9 @@ export async function getMessagesByDateRange(startTimestamp, endTimestamp, limit
     // All queues now use Streams
     const stream = await this.redisManager.redis.xrange(queue.name, "-", "+");
     const allMessages = stream.map(([id, fields]) => {
-        let json = null;
-        for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-        return { json, id };
+      let json = null;
+      for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+      return { json, id };
     });
 
     for (const { json: messageJson, id: streamId } of allMessages) {
@@ -389,7 +389,7 @@ export async function getMessagesByDateRange(startTimestamp, endTimestamp, limit
       try {
         const messageData = this._deserializeMessage(messageJson);
         if (!messageData) continue;
-        
+
         // Attach stream info for reliable moves/deletes
         messageData._stream_id = streamId;
         messageData._stream_name = queue.name;
@@ -418,7 +418,7 @@ export async function getMessagesByDateRange(startTimestamp, endTimestamp, limit
  */
 export async function removeMessagesByDateRange(startTimestamp, endTimestamp) {
   let totalRemovedCount = 0;
-  
+
   // Build list of all queues to check (all priority streams + DLQ + acknowledged)
   const queuesToCheck = this._getAllPriorityStreams().map((name, index) => ({
     name,
@@ -431,31 +431,31 @@ export async function removeMessagesByDateRange(startTimestamp, endTimestamp) {
     logger.info(
       `Verifying queue ${queueInfo.type} for deletion by date range`
     );
-    
+
     let removedFromCurrentQueue = 0;
-    
+
     // All queues now use Streams
     const stream = await this.redisManager.redis.xrange(queueInfo.name, "-", "+");
     const pipeline = this.redisManager.pipeline();
-    
+
     for (const [id, fields] of stream) {
-        let json = null;
-        for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-        const messageData = this._deserializeMessage(json);
-        if (messageData) {
-             const createdAt = messageData.created_at * 1000;
-             if (createdAt && createdAt >= startTimestamp && createdAt <= endTimestamp) {
-                 pipeline.xdel(queueInfo.name, id);
-                 // Only XACK for main queues (acknowledged queue doesn't use consumer groups)
-                 if (queueInfo.type !== 'acknowledged') {
-                     pipeline.xack(queueInfo.name, this.config.consumer_group_name, id);
-                 }
-                 if (messageData.id) {
-                     pipeline.hdel(this.config.metadata_hash_name, messageData.id);
-                 }
-                 removedFromCurrentQueue++;
-            }
+      let json = null;
+      for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+      const messageData = this._deserializeMessage(json);
+      if (messageData) {
+        const createdAt = messageData.created_at * 1000;
+        if (createdAt && createdAt >= startTimestamp && createdAt <= endTimestamp) {
+          pipeline.xdel(queueInfo.name, id);
+          // Only XACK for main queues (acknowledged queue doesn't use consumer groups)
+          if (queueInfo.type !== 'acknowledged') {
+            pipeline.xack(queueInfo.name, this.config.consumer_group_name, id);
+          }
+          if (messageData.id) {
+            pipeline.hdel(this.config.metadata_hash_name, messageData.id);
+          }
+          removedFromCurrentQueue++;
         }
+      }
     }
     if (pipeline.length > 0) await pipeline.exec();
 
@@ -500,32 +500,32 @@ export async function deleteMessages(messageIds, queueType) {
     const pipeline = redis.pipeline();
 
     for (const stream of streamNames) {
-        const entries = await redis.xrange(stream, "-", "+");
-        for (const [id, fields] of entries) {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const msg = this._deserializeMessage(json);
-            
-            if (msg && idsToDelete.has(msg.id)) {
-                pipeline.xdel(stream, id);
-                if (queueType === 'processing') {
-                    pipeline.xack(stream, this.config.consumer_group_name, id);
-                }
-                totalDeleted++;
-            }
+      const entries = await redis.xrange(stream, "-", "+");
+      for (const [id, fields] of entries) {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const msg = this._deserializeMessage(json);
+
+        if (msg && idsToDelete.has(msg.id)) {
+          pipeline.xdel(stream, id);
+          if (queueType === 'processing') {
+            pipeline.xack(stream, this.config.consumer_group_name, id);
+          }
+          totalDeleted++;
         }
+      }
     }
-    
+
     await pipeline.exec();
-    
+
     if (totalDeleted > 0) {
-         this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted });
+      this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted });
     }
 
     return totalDeleted;
   } catch (error) {
-      logger.error(`Error deleting messages: ${error.message}`);
-      throw error;
+    logger.error(`Error deleting messages: ${error.message}`);
+    throw error;
   }
 }
 
@@ -562,26 +562,26 @@ export async function deleteMessage(messageId, queueType) {
     // All queues now use Streams
     let deleted = false;
     for (const stream of streamNames) {
-        // Scan stream to find message with matching ID in JSON
-        const entries = await redis.xrange(stream, "-", "+");
-        for (const [id, fields] of entries) {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const msg = this._deserializeMessage(json);
-            if (msg && msg.id === messageId) {
-                // Found it.
-                const pipeline = redis.pipeline();
-                pipeline.xdel(stream, id);
-                // XACK only for queues with consumer groups (not acknowledged)
-                if (queueType !== 'acknowledged') {
-                    pipeline.xack(stream, this.config.consumer_group_name, id);
-                }
-                await pipeline.exec();
-                deleted = true;
-                break;
-            }
+      // Scan stream to find message with matching ID in JSON
+      const entries = await redis.xrange(stream, "-", "+");
+      for (const [id, fields] of entries) {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const msg = this._deserializeMessage(json);
+        if (msg && msg.id === messageId) {
+          // Found it.
+          const pipeline = redis.pipeline();
+          pipeline.xdel(stream, id);
+          // XACK only for queues with consumer groups (not acknowledged)
+          if (queueType !== 'acknowledged') {
+            pipeline.xack(stream, this.config.consumer_group_name, id);
+          }
+          await pipeline.exec();
+          deleted = true;
+          break;
         }
-        if (deleted) break;
+      }
+      if (deleted) break;
     }
     if (!deleted) throw new Error(`Message ${messageId} not found in ${queueType} queue`);
 
@@ -609,41 +609,41 @@ export async function updateMessage(messageId, queueType, updates) {
   try {
     const redis = this.redisManager.redis;
     let streamNames = [];
-    
+
     // Special handling for processing queue - only allow metadata updates (timeout)
     if (queueType === 'processing') {
-        const metadataKey = messageId;
-        const existingMetaJson = await redis.hget(this.config.metadata_hash_name, metadataKey);
-        
-        if (!existingMetaJson) {
-            throw new Error(`Message metadata not found for ${messageId} in processing queue`);
-        }
+      const metadataKey = messageId;
+      const existingMetaJson = await redis.hget(this.config.metadata_hash_name, metadataKey);
 
-        let meta = JSON.parse(existingMetaJson);
-        
-        // Only update allowed fields for processing messages
-        if (updates.custom_ack_timeout !== undefined) {
-            meta.custom_ack_timeout = updates.custom_ack_timeout;
-            await redis.hset(this.config.metadata_hash_name, metadataKey, JSON.stringify(meta));
-            
-            logger.info(`Updated custom_ack_timeout for message ${messageId} in processing queue`);
-            this.publishEvent('update', { id: messageId, queue: queueType, updates: { custom_ack_timeout: updates.custom_ack_timeout } });
-            return {
-                success: true,
-                messageId,
-                queueType,
-                message: 'Message timeout updated successfully',
-                data: { ...updates, id: messageId }
-            };
-        } else {
-             return {
-                success: true,
-                messageId,
-                queueType,
-                message: 'No updatable fields provided for processing message (only timeout can be updated)',
-                data: { id: messageId }
-            };
-        }
+      if (!existingMetaJson) {
+        throw new Error(`Message metadata not found for ${messageId} in processing queue`);
+      }
+
+      let meta = JSON.parse(existingMetaJson);
+
+      // Only update allowed fields for processing messages
+      if (updates.custom_ack_timeout !== undefined) {
+        meta.custom_ack_timeout = updates.custom_ack_timeout;
+        await redis.hset(this.config.metadata_hash_name, metadataKey, JSON.stringify(meta));
+
+        logger.info(`Updated custom_ack_timeout for message ${messageId} in processing queue`);
+        this.publishEvent('update', { id: messageId, queue: queueType, updates: { custom_ack_timeout: updates.custom_ack_timeout } });
+        return {
+          success: true,
+          messageId,
+          queueType,
+          message: 'Message timeout updated successfully',
+          data: { ...updates, id: messageId }
+        };
+      } else {
+        return {
+          success: true,
+          messageId,
+          queueType,
+          message: 'No updatable fields provided for processing message (only timeout can be updated)',
+          data: { id: messageId }
+        };
+      }
     }
 
     switch (queueType) {
@@ -666,19 +666,19 @@ export async function updateMessage(messageId, queueType, updates) {
 
     // Find message
     for (const stream of streamNames) {
-        const entries = await redis.xrange(stream, "-", "+");
-        for (const [id, fields] of entries) {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const msg = this._deserializeMessage(json);
-            if (msg && msg.id === messageId) {
-                originalMessageData = msg;
-                originalStream = stream;
-                originalStreamId = id;
-                break;
-            }
+      const entries = await redis.xrange(stream, "-", "+");
+      for (const [id, fields] of entries) {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const msg = this._deserializeMessage(json);
+        if (msg && msg.id === messageId) {
+          originalMessageData = msg;
+          originalStream = stream;
+          originalStreamId = id;
+          break;
         }
-        if (originalMessageData) break;
+      }
+      if (originalMessageData) break;
     }
 
     if (!originalMessageData) {
@@ -721,384 +721,428 @@ export async function updateMessage(messageId, queueType, updates) {
  */
 export async function getQueueMessages(queueType, params = {}) {
   try {
-    const { 
-      page = 1, 
-      limit = 10, 
-      sortBy = 'created_at', 
-      sortOrder = 'desc', 
-      filterType, 
-      filterPriority, 
-      filterAttempts, 
-      startDate, 
-      endDate, 
-      search 
+    const {
+      page = 1,
+      limit = 10,
+      sortBy = 'created_at',
+      sortOrder = 'desc',
+      filterType,
+      filterPriority,
+      filterAttempts,
+      startDate,
+      endDate,
+      search
     } = params;
 
     const redis = this.redisManager.redis;
     let rawMessages = [];
 
     if (queueType === 'main') {
-        let priorityStreams = this._getAllPriorityStreams();
-        if (filterPriority !== undefined && filterPriority !== '') {
-            const p = parseInt(filterPriority);
-            priorityStreams = [this._getPriorityStreamName(p)];
+      let priorityStreams = this._getAllPriorityStreams();
+      if (filterPriority !== undefined && filterPriority !== '') {
+        const p = parseInt(filterPriority);
+        priorityStreams = [this._getPriorityStreamName(p)];
+      }
+
+      const getPendingSafe = async (queueName) => {
+        try {
+          const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
+          return Array.isArray(res) ? res : [];
+        } catch (e) {
+          const msg = e.message || '';
+          if (msg.includes('NOGROUP') || msg.includes('no such key')) {
+            return [];
+          }
+          throw e;
         }
+      };
 
-        const getPendingSafe = async (queueName) => {
-            try {
-                const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
-                return Array.isArray(res) ? res : [];
-            } catch (e) {
-                const msg = e.message || '';
-                if (msg.includes('NOGROUP') || msg.includes('no such key')) {
-                    return [];
-                }
-                throw e;
-            }
-        };
+      const pendingStreamIds = new Set();
+      const pendingResults = await Promise.all(priorityStreams.map(name => getPendingSafe(name)));
+      pendingResults.forEach(pending => {
+        for (const p of pending) {
+          pendingStreamIds.add(p[0]);
+        }
+      });
 
-        const pendingStreamIds = new Set();
-        const pendingResults = await Promise.all(priorityStreams.map(name => getPendingSafe(name)));
-        pendingResults.forEach(pending => {
-            for (const p of pending) {
-                pendingStreamIds.add(p[0]);
-            }
+      const parse = (msgs, name) => msgs.map(([id, fields]) => {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const m = this._deserializeMessage(json);
+        if (m) { m._stream_id = id; m._stream_name = name; }
+        return m;
+      }).filter(Boolean);
+
+      // Optimize: Use COUNT to avoid fetching all messages.
+      // If searching or filtering by type/date, we fetch a larger batch but still not everything.
+      const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+      const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+      const useRev = sortOrder === 'desc';
+      const method = useRev ? 'xrevrange' : 'xrange';
+      const start = useRev ? '+' : '-';
+      const end = useRev ? '-' : '+';
+
+      const streamDataResults = await Promise.all(priorityStreams.map(name =>
+        redis[method](name, start, end, 'COUNT', fetchCount)
+      ));
+      streamDataResults.forEach((streamData, index) => {
+        rawMessages.push(...parse(streamData, priorityStreams[index]));
+      });
+
+      if (pendingStreamIds.size > 0) {
+        rawMessages = rawMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
+      }
+
+      // Apply filters BEFORE loading metadata and sorting for performance
+      let messagesToProcess = rawMessages;
+      if (filterType && filterType !== 'all') {
+        const types = filterType.split(',');
+        messagesToProcess = messagesToProcess.filter(m => types.includes(m.type));
+      }
+      if (filterPriority !== undefined && filterPriority !== '') {
+        messagesToProcess = messagesToProcess.filter(m => m.priority === parseInt(filterPriority));
+      }
+      if (filterAttempts !== undefined && filterAttempts !== '') {
+        messagesToProcess = messagesToProcess.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
+      }
+      if (startDate) {
+        const start = new Date(startDate).getTime() / 1000;
+        messagesToProcess = messagesToProcess.filter(m => m.created_at >= start);
+      }
+      if (endDate) {
+        const end = new Date(endDate).getTime() / 1000;
+        messagesToProcess = messagesToProcess.filter(m => m.created_at <= end);
+      }
+      if (search) {
+        const searchLower = search.toLowerCase();
+        messagesToProcess = messagesToProcess.filter(m =>
+          m.id.toLowerCase().includes(searchLower) ||
+          (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower))
+        );
+      }
+
+      const ids = messagesToProcess.map(m => m?.id).filter(Boolean);
+      if (ids.length > 0) {
+        const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+        messagesToProcess.forEach((m, index) => {
+          const metaStr = metaResults[index];
+          if (!metaStr) return;
+          try {
+            const meta = JSON.parse(metaStr);
+            if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+            if (meta.last_error) m.last_error = meta.last_error;
+            if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
+            if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+          } catch (e) { }
         });
-        
-        const parse = (msgs, name) => msgs.map(([id, fields]) => {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const m = this._deserializeMessage(json);
-            if(m) { m._stream_id = id; m._stream_name = name; }
-            return m;
-        }).filter(Boolean);
-
-        // Optimize: Use COUNT to avoid fetching all messages.
-        // If searching or filtering by type/date, we fetch a larger batch but still not everything.
-        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
-        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
-        const useRev = sortOrder === 'desc';
-        const method = useRev ? 'xrevrange' : 'xrange';
-        const start = useRev ? '+' : '-';
-        const end = useRev ? '-' : '+';
-
-        const streamDataResults = await Promise.all(priorityStreams.map(name => 
-            redis[method](name, start, end, 'COUNT', fetchCount)
-        ));
-        streamDataResults.forEach((streamData, index) => {
-            rawMessages.push(...parse(streamData, priorityStreams[index]));
-        });
-
-        if (pendingStreamIds.size > 0) {
-            rawMessages = rawMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
-        }
-
-        // Apply filters BEFORE loading metadata and sorting for performance
-        let messagesToProcess = rawMessages;
-        if (filterType && filterType !== 'all') {
-            const types = filterType.split(',');
-            messagesToProcess = messagesToProcess.filter(m => types.includes(m.type));
-        }
-        if (filterPriority !== undefined && filterPriority !== '') {
-            messagesToProcess = messagesToProcess.filter(m => m.priority === parseInt(filterPriority));
-        }
-        if (filterAttempts !== undefined && filterAttempts !== '') {
-            messagesToProcess = messagesToProcess.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
-        }
-        if (startDate) {
-            const start = new Date(startDate).getTime() / 1000;
-            messagesToProcess = messagesToProcess.filter(m => m.created_at >= start);
-        }
-        if (endDate) {
-            const end = new Date(endDate).getTime() / 1000;
-            messagesToProcess = messagesToProcess.filter(m => m.created_at <= end);
-        }
-        if (search) {
-            const searchLower = search.toLowerCase();
-            messagesToProcess = messagesToProcess.filter(m => 
-                m.id.toLowerCase().includes(searchLower) ||
-                (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower))
-            );
-        }
-
-        const ids = messagesToProcess.map(m => m?.id).filter(Boolean);
-        if (ids.length > 0) {
-            const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
-            messagesToProcess.forEach((m, index) => {
-                const metaStr = metaResults[index];
-                if (!metaStr) return;
-                try {
-                    const meta = JSON.parse(metaStr);
-                    if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
-                    if (meta.last_error) m.last_error = meta.last_error;
-                    if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
-                    if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
-                } catch (e) {}
-            });
-        }
-        rawMessages = messagesToProcess;
+      }
+      rawMessages = messagesToProcess;
     } else if (queueType === 'processing') {
-        const priorityStreams = this._getAllPriorityStreams();
-        
-        const getPendingSafe = async (queueName) => {
-            try {
-                const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
-                return Array.isArray(res) ? res : [];
-            } catch (e) {
-                const msg = e.message || '';
-                if (msg.includes('NOGROUP') || msg.includes('no such key')) {
-                    return [];
-                }
-                throw e;
-            }
-        };
+      const priorityStreams = this._getAllPriorityStreams();
 
-        const allPending = [];
-        
-        for (const streamName of priorityStreams) {
-            const pending = await getPendingSafe(streamName);
-            for (const p of pending) {
-                allPending.push({ pending: p, streamName });
-            }
+      const getPendingSafe = async (queueName) => {
+        try {
+          const res = await redis.xpending(queueName, this.config.consumer_group_name, "-", "+", 5000);
+          return Array.isArray(res) ? res : [];
+        } catch (e) {
+          const msg = e.message || '';
+          if (msg.includes('NOGROUP') || msg.includes('no such key')) {
+            return [];
+          }
+          throw e;
         }
-        
-        if (allPending.length === 0) {
-            rawMessages = [];
-        } else {
-            const pipeline = redis.pipeline();
-            for (const item of allPending) {
-                const streamName = item.streamName;
-                const msgId = item.pending?.[0];
-                pipeline.xrange(streamName, msgId, msgId);
-            }
-            
-            const results = await pipeline.exec();
-            
-            let messagesWithIds = [];
-            if (results) {
-                messagesWithIds = results.map((r, i) => {
-                    if(!r || !r[1] || !r[1][0]) return null;
-                    const [id, fields] = r[1][0];
-                    let json = null;
-                    for(let j=0; j<fields.length; j+=2) if(fields[j]==='data') json=fields[j+1];
-                    const m = this._deserializeMessage(json);
-                    
-                    const pendingInfo = allPending[i]?.pending;
-                    const streamName = allPending[i]?.streamName;
-                    const idleTime = pendingInfo ? pendingInfo[2] : 0;
+      };
 
-                    if(m) { 
-                        m._stream_id = id; 
-                        m._stream_name = streamName;
-                        m.dequeued_at = (Date.now() - idleTime) / 1000;
-                        if (!m.processing_started_at) m.processing_started_at = m.dequeued_at;
-                    }
-                    return m;
-                }).filter(Boolean);
+      const allPending = [];
 
-                if (messagesWithIds.length > 0) {
-                    const metaPipeline = redis.pipeline();
-                    messagesWithIds.forEach(m => {
-                        metaPipeline.hget(this.config.metadata_hash_name, m.id);
-                    });
-                    const metaResults = await metaPipeline.exec();
-                    
-                    const pendingMap = new Map();
-                    allPending.forEach(item => {
-                      const p = item.pending;
-                      const streamName = item.streamName;
-                      if (!p || !streamName) return;
-                      pendingMap.set(`${streamName}|${p[0]}`, { idle: p[2], count: p[3] });
-                    });
-
-                    messagesWithIds.forEach((m, index) => {
-                        const metaRes = metaResults[index];
-                        if (metaRes && !metaRes[0] && metaRes[1]) {
-                            try {
-                                const meta = JSON.parse(metaRes[1]);
-                                m.attempt_count = meta.attempt_count;
-                                m.dequeued_at = meta.dequeued_at;
-                                m.processing_started_at = meta.dequeued_at;
-                                m.last_error = meta.last_error;
-                                if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
-                                if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
-                            } catch (e) {}
-                        } else {
-                            const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
-                            if (pendingInfo) {
-                                m.attempt_count = pendingInfo.count;
-                                m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;
-                                m.processing_started_at = m.dequeued_at;
-                            }
-                        }
-                    });
-                }
-                rawMessages = messagesWithIds;
-            }
+      for (const streamName of priorityStreams) {
+        const pending = await getPendingSafe(streamName);
+        for (const p of pending) {
+          allPending.push({ pending: p, streamName });
         }
+      }
+
+      if (allPending.length === 0) {
+        rawMessages = [];
+      } else {
+        const pipeline = redis.pipeline();
+        for (const item of allPending) {
+          const streamName = item.streamName;
+          const msgId = item.pending?.[0];
+          pipeline.xrange(streamName, msgId, msgId);
+        }
+
+        const results = await pipeline.exec();
+
+        let messagesWithIds = [];
+        if (results) {
+          messagesWithIds = results.map((r, i) => {
+            if (!r || !r[1] || !r[1][0]) return null;
+            const [id, fields] = r[1][0];
+            let json = null;
+            for (let j = 0; j < fields.length; j += 2) if (fields[j] === 'data') json = fields[j + 1];
+            const m = this._deserializeMessage(json);
+
+            const pendingInfo = allPending[i]?.pending;
+            const streamName = allPending[i]?.streamName;
+            const idleTime = pendingInfo ? pendingInfo[2] : 0;
+
+            if (m) {
+              m._stream_id = id;
+              m._stream_name = streamName;
+              m.dequeued_at = (Date.now() - idleTime) / 1000;
+              if (!m.processing_started_at) m.processing_started_at = m.dequeued_at;
+            }
+            return m;
+          }).filter(Boolean);
+
+          if (messagesWithIds.length > 0) {
+            const metaPipeline = redis.pipeline();
+            messagesWithIds.forEach(m => {
+              metaPipeline.hget(this.config.metadata_hash_name, m.id);
+            });
+            const metaResults = await metaPipeline.exec();
+
+            const pendingMap = new Map();
+            allPending.forEach(item => {
+              const p = item.pending;
+              const streamName = item.streamName;
+              if (!p || !streamName) return;
+              pendingMap.set(`${streamName}|${p[0]}`, { idle: p[2], count: p[3] });
+            });
+
+            messagesWithIds.forEach((m, index) => {
+              const metaRes = metaResults[index];
+              if (metaRes && !metaRes[0] && metaRes[1]) {
+                try {
+                  const meta = JSON.parse(metaRes[1]);
+                  m.attempt_count = meta.attempt_count;
+                  m.dequeued_at = meta.dequeued_at;
+                  m.processing_started_at = meta.dequeued_at;
+                  m.last_error = meta.last_error;
+                  if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
+                  if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+                } catch (e) { }
+              } else {
+                const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
+                if (pendingInfo) {
+                  m.attempt_count = pendingInfo.count;
+                  m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;
+                  m.processing_started_at = m.dequeued_at;
+                }
+              }
+            });
+          }
+          rawMessages = messagesWithIds;
+        }
+      }
 
     } else if (queueType === 'dead') {
-        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
-        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
-        const useRev = sortOrder === 'desc';
-        const method = useRev ? 'xrevrange' : 'xrange';
-        const start = useRev ? '+' : '-';
-        const end = useRev ? '-' : '+';
-        
-        const stream = await redis[method](this.config.dead_letter_queue_name, start, end, 'COUNT', fetchCount);
-        rawMessages = stream.map(([id, fields]) => {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const m = this._deserializeMessage(json);
-            if(m) { m._stream_id = id; m._stream_name = this.config.dead_letter_queue_name; }
-            return m;
-        }).filter(Boolean);
-        const ids = rawMessages.map(m => m?.id).filter(Boolean);
-        if (ids.length > 0) {
-            const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
-            const metaById = new Map();
-            ids.forEach((id, index) => metaById.set(id, metaResults[index]));
-            rawMessages.forEach((m) => {
-                const metaStr = metaById.get(m?.id);
-                if (!metaStr) return;
-                try {
-                    const meta = JSON.parse(metaStr);
-                    if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
-                    if (meta.last_error) m.last_error = meta.last_error;
-                    const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
-                    const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
-                    if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
-                    if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
-                } catch (e) {}
-            });
-        }
+      const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+      const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+      const useRev = sortOrder === 'desc';
+      const method = useRev ? 'xrevrange' : 'xrange';
+      const start = useRev ? '+' : '-';
+      const end = useRev ? '-' : '+';
+
+      const stream = await redis[method](this.config.dead_letter_queue_name, start, end, 'COUNT', fetchCount);
+      rawMessages = stream.map(([id, fields]) => {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const m = this._deserializeMessage(json);
+        if (m) { m._stream_id = id; m._stream_name = this.config.dead_letter_queue_name; }
+        return m;
+      }).filter(Boolean);
+      const ids = rawMessages.map(m => m?.id).filter(Boolean);
+      if (ids.length > 0) {
+        const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+        const metaById = new Map();
+        ids.forEach((id, index) => metaById.set(id, metaResults[index]));
+        rawMessages.forEach((m) => {
+          const metaStr = metaById.get(m?.id);
+          if (!metaStr) return;
+          try {
+            const meta = JSON.parse(metaStr);
+            if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+            if (meta.last_error) m.last_error = meta.last_error;
+            const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
+            const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
+            if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
+            if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
+          } catch (e) { }
+        });
+      }
     } else if (queueType === 'acknowledged') {
-        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
-        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
-        const useRev = sortOrder === 'desc';
-        const method = useRev ? 'xrevrange' : 'xrange';
-        const start = useRev ? '+' : '-';
-        const end = useRev ? '-' : '+';
-        
-        const stream = await redis[method](this.config.acknowledged_queue_name, start, end, 'COUNT', fetchCount);
-        rawMessages = stream.map(([id, fields]) => {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const m = this._deserializeMessage(json);
-            if(m) { m._stream_id = id; m._stream_name = this.config.acknowledged_queue_name; }
-            return m;
-        }).filter(Boolean);
+      const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+      const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+      const useRev = sortOrder === 'desc';
+      const method = useRev ? 'xrevrange' : 'xrange';
+      const start = useRev ? '+' : '-';
+      const end = useRev ? '-' : '+';
+
+      const stream = await redis[method](this.config.acknowledged_queue_name, start, end, 'COUNT', fetchCount);
+      rawMessages = stream.map(([id, fields]) => {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const m = this._deserializeMessage(json);
+        if (m) { m._stream_id = id; m._stream_name = this.config.acknowledged_queue_name; }
+        return m;
+      }).filter(Boolean);
     } else if (queueType === 'archived') {
-        const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
-        const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
-        const useRev = sortOrder === 'desc';
-        const method = useRev ? 'xrevrange' : 'xrange';
-        const start = useRev ? '+' : '-';
-        const end = useRev ? '-' : '+';
-        
-        const stream = await redis[method](this.config.archived_queue_name, start, end, 'COUNT', fetchCount);
-        rawMessages = stream.map(([id, fields]) => {
-            let json = null;
-            for(let i=0; i<fields.length; i+=2) if(fields[i]==='data') json=fields[i+1];
-            const m = this._deserializeMessage(json);
-            if(m) { m._stream_id = id; m._stream_name = this.config.archived_queue_name; }
-            return m;
-        }).filter(Boolean);
-        const ids = rawMessages.map(m => m?.id).filter(Boolean);
-        if (ids.length > 0) {
-            const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
-            const metaById = new Map();
-            ids.forEach((id, index) => metaById.set(id, metaResults[index]));
-            rawMessages.forEach((m) => {
-                const metaStr = metaById.get(m?.id);
-                if (!metaStr) return;
-                try {
-                    const meta = JSON.parse(metaStr);
-                    if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
-                    if (meta.last_error) m.last_error = meta.last_error;
-                    const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
-                    const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
-                    if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
-                    if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
-                } catch (e) {}
-            });
-        }
+      const hasHeavyFilters = search || filterType || startDate || endDate || filterAttempts;
+      const fetchCount = hasHeavyFilters ? 5000 : (page * limit) + 100;
+      const useRev = sortOrder === 'desc';
+      const method = useRev ? 'xrevrange' : 'xrange';
+      const start = useRev ? '+' : '-';
+      const end = useRev ? '-' : '+';
+
+      const stream = await redis[method](this.config.archived_queue_name, start, end, 'COUNT', fetchCount);
+      rawMessages = stream.map(([id, fields]) => {
+        let json = null;
+        for (let i = 0; i < fields.length; i += 2) if (fields[i] === 'data') json = fields[i + 1];
+        const m = this._deserializeMessage(json);
+        if (m) { m._stream_id = id; m._stream_name = this.config.archived_queue_name; }
+        return m;
+      }).filter(Boolean);
+      const ids = rawMessages.map(m => m?.id).filter(Boolean);
+      if (ids.length > 0) {
+        const metaResults = await redis.hmget(this.config.metadata_hash_name, ...ids);
+        const metaById = new Map();
+        ids.forEach((id, index) => metaById.set(id, metaResults[index]));
+        rawMessages.forEach((m) => {
+          const metaStr = metaById.get(m?.id);
+          if (!metaStr) return;
+          try {
+            const meta = JSON.parse(metaStr);
+            if (meta.attempt_count !== undefined) m.attempt_count = meta.attempt_count;
+            if (meta.last_error) m.last_error = meta.last_error;
+            const customAckTimeout = meta.custom_ack_timeout ?? meta._original_message?.custom_ack_timeout;
+            const customMaxAttempts = meta.custom_max_attempts ?? meta._original_message?.custom_max_attempts;
+            if (customAckTimeout) m.custom_ack_timeout = customAckTimeout;
+            if (customMaxAttempts) m.custom_max_attempts = customMaxAttempts;
+          } catch (e) { }
+        });
+      }
     } else {
-        throw new Error(`Invalid queue type: ${queueType}`);
+      throw new Error(`Invalid queue type: ${queueType}`);
     }
 
     let messages = rawMessages;
 
     // Filter (Skip if already filtered in main queue block)
     if (queueType !== 'main') {
-        if (filterType && filterType !== 'all') {
-            const types = filterType.split(',');
-            messages = messages.filter(m => types.includes(m.type));
-        }
-        if (filterPriority !== undefined && filterPriority !== '') {
-            messages = messages.filter(m => m.priority === parseInt(filterPriority));
-        }
-        if (filterAttempts !== undefined && filterAttempts !== '') {
-            messages = messages.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
-        }
-        if (startDate) {
-            const start = new Date(startDate).getTime() / 1000;
-            messages = messages.filter(m => {
-            const ts = queueType === 'processing' ? m.processing_started_at : 
-                        queueType === 'acknowledged' ? m.acknowledged_at : 
-                        queueType === 'archived' ? m.archived_at : m.created_at;
-            return ts >= start;
-            });
-        }
-        if (endDate) {
-            const end = new Date(endDate).getTime() / 1000;
-            messages = messages.filter(m => {
-            const ts = queueType === 'processing' ? m.processing_started_at : 
-                        queueType === 'acknowledged' ? m.acknowledged_at : 
-                        queueType === 'archived' ? m.archived_at : m.created_at;
-            return ts <= end;
-            });
-        }
-        if (search) {
-            const searchLower = search.toLowerCase();
-            messages = messages.filter(m => 
-                m.id.toLowerCase().includes(searchLower) ||
-                (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)) ||
-                (m.error_message && m.error_message.toLowerCase().includes(searchLower))
-            );
-        }
+      if (filterType && filterType !== 'all') {
+        const types = filterType.split(',');
+        messages = messages.filter(m => types.includes(m.type));
+      }
+      if (filterPriority !== undefined && filterPriority !== '') {
+        messages = messages.filter(m => m.priority === parseInt(filterPriority));
+      }
+      if (filterAttempts !== undefined && filterAttempts !== '') {
+        messages = messages.filter(m => (m.attempt_count || 0) >= parseInt(filterAttempts));
+      }
+      if (startDate) {
+        const start = new Date(startDate).getTime() / 1000;
+        messages = messages.filter(m => {
+          const ts = queueType === 'processing' ? m.processing_started_at :
+            queueType === 'acknowledged' ? m.acknowledged_at :
+              queueType === 'archived' ? m.archived_at : m.created_at;
+          return ts >= start;
+        });
+      }
+      if (endDate) {
+        const end = new Date(endDate).getTime() / 1000;
+        messages = messages.filter(m => {
+          const ts = queueType === 'processing' ? m.processing_started_at :
+            queueType === 'acknowledged' ? m.acknowledged_at :
+              queueType === 'archived' ? m.archived_at : m.created_at;
+          return ts <= end;
+        });
+      }
+      if (search) {
+        const searchLower = search.toLowerCase();
+        messages = messages.filter(m =>
+          m.id.toLowerCase().includes(searchLower) ||
+          (m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)) ||
+          (m.error_message && m.error_message.toLowerCase().includes(searchLower))
+        );
+      }
     }
 
     // Sort
     messages.sort((a, b) => {
-        let valA = a[sortBy];
-        let valB = b[sortBy];
-        
-        // Handle specific fields
-        if (sortBy === 'payload') {
-            valA = JSON.stringify(valA);
-            valB = JSON.stringify(valB);
-        }
-        
-        if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-        if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-        return 0;
+      let valA = a[sortBy];
+      let valB = b[sortBy];
+
+      // Handle specific fields
+      if (sortBy === 'payload') {
+        valA = JSON.stringify(valA);
+        valB = JSON.stringify(valB);
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
     });
 
     // Pagination
-    const total = messages.length;
+    let total = messages.length;
+
+    // If no complex filters are applied, we can get the real total count from Redis
+    const hasComplexFilters = (search && search.trim() !== "") ||
+      (filterType && filterType !== "all") ||
+      (filterAttempts !== undefined && filterAttempts !== "") ||
+      startDate || endDate;
+
+    if (!hasComplexFilters) {
+      try {
+        if (queueType === "main") {
+          let targetStreams = this._getAllPriorityStreams();
+          if (filterPriority !== undefined && filterPriority !== "") {
+            targetStreams = [this._getPriorityStreamName(parseInt(filterPriority))];
+          }
+
+          const streamCounts = await Promise.all(targetStreams.map(name => redis.xlen(name)));
+          const pendingPromises = targetStreams.map(name =>
+            redis.xpending(name, this.config.consumer_group_name).catch(() => [0])
+          );
+          const pendingResults = await Promise.all(pendingPromises);
+
+          const totalInStreams = streamCounts.reduce((a, b) => a + b, 0);
+          const totalPending = pendingResults.reduce((a, b) => a + (parseInt(b[0]) || 0), 0);
+          total = Math.max(0, totalInStreams - totalPending);
+        } else if (queueType === "processing") {
+          const priorityStreams = this._getAllPriorityStreams();
+          const pendingPromises = priorityStreams.map(name =>
+            redis.xpending(name, this.config.consumer_group_name).catch(() => [0])
+          );
+          const pendingResults = await Promise.all(pendingPromises);
+          total = pendingResults.reduce((a, b) => a + (parseInt(b[0]) || 0), 0);
+        } else if (queueType === "dead") {
+          total = await redis.xlen(this.config.dead_letter_queue_name);
+        } else if (queueType === "acknowledged") {
+          total = await redis.xlen(this.config.acknowledged_queue_name);
+        } else if (queueType === "archived") {
+          total = await redis.xlen(this.config.archived_queue_name);
+        }
+      } catch (e) {
+        logger.warn(`Failed to get accurate total count: ${e.message}`);
+        // Fallback to messages.length already in 'total'
+      }
+    }
+
     const totalPages = Math.ceil(total / limit);
     const startIndex = (page - 1) * limit;
     const paginatedMessages = messages.slice(startIndex, startIndex + parseInt(limit));
 
     return {
-        messages: paginatedMessages,
-        pagination: {
-            total,
-            page: parseInt(page),
-            limit: parseInt(limit),
-            totalPages
-        }
+      messages: paginatedMessages,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages,
+      },
     };
 
   } catch (error) {
@@ -1120,13 +1164,13 @@ export async function clearAllQueues() {
     for (const stream of streams) {
       pipeline.del(stream);
     }
-    
+
     // Safety: Explicitly delete potential legacy/ghost streams that might persist
     pipeline.del(`${this.config.queue_name}_processing`);
     if (this.config.processing_queue_name !== `${this.config.queue_name}_processing`) {
-        pipeline.del(this.config.processing_queue_name);
+      pipeline.del(this.config.processing_queue_name);
     }
-    
+
     // Clear other queues and metadata
     pipeline.del(this.config.dead_letter_queue_name);
     pipeline.del(this.config.acknowledged_queue_name);
