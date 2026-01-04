@@ -27,7 +27,8 @@ import {
     Copy,
     Download,
     Upload,
-    Archive
+    Archive,
+    Eye
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -183,6 +184,13 @@ export default function Dashboard() {
     const [dlqReason, setDlqReason] = useState("")
 
     const [createDialog, setCreateDialog] = useState(false);
+    const [viewPayloadDialog, setViewPayloadDialog] = useState<{
+        isOpen: boolean;
+        payload: any;
+    }>({
+        isOpen: false,
+        payload: null,
+    });
 
     // System Status (Counts)
     const [statusData, setStatusData] = useState<SystemStatus | null>(null)
@@ -1627,6 +1635,7 @@ export default function Dashboard() {
                                 config={config}
                                 onDelete={handleTableDelete}
                                 onEdit={activeTab === 'main' || activeTab === 'processing' ? handleTableEdit : undefined}
+                                onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1653,6 +1662,7 @@ export default function Dashboard() {
                                 config={config}
                                 onDelete={handleTableDelete}
                                 onEdit={handleTableEdit}
+                                onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
                                 formatTime={formatTimestamp}
                                 pageSize={pageSize}
                                 setPageSize={setPageSize}
@@ -1707,6 +1717,12 @@ export default function Dashboard() {
                 onSave={handleSaveEdit}
                 message={editDialog.message}
                 queueType={editDialog.queueType}
+            />
+
+            <ViewPayloadDialog
+                isOpen={viewPayloadDialog.isOpen}
+                onClose={() => setViewPayloadDialog(prev => ({ ...prev, isOpen: false }))}
+                payload={viewPayloadDialog.payload}
             />
 
             <MoveMessageDialog
@@ -2054,6 +2070,7 @@ const MessageRow = React.memo(({
     config,
     onDelete,
     onEdit,
+    onViewPayload,
     formatTime,
     getTimeValue,
     getPriorityBadge,
@@ -2067,6 +2084,7 @@ const MessageRow = React.memo(({
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
+    onViewPayload: (payload: any) => void,
     formatTime: (ts?: number) => string,
     getTimeValue: (m: Message) => number | undefined,
     getPriorityBadge: (p: number) => React.ReactNode,
@@ -2122,6 +2140,19 @@ const MessageRow = React.memo(({
             )}
             <TableCell className="text-right pr-6">
                 <div className="flex justify-end gap-1">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation()
+                            onViewPayload(msg.payload)
+                        }}
+                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                        title="View Payload"
+                    >
+                        <Eye className="h-4 w-4" />
+                    </Button>
                     {onEdit && (
                         <Button
                             type="button"
@@ -2162,6 +2193,7 @@ const QueueTable = React.memo(({
     config,
     onDelete,
     onEdit,
+    onViewPayload,
     formatTime,
     pageSize,
     setPageSize,
@@ -2186,6 +2218,7 @@ const QueueTable = React.memo(({
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
+    onViewPayload: (payload: any) => void,
     formatTime: (ts?: number) => string,
     pageSize: string,
     setPageSize: (size: string) => void,
@@ -2375,6 +2408,7 @@ const QueueTable = React.memo(({
                                         config={config}
                                         onDelete={onDelete}
                                         onEdit={onEdit}
+                                        onViewPayload={onViewPayload}
                                         formatTime={formatTime}
                                         getTimeValue={getTimeValue}
                                         getPriorityBadge={getPriorityBadge}
@@ -2399,6 +2433,7 @@ const QueueTable = React.memo(({
                                     config={config}
                                     onDelete={onDelete}
                                     onEdit={onEdit}
+                                    onViewPayload={onViewPayload}
                                     formatTime={formatTime}
                                     getTimeValue={getTimeValue}
                                     getPriorityBadge={getPriorityBadge}
@@ -2423,6 +2458,82 @@ const QueueTable = React.memo(({
         </div>
     )
 })
+
+function ViewPayloadDialog({
+    isOpen,
+    onClose,
+    payload
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    payload: any;
+}) {
+    const [copied, setCopied] = useState(false);
+    const jsonString = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
+
+    const copyToClipboard = async () => {
+        try {
+            await navigator.clipboard.writeText(jsonString);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.error("Failed to copy:", err);
+        }
+    };
+
+    const highlightJson = (json: string) => {
+        return json.split('\n').map((line, i) => {
+            const parts = line.split(/(".*?"|[:{}\[\]]|true|false|null|\d+)/g);
+            return (
+                <div key={i} className="min-h-[1.2em]">
+                    {parts.map((part, j) => {
+                        if (part.startsWith('"') && part.endsWith('"')) {
+                            const isKey = line.indexOf(part) < line.indexOf(':');
+                            return <span key={j} className={isKey ? "text-blue-600" : "text-green-600"}>{part}</span>;
+                        }
+                        if (/^[:{}\[\]]$/.test(part)) return <span key={j} className="text-gray-500">{part}</span>;
+                        if (/^(true|false|null)$/.test(part)) return <span key={j} className="text-purple-600">{part}</span>;
+                        if (/^\d+$/.test(part)) return <span key={j} className="text-orange-600">{part}</span>;
+                        return <span key={j}>{part}</span>;
+                    })}
+                </div>
+            );
+        });
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
+            <DialogContent className="sm:max-w-[1000px] w-[90vw] max-h-[90vh] flex flex-col">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                        <span>Message Payload</span>
+                    </DialogTitle>
+                </DialogHeader>
+                <div className="group relative flex-1 overflow-hidden mt-4 rounded-md border bg-slate-50 text-slate-900 p-6">
+                    <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={copyToClipboard}
+                        className="absolute right-4 top-4 z-10 h-8 w-8 bg-white/80 backdrop-blur-sm border-slate-200 opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-slate-100 hover:text-slate-900 shadow-sm"
+                        title={copied ? "Copied!" : "Copy JSON"}
+                    >
+                        {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                    <ScrollArea className="h-[60vh]">
+                        <pre className="text-sm font-mono whitespace-pre leading-relaxed">
+                            {highlightJson(jsonString)}
+                        </pre>
+                    </ScrollArea>
+                </div>
+                <DialogFooter className="mt-4">
+                    <Button variant="secondary" onClick={onClose}>
+                        Close
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
 
 function EditMessageDialog({
     isOpen,
@@ -2824,6 +2935,7 @@ const DeadLetterRow = React.memo(({
     config,
     onDelete,
     onEdit,
+    onViewPayload,
     formatTime,
     getPriorityBadge,
     onToggleSelect
@@ -2834,6 +2946,7 @@ const DeadLetterRow = React.memo(({
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
+    onViewPayload: (payload: any) => void,
     formatTime: (ts?: number) => string,
     getPriorityBadge: (p: number) => React.ReactNode,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
@@ -2884,6 +2997,19 @@ const DeadLetterRow = React.memo(({
             </TableCell>
             <TableCell className="text-right pr-6">
                 <div className="flex justify-end gap-1">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation()
+                            onViewPayload(msg.payload)
+                        }}
+                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                        title="View Payload"
+                    >
+                        <Eye className="h-4 w-4" />
+                    </Button>
                     {onEdit && (
                         <Button
                             type="button"
@@ -2923,6 +3049,7 @@ const DeadLetterTable = React.memo(({
     config,
     onDelete,
     onEdit,
+    onViewPayload,
     formatTime,
     pageSize,
     setPageSize,
@@ -2946,6 +3073,7 @@ const DeadLetterTable = React.memo(({
     config?: { ack_timeout_seconds: number; max_attempts: number } | null,
     onDelete: (id: string) => void,
     onEdit?: (message: Message) => void,
+    onViewPayload: (payload: any) => void,
     formatTime: (ts?: number) => string,
     pageSize: string,
     setPageSize: (size: string) => void,
@@ -3065,6 +3193,7 @@ const DeadLetterTable = React.memo(({
                                         config={config}
                                         onDelete={onDelete}
                                         onEdit={onEdit}
+                                        onViewPayload={onViewPayload}
                                         formatTime={formatTime}
                                         getPriorityBadge={getPriorityBadge}
                                         onToggleSelect={onToggleSelect}
@@ -3086,6 +3215,7 @@ const DeadLetterTable = React.memo(({
                                     config={config}
                                     onDelete={onDelete}
                                     onEdit={onEdit}
+                                    onViewPayload={onViewPayload}
                                     formatTime={formatTime}
                                     getPriorityBadge={getPriorityBadge}
                                     onToggleSelect={onToggleSelect}

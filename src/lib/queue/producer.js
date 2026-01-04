@@ -4,10 +4,9 @@ import { generateId, logger } from "./utils.js";
  * Enqueues a message to the queue.
  * @param {Object} messageData - The message data.
  * @param {number} [priority=0] - Priority level.
- * @param {string|null} [queueNameOverride=null] - Optional queue name override.
  * @returns {Promise<boolean>} True if successful.
  */
-export async function enqueueMessage(messageData, priority = 0, queueNameOverride = null) {
+export async function enqueueMessage(messageData, priority = 0) {
   try {
     if (!messageData.id) {
       messageData.id = generateId();
@@ -18,7 +17,7 @@ export async function enqueueMessage(messageData, priority = 0, queueNameOverrid
     messageData.priority = priority;
 
     const messageJson = this._serializeMessage(messageData);
-    const queueName = queueNameOverride || this._getPriorityStreamName(priority);
+    const queueName = this._getPriorityStreamName(priority);
 
     await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
 

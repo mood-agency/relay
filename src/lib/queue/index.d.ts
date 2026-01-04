@@ -156,7 +156,7 @@ export class OptimizedRedisQueue {
   _deserializeMessage(messageJson: string): any;
 
   // Producer
-  enqueueMessage(messageData: any, priority?: number, queueNameOverride?: string | null): Promise<boolean>;
+  enqueueMessage(messageData: any, priority?: number): Promise<boolean>;
   enqueueBatch(messages: any[]): Promise<number>;
 
   // Consumer

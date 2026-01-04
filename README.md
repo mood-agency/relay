@@ -508,6 +508,14 @@ Built with:
 - [Hono](https://hono.dev/) - Fast web framework
 - [ioredis](https://github.com/redis/ioredis) - Redis client
 - [Redis Streams](https://redis.io/docs/data-types/streams/) - Native Redis data structure
+- [Scalar](https://scalar.com/) - Beautiful API documentation
+- [zod-openapi](https://github.com/honojs/middleware/tree/main/packages/zod-openapi) - OpenAPI generator
+- [Shadcn UI](https://ui.shadcn.com/) - Beautiful UI components
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Vite](https://vite.dev/) - Fast development tool
+- [TypeScript](https://www.typescriptlang.org/) - Typed JavaScript
+- [pnpm](https://pnpm.io/) - Fast, disk space efficient package manager
+- [Bun](https://bun.sh/) - Fast, all-in-one JavaScript runtime
 
 ---
 

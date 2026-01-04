@@ -108,14 +108,14 @@ const queueConfig: QueueConfigI = {
 export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig as any));
 
 export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
-  const { type, payload, priority, ackTimeout, maxAttempts, queue: queueName } = c.req.valid("json");
+  const { type, payload, priority, ackTimeout, maxAttempts } = c.req.valid("json");
 
   const message = await queue.enqueueMessage({
     type,
     payload,
     custom_ack_timeout: ackTimeout,
     custom_max_attempts: maxAttempts,
-  }, priority, queueName);
+  }, priority);
 
   if (!message) {
     return c.json({ message: "Message not added" }, 500);
@@ -315,7 +315,6 @@ export const importMessages: AppRouteHandler<ImportMessagesRoute> = async (c: an
       priority: m.priority,
       ackTimeout: m.custom_ack_timeout || m.ackTimeout,
       maxAttempts: m.custom_max_attempts || m.maxAttempts,
-      queue: 'main' // Always import to main queue by default
     }));
 
     // Use existing batch enqueue logic

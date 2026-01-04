@@ -25,7 +25,6 @@ export const QueueMessageSchema = z.object({
   priority: z.number().optional(),
   ackTimeout: z.number().optional(),
   maxAttempts: z.number().int().positive().optional(),
-  queue: z.string().optional(),
 });
 
 export type QueueMessage = z.infer<typeof QueueMessageSchema>;
