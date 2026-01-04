@@ -2110,7 +2110,7 @@ const MessageRow = React.memo(({
                     {msg.id}
                 </span>
             </TableCell>
-            <TableCell className="text-left"><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+            <TableCell className="text-left"><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
             <TableCell className="max-w-[300px]">
                 <div className="truncate text-xs font-mono" title={payloadText}>
@@ -2971,7 +2971,7 @@ const DeadLetterRow = React.memo(({
                     {msg.id}
                 </span>
             </TableCell>
-            <TableCell><Badge variant="outline" className="font-medium">{msg.type}</Badge></TableCell>
+            <TableCell><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
             <TableCell className="max-w-[300px]">
                 <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
