@@ -32,6 +32,10 @@ pub struct PlanArgs {
     #[arg(long, short = 'o', default_value = "test-plan.json")]
     pub output: PathBuf,
 
+    /// Generate E2E workflow tests instead of individual endpoint tests
+    #[arg(long, default_value_t = false)]
+    pub e2e: bool,
+
     /// LLM API Base URL for custom endpoints (e.g., https://api.together.xyz/v1)
     /// If not set, genai auto-detects from model name and uses provider env vars
     #[arg(long, env = "ROHAN_API_BASE")]
@@ -48,6 +52,10 @@ pub struct PlanArgs {
     /// Maximum requests per minute to the LLM API (0 = unlimited)
     #[arg(long, env = "ROHAN_RPM", default_value_t = 0)]
     pub rpm: u32,
+
+    /// Number of endpoints to batch per LLM request (1 = no batching)
+    #[arg(long, env = "ROHAN_BATCH_SIZE", default_value_t = 5)]
+    pub batch_size: usize,
 
     /// Enable verbose logging
     #[arg(long, default_value_t = false)]
@@ -68,6 +76,14 @@ pub struct BuildArgs {
     #[arg(long, short = 'o', default_value = "tests/")]
     pub output: PathBuf,
 
+    /// Overwrite existing test files (default: false, skips existing files)
+    #[arg(long, default_value_t = false)]
+    pub overwrite: bool,
+
+    /// Generate E2E workflow tests (should match the mode used in 'plan')
+    #[arg(long, default_value_t = false)]
+    pub e2e: bool,
+
     /// LLM API Base URL for custom endpoints (e.g., https://api.together.xyz/v1)
     /// If not set, genai auto-detects from model name and uses provider env vars
     #[arg(long, env = "ROHAN_API_BASE")]
@@ -84,6 +100,10 @@ pub struct BuildArgs {
     /// Maximum requests per minute to the LLM API (0 = unlimited)
     #[arg(long, env = "ROHAN_RPM", default_value_t = 0)]
     pub rpm: u32,
+
+    /// Number of tests to batch per LLM request (1 = no batching)
+    #[arg(long, env = "ROHAN_BATCH_SIZE", default_value_t = 5)]
+    pub batch_size: usize,
 
     /// Enable verbose logging
     #[arg(long, default_value_t = false)]

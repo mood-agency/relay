@@ -147,6 +147,23 @@ export default function() {
 }
 ```
 
+## Boundary Value Guidelines
+
+When test names include these keywords, use these SPECIFIC values:
+
+| Keyword | Value to Use |
+|---------|--------------|
+| `Large` | `999999999` (9 digits) |
+| `Max` | `2147483647` (32-bit signed int max) |
+| `Min` | `-2147483648` (32-bit signed int min) |
+| `Zero` | `0` |
+| `Negative` | `-1` |
+| `Empty` | `""` for strings, `[]` for arrays, `{}` for objects |
+| `Long` | String of 1000 characters |
+| `Overflow` | `9007199254740992` (beyond JS safe integer) |
+
+Do NOT generate arbitrary large numbers with thousands of digits. Keep values reasonable and realistic.
+
 ## Output Rules
 - Return ONLY the JavaScript code, no markdown code fences
 - Keep tests SHORT (10-20 lines max)

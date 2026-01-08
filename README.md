@@ -78,7 +78,7 @@ rohan plan api-spec.json -o test-plan.json -w 1 --rps 3
 rohan build test-plan.json -o tests/ -w 1 --rps 5
 
 # Step 3: Run tests with k6
-k6 run --env BASE_URL=http://localhost:8080 tests/test_1.js
+k6 run --env BASE_URL=http://localhost:8080 tests/test_get_users_basic.js
 
 # Or run all tests
 for f in tests/*.js; do k6 run --env BASE_URL=http://localhost:8080 "$f"; done
@@ -122,14 +122,20 @@ Creates a `test-plan.json` file containing test entries:
 rohan build test-plan.json -o tests/ -w 5
 ```
 
-Generates k6-compatible JavaScript tests:
+Generates k6-compatible JavaScript tests with descriptive filenames:
 
 ```
 tests/
 ├── manifest.json
-├── test_1.js    # Get_Users_Basic
-├── test_2.js    # Create_User_Basic
+├── test_get_users_basic.js
+├── test_create_user_basic.js
 └── ...
+```
+
+By default, existing test files are **not overwritten**. Use `--overwrite` to replace them:
+
+```bash
+rohan build test-plan.json -o tests/ --overwrite
 ```
 
 Each test file is a complete k6 script:
@@ -155,7 +161,7 @@ export default function() {
 
 ```bash
 # Run a single test
-k6 run --env BASE_URL=http://localhost:8080 tests/test_1.js
+k6 run --env BASE_URL=http://localhost:8080 tests/test_get_users_basic.js
 
 # Run all tests (bash/zsh)
 for f in tests/*.js; do k6 run --env BASE_URL=http://localhost:8080 "$f"; done
@@ -164,7 +170,7 @@ for f in tests/*.js; do k6 run --env BASE_URL=http://localhost:8080 "$f"; done
 Get-ChildItem tests\*.js | ForEach-Object { k6 run --env BASE_URL=http://localhost:8080 $_.FullName }
 
 # Load test with 10 virtual users for 30 seconds
-k6 run --env BASE_URL=http://localhost:8080 --vus 10 --duration 30s tests/test_1.js
+k6 run --env BASE_URL=http://localhost:8080 --vus 10 --duration 30s tests/test_get_users_basic.js
 ```
 
 ## CLI Reference
@@ -190,7 +196,8 @@ rohan plan <spec-path> [options]
 | `-w`, `--workers` | int | 5 | Number of parallel LLM workers |
 | `--model` | string | `llama3-70b-8192` | LLM model identifier |
 | `--api-base` | URL | auto-detected | Custom LLM API endpoint |
-| `--rps` | int | 0 | Max requests per second (0 = unlimited) |
+| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
+| `--batch-size` | int | 5 | Number of endpoints to batch per LLM request |
 
 ### `build` Command
 
@@ -201,10 +208,12 @@ rohan build <plan-path> [options]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-o`, `--output` | path | `tests/` | Output directory for test scripts |
+| `--overwrite` | bool | `false` | Overwrite existing test files (skips by default) |
 | `-w`, `--workers` | int | 5 | Number of parallel LLM workers |
 | `--model` | string | `llama3-70b-8192` | LLM model identifier |
 | `--api-base` | URL | auto-detected | Custom LLM API endpoint |
-| `--rps` | int | 0 | Max requests per second (0 = unlimited) |
+| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
+| `--batch-size` | int | 5 | Number of tests to batch per LLM request |
 
 ### `exec` Command
 
@@ -251,8 +260,38 @@ The test names in the plan guide the LLM to generate appropriate test code:
 |----------|-------------|
 | `ROHAN_MODEL` | Default LLM model |
 | `ROHAN_API_BASE` | Custom API endpoint |
-| `ROHAN_RPS` | Default max requests per second |
+| `ROHAN_RPM` | Default max requests per minute |
+| `ROHAN_BATCH_SIZE` | Default batch size for LLM requests |
 | `ROHAN_PROMPT_DIR` | Custom prompt directory |
+
+## Batching for Efficiency
+
+Rohan supports batching multiple endpoints/tests per LLM request, which significantly reduces:
+
+- **Token consumption**: System prompts are only sent once per batch instead of once per item
+- **API calls**: 50 endpoints with batch size 5 = 10 requests instead of 50
+- **Rate limit pressure**: Fewer requests means less chance of hitting rate limits
+
+### Batching Examples
+
+```bash
+# Batch 10 endpoints per request during planning
+rohan plan api-spec.json --batch-size 10
+
+# Batch 5 tests per request during building (default)
+rohan build test-plan.json --batch-size 5
+
+# Disable batching (one item per request)
+rohan plan api-spec.json --batch-size 1
+```
+
+### How Batching Works
+
+**Planning phase**: Multiple endpoints are sent to the LLM together. The LLM returns a JSON object mapping each endpoint ID to its test names.
+
+**Building phase**: Multiple tests are sent to the LLM together. The LLM returns a JSON object mapping each test name to its JavaScript code.
+
+If a batch fails to parse, the entire batch is reported as failed. For maximum reliability with smaller models, use `--batch-size 1`.
 
 ## Architecture
 
