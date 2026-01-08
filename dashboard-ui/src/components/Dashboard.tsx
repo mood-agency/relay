@@ -86,6 +86,7 @@ interface Message {
     custom_ack_timeout?: number
     custom_max_attempts?: number
     archived_at?: number
+    consumer_id?: string | null
 }
 
 interface Pagination {
@@ -2135,6 +2136,17 @@ const MessageRow = React.memo(({
             )}
             {queueType === 'processing' && (
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
+                    {msg.consumer_id ? (
+                        <Badge variant="outline" className="font-mono text-xs">
+                            {msg.consumer_id}
+                        </Badge>
+                    ) : (
+                        <span className="text-muted-foreground italic">—</span>
+                    )}
+                </TableCell>
+            )}
+            {queueType === 'processing' && (
+                <TableCell className="text-xs text-foreground whitespace-nowrap">
                     {calculateTimeRemaining(msg)}
                 </TableCell>
             )}
@@ -2373,6 +2385,7 @@ const QueueTable = React.memo(({
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
+                            {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Consumer</TableHead>}
                             {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Time Remaining</TableHead>}
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
@@ -2381,7 +2394,7 @@ const QueueTable = React.memo(({
                         {messages.length === 0 ? (
                             !isLoading && (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={9} className="h-[400px] p-0">
+                                    <TableCell colSpan={10} className="h-[400px] p-0">
                                         <EmptyState
                                             icon={isFilterActive ? Search : Inbox}
                                             title="No messages found"
@@ -2395,7 +2408,7 @@ const QueueTable = React.memo(({
                             <>
                                 {virtual.topSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                        <TableCell colSpan={10} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg: Message) => (
@@ -2418,7 +2431,7 @@ const QueueTable = React.memo(({
                                 ))}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                        <TableCell colSpan={10} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
                                     </TableRow>
                                 )}
                             </>

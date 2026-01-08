@@ -923,6 +923,7 @@ export async function getQueueMessages(queueType, params = {}) {
                   m.last_error = meta.last_error;
                   if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
                   if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+                  if (meta.consumer_id) m.consumer_id = meta.consumer_id;
                 } catch (e) { }
               } else {
                 const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);

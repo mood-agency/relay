@@ -42,6 +42,7 @@ export const DequeuedMessageSchema = z.object({
   last_error: z.string().nullable(),
   processing_duration: z.number(),
   acknowledged_at: z.number().optional(),
+  consumer_id: z.string().optional(),
   _stream_id: z.string().optional(),
   _stream_name: z.string().optional(),
 });
@@ -106,7 +107,8 @@ export const getMessage = createRoute({
   request: {
     query: z.object({ 
       timeout: z.string().pipe(z.coerce.number()).optional(),
-      ackTimeout: z.string().pipe(z.coerce.number()).optional() 
+      ackTimeout: z.string().pipe(z.coerce.number()).optional(),
+      consumerId: z.string().optional()
     }),
   },
   responses: {
@@ -115,7 +117,8 @@ export const getMessage = createRoute({
     422: jsonContent(
       createErrorSchema(z.object({ 
         timeout: z.number().optional(),
-        ackTimeout: z.number().optional()
+        ackTimeout: z.number().optional(),
+        consumerId: z.string().optional()
       })),
       "Validation Error"
     ),
