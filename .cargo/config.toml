@@ -1,0 +1,4 @@
+[build]
+# Use same target-dir to avoid conflicts
+target-dir = "target"
+
