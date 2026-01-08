@@ -6,9 +6,10 @@ import { MessageMetadata } from "./models.js";
  * @param {number} [timeout=0] - Timeout in seconds.
  * @param {number|null} [ackTimeout=null] - Acknowledgement timeout.
  * @param {string[]|null} [specificStreams=null] - Specific streams to poll.
+ * @param {string|null} [consumerId=null] - Identifier of the consumer dequeuing the message.
  * @returns {Promise<Object|null>} The dequeued message or null.
  */
-export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStreams = null) {
+export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStreams = null, consumerId = null) {
   const priorityStreams = specificStreams || this._getAllPriorityStreams(); // Highest priority first
   const timeoutMs = Math.max(0, Math.floor(timeout * 1000));
 
@@ -132,6 +133,11 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
     metadata.dequeued_at = currentTime;
     metadata.attempt_count += 1;
     
+    // Store consumer ID if provided
+    if (consumerId) {
+      metadata.consumer_id = consumerId;
+    }
+    
     if (ackTimeout) {
       metadata.custom_ack_timeout = ackTimeout;
     } else if (messageData.custom_ack_timeout) {
@@ -148,6 +154,7 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
     // Update metadata (include the full message data for acknowledgment)
     const metadataWithMessage = {
       ...metadata,
+      consumer_id: metadata.consumer_id || null,
       _original_message: {
         type: messageData.type,
         payload: messageData.payload,
@@ -168,7 +175,7 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
 
     this._stats.dequeued++;
     logger.info(
-      `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
+      `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}${consumerId ? ` by consumer: ${consumerId}` : ''}`
     );
     
     // Return message with updated metadata
@@ -176,7 +183,8 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
       ...messageData,
       attempt_count: metadata.attempt_count,
       dequeued_at: metadata.dequeued_at,
-      processing_started_at: metadata.dequeued_at
+      processing_started_at: metadata.dequeued_at,
+      consumer_id: metadata.consumer_id || null
     };
 
   } catch (e) {

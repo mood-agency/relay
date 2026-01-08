@@ -172,8 +172,8 @@ export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
 };
 
 export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
-  const { timeout, ackTimeout } = c.req.valid("query");
-  const message = (await queue.dequeueMessage(timeout, ackTimeout)) as DequeuedMessage;
+  const { timeout, ackTimeout, consumerId } = c.req.valid("query");
+  const message = (await queue.dequeueMessage(timeout, ackTimeout, null, consumerId)) as DequeuedMessage;
   if (!message) {
     return c.json({ message: "Message not found" }, 404);
   }
