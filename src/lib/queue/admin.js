@@ -124,7 +124,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
       newMsg.archived_at = Date.now() / 1000;
     } else if (toQueue === 'dead') {
       newMsg.failed_at = Date.now() / 1000;
-      newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to DLQ";
+      newMsg.last_error = errorReason || newMsg.last_error || "Manually moved to Failed Queue";
     }
 
     const msgJson = this._serializeMessage(newMsg);

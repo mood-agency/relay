@@ -10,16 +10,24 @@ import { apiKeyAuth } from "./middlewares/api-key";
 const apiApp = createApp();
 
 // Apply API key authentication middleware to all API routes
-// Note: Health check (/health) and SSE events (/queue/events) are excluded from auth
+// Note: Health check, SSE events, and docs endpoints are excluded from auth
 apiApp.use("*", async (c, next) => {
-  // Skip auth for health check and SSE events endpoints
+  // Skip auth for health check, SSE events, and documentation endpoints
   // SSE events are read-only and EventSource doesn't support custom headers
+  // Docs endpoints should be publicly accessible
   const path = c.req.path;
-  if (path === "/health" || path.endsWith("/queue/events") || path.endsWith("/health")) {
+  if (
+    path.endsWith("/health") ||
+    path.endsWith("/queue/events") ||
+    path.endsWith("/doc") ||
+    path.endsWith("/docs") ||
+    path.endsWith("/reference")
+  ) {
     return next();
   }
   return apiKeyAuth()(c, next);
 });
+
 
 const routes = [queue];
 configureOpenApi(apiApp);

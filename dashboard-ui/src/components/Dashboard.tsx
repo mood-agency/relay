@@ -13,6 +13,7 @@ import {
     Filter,
     ChevronLeft,
     ChevronRight,
+    ChevronDown,
     ChevronsLeft,
     ChevronsRight,
     Pencil,
@@ -20,7 +21,7 @@ import {
     ArrowUp,
     ArrowDown,
     Search,
-    Move,
+    ArrowRightLeft,
     Plus,
     Pickaxe,
     Check,
@@ -30,7 +31,8 @@ import {
     Archive,
     Eye,
     Key,
-    KeyRound
+    KeyRound,
+    MoreVertical
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -70,6 +72,11 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover"
 
 // Helper function to syntax highlight JSON
 function syntaxHighlightJson(json: string): string {
@@ -151,6 +158,15 @@ interface SystemStatus {
 
 const QUEUE_TABS = ["main", "processing", "dead", "acknowledged", "archived"] as const
 type QueueTab = (typeof QUEUE_TABS)[number]
+
+const QUEUE_TAB_NAMES: Record<QueueTab, string> = {
+    main: "Main",
+    processing: "Processing ",
+    dead: "Failed",
+    acknowledged: "Acknowledged",
+    archived: "Archived",
+}
+
 type SortOrder = "asc" | "desc"
 
 type DashboardState = {
@@ -364,6 +380,7 @@ export default function Dashboard() {
     const [sortBy, setSortBy] = useState(() => initialDashboardState.sortBy)
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">(() => initialDashboardState.sortOrder)
     const [search, setSearch] = useState(() => initialDashboardState.search)
+    const [filtersExpanded, setFiltersExpanded] = useState(false)
 
     // Config State
     const [config, setConfig] = useState<{ ack_timeout_seconds: number; max_attempts: number } | null>(null);
@@ -1201,14 +1218,14 @@ export default function Dashboard() {
         })
     }
 
-    const handleClearCurrentQueue = () => {
+    const handleClearQueue = useCallback((queueType: string, label: string) => {
         setConfirmDialog({
             isOpen: true,
-            title: `Clear ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Queue`,
-            description: `Are you sure you want to delete ALL messages in the ${activeTab} queue? This action cannot be undone.`,
+            title: `Clear ${label} Queue`,
+            description: `Are you sure you want to delete ALL messages in the ${label} queue? This action cannot be undone.`,
             action: async () => {
                 try {
-                    await authFetch(`/api/queue/${activeTab}/clear`, {
+                    await authFetch(`/api/queue/${queueType}/clear`, {
                         method: 'DELETE',
                     })
                     fetchAll()
@@ -1218,7 +1235,7 @@ export default function Dashboard() {
                 }
             }
         })
-    }
+    }, [authFetch, fetchAll])
 
     const handleExport = () => {
         try {
@@ -1311,36 +1328,20 @@ export default function Dashboard() {
 
     return (
         <div className="container mx-auto py-6 px-4 max-w-[1600px] h-screen max-h-screen overflow-hidden flex flex-col animate-in fade-in duration-500">
-            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8 items-stretch">
-                {/* Left Sidebar */}
-                <div className="space-y-6 lg:sticky lg:top-6 self-start">
-                    {/* Header */}
-                    <div className="flex items-center gap-3 px-2">
-                        <div>
-                            <h1 className="text-xl font-bold tracking-tight text-foreground leading-none">Relay</h1>
-                        </div>
-                    </div>
+            <div className="flex-1 min-h-0 flex flex-col gap-4">
+                    {error && (
+                        <Card className="border-destructive/50 bg-destructive/10">
+                            <CardContent className="pt-6 flex items-center gap-3 text-destructive">
+                                <AlertTriangle className="h-5 w-5" />
+                                <p className="font-medium text-sm">Error: {error}</p>
+                            </CardContent>
+                        </Card>
+                    )}
 
-                    <div className="space-y-6">
-                        {/* Actions */}
-                        <div className="flex items-center gap-1 px-2">
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        onClick={() => setCreateDialog(true)}
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Create Message"
-                                    >
-                                        <Plus className="h-3.5 w-3.5" />
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Create Message</p>
-                                </TooltipContent>
-                            </Tooltip>
-
+                    {/* Header with Title and Actions */}
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                            <h1 className="text-lg font-bold tracking-tight text-foreground mr-1">Relay</h1>
                             <Tooltip>
                                 <TooltipTrigger asChild>
                                     <Button
@@ -1373,324 +1374,284 @@ export default function Dashboard() {
                                     <p>{autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
                                 </TooltipContent>
                             </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
+                            {selectedIds.size > 0 && (
+                                <>
+                                    <div className="w-px h-5 bg-border/50 mx-1" />
+                                    <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
+                                        {selectedIds.size.toLocaleString()} selected
+                                    </span>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() => {
+                                                    const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived'];
+                                                    const defaultTarget = queues.find(q => q !== activeTab) || 'main';
+                                                    setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }));
+                                                }}
+                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
+                                            >
+                                                <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Move selected</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={handleBulkDelete}
+                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Delete selected</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <Popover>
+                                <PopoverTrigger asChild>
                                     <Button
-                                        onClick={() => setShowApiKeyInput(true)}
                                         variant="ghost"
                                         size="icon"
-                                        className={cn("h-8 w-8", apiKey && "text-green-600")}
-                                        aria-label="Configure API Key"
+                                        className={cn("h-8 w-8 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                        aria-label="Filters"
                                     >
-                                        {apiKey ? <KeyRound className="h-3.5 w-3.5" /> : <Key className="h-3.5 w-3.5" />}
+                                        <Filter className="h-3.5 w-3.5" />
+                                        {isFilterActive && (
+                                            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                        )}
                                     </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>{apiKey ? "API Key Configured" : "Configure API Key"}</p>
-                                </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-72 p-4" align="end">
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="font-medium text-sm">Filters</h4>
+                                            {isFilterActive && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setSearch("")
+                                                        setFilterType("all")
+                                                        setFilterPriority("")
+                                                        setFilterAttempts("")
+                                                        setStartDate(undefined)
+                                                        setEndDate(undefined)
+                                                    }}
+                                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                >
+                                                    Clear all
+                                                </Button>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-foreground/80">Search</label>
+                                            <div className="relative">
+                                                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <input
+                                                    placeholder="Search ID, payload..."
+                                                    value={search}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+                                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-foreground/80">Message Type</label>
+                                            <MultipleSelector
+                                                defaultOptions={availableTypes.map(t => ({ label: t, value: t }))}
+                                                value={
+                                                    filterType === "all" || !filterType
+                                                        ? []
+                                                        : filterType.split(",").map(t => ({ label: t, value: t }))
+                                                }
+                                                onChange={(selected: Option[]) => {
+                                                    if (selected.length === 0) {
+                                                        setFilterType("all");
+                                                    } else {
+                                                        setFilterType(selected.map(s => s.value).join(","));
+                                                    }
+                                                }}
+                                                hideClearAllButton
+                                                badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
+                                                emptyIndicator={
+                                                    <p className="text-center text-sm text-muted-foreground">No types found</p>
+                                                }
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-foreground/80">Priority</label>
+                                            <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority(val === "any" ? "" : val)}>
+                                                <SelectTrigger className="w-full">
+                                                    <SelectValue placeholder="Any" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="any">Any</SelectItem>
+                                                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                                                        <SelectItem key={p} value={String(p)}>{p}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                placeholder="Any"
+                                                value={filterAttempts}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                                    const val = e.target.value;
+                                                    if (val === "" || /^\d+$/.test(val)) {
+                                                        setFilterAttempts(val);
+                                                    }
+                                                }}
+                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-foreground/80">Date Range</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground">Start</label>
+                                                    <DateTimePicker
+                                                        date={startDate}
+                                                        setDate={setStartDate}
+                                                        placeholder="Start"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-muted-foreground">End</label>
+                                                    <DateTimePicker
+                                                        date={endDate}
+                                                        setDate={setEndDate}
+                                                        placeholder="End"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </PopoverContent>
+                            </Popover>
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="More actions"
+                                    >
+                                        <MoreVertical className="h-3.5 w-3.5" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-48 p-1" align="end">
+                                    <Button
+                                        onClick={() => setCreateDialog(true)}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Create Message
+                                    </Button>
                                     <Button
                                         onClick={() => fileInputRef.current?.click()}
                                         variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Import Messages"
+                                        className="w-full justify-start gap-2 h-9 px-2"
                                     >
-                                        <Upload className="h-3.5 w-3.5" />
+                                        <Upload className="h-4 w-4" />
+                                        Import Messages
                                     </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Import Messages</p>
-                                </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
                                     <Button
                                         onClick={handleExport}
                                         variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Export Messages"
+                                        className="w-full justify-start gap-2 h-9 px-2"
                                     >
-                                        <Download className="h-3.5 w-3.5" />
+                                        <Download className="h-4 w-4" />
+                                        Export Messages
                                     </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Export Messages</p>
-                                </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={() => setShowApiKeyInput(true)}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
+                                        {apiKey ? "API Key Configured" : "Configure API Key"}
+                                    </Button>
                                     <Button
                                         onClick={handleClearAll}
                                         variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                        aria-label="Clear all queues"
+                                        className="w-full justify-start gap-2 h-9 px-2"
                                     >
-                                        <Trash2 className="h-3.5 w-3.5" />
+                                        <Trash2 className="h-4 w-4" />
+                                        Clear All Queues
                                     </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Clear all queues</p>
-                                </TooltipContent>
-                            </Tooltip>
-                        </div>
-
-                        <div className="h-px bg-border/50" />
-
-                        {/* Queue Navigation */}
-                        <div className="space-y-1">
-                            <h3 className="text-xs font-semibold text-muted-foreground px-2 pb-2 uppercase tracking-wider">Queues</h3>
-                            <NavButton
-                                active={activeTab === 'main'}
-                                href={getTabHref("main")}
-                                onClick={() => navigateToTab('main')}
-                                icon={Inbox}
-                                label="Main"
-                                count={statusData?.mainQueue?.length}
-                            />
-                            <NavButton
-                                active={activeTab === 'processing'}
-                                href={getTabHref("processing")}
-                                onClick={() => navigateToTab('processing')}
-                                icon={Pickaxe}
-                                label="Processing"
-                                count={statusData?.processingQueue?.length}
-                            />
-                            <NavButton
-                                active={activeTab === 'dead'}
-                                href={getTabHref("dead")}
-                                onClick={() => navigateToTab('dead')}
-                                icon={XCircle}
-                                label="Failed"
-                                count={statusData?.deadLetterQueue?.length}
-                                variant="destructive"
-                            />
-                            <NavButton
-                                active={activeTab === 'acknowledged'}
-                                href={getTabHref("acknowledged")}
-                                onClick={() => navigateToTab('acknowledged')}
-                                icon={Check}
-                                label="Done"
-                                count={statusData?.acknowledgedQueue?.length}
-                                variant="success"
-                            />
-                            <NavButton
-                                active={activeTab === 'archived'}
-                                href={getTabHref("archived")}
-                                onClick={() => navigateToTab('archived')}
-                                icon={Archive}
-                                label="Archived"
-                                count={statusData?.archivedQueue?.length}
-                            />
-                        </div>
-
-                        <div className="h-px bg-border/50" />
-
-                        {/* Filters */}
-                        <div className="space-y-4">
-                            <h3 className="text-xs font-semibold text-muted-foreground px-2 uppercase tracking-wider flex items-center gap-2">
-                                <Filter className="h-3 w-3" /> Filters
-                            </h3>
-                            <div className="space-y-4 px-1">
-                                {/* Search */}
-                                <div className="space-y-2">
-                                    <label className="text-xs font-medium text-foreground/80">Search</label>
-                                    <div className="relative">
-                                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                        <input
-                                            placeholder="Search ID, payload..."
-                                            value={search}
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-xs font-medium text-foreground/80">Message Type</label>
-                                    <MultipleSelector
-                                        defaultOptions={availableTypes.map(t => ({ label: t, value: t }))}
-                                        value={
-                                            filterType === "all" || !filterType
-                                                ? []
-                                                : filterType.split(",").map(t => ({ label: t, value: t }))
-                                        }
-                                        onChange={(selected: Option[]) => {
-                                            if (selected.length === 0) {
-                                                setFilterType("all");
-                                            } else {
-                                                setFilterType(selected.map(s => s.value).join(","));
-                                            }
-                                        }}
-                                        hideClearAllButton
-                                        badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
-                                        emptyIndicator={
-                                            <p className="text-center text-sm text-muted-foreground">No types found</p>
-                                        }
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-xs font-medium text-foreground/80">Priority</label>
-                                    <input
-                                        type="number"
-                                        step="1"
-                                        placeholder="Any"
-                                        value={filterPriority}
-                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                            const val = e.target.value;
-                                            if (val === "" || /^-?\d+$/.test(val)) {
-                                                setFilterPriority(val);
-                                            }
-                                        }}
-                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="1"
-                                        placeholder="Any"
-                                        value={filterAttempts}
-                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                            const val = e.target.value;
-                                            if (val === "" || /^\d+$/.test(val)) {
-                                                setFilterAttempts(val);
-                                            }
-                                        }}
-                                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-xs font-medium text-foreground/80">Date Range</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] text-muted-foreground">Start</label>
-                                            <DateTimePicker
-                                                date={startDate}
-                                                setDate={setStartDate}
-                                                placeholder="Start Date"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] text-muted-foreground">End</label>
-                                            <DateTimePicker
-                                                date={endDate}
-                                                setDate={setEndDate}
-                                                placeholder="End Date"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {(search || filterType !== "all" || filterPriority || filterAttempts || startDate || endDate) && (
-                                    <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() => {
-                                            setSearch("")
-                                            setFilterType("all")
-                                            setFilterPriority("")
-                                            setFilterAttempts("")
-                                            setStartDate(undefined)
-                                            setEndDate(undefined)
-                                        }}
-                                        className="w-full animate-in fade-in zoom-in duration-200"
-                                    >
-                                        <XCircle className="h-3.5 w-3.5 mr-2" />
-                                        Clear Filters
-                                    </Button>
-                                )}
-
-                            </div>
-                        </div>
-
-                        <div className="h-px bg-border/50" />
-
-
-                    </div>
-                </div>
-
-                {/* Main Content Area */}
-                <div className="min-w-0 flex flex-col min-h-0 gap-4">
-                    {error && (
-                        <Card className="border-destructive/50 bg-destructive/10">
-                            <CardContent className="pt-6 flex items-center gap-3 text-destructive">
-                                <AlertTriangle className="h-5 w-5" />
-                                <p className="font-medium text-sm">Error: {error}</p>
-                            </CardContent>
-                        </Card>
-                    )}
-
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <div className="flex items-center gap-3">
-                                <h2 className="text-lg font-semibold tracking-tight">
-                                    {activeTab === 'main' && 'Main Queue'}
-                                    {activeTab === 'processing' && 'Processing Queue'}
-                                    {activeTab === 'dead' && 'Dead Letter Queue'}
-                                    {activeTab === 'acknowledged' && 'Acknowledged Messages'}
-                                    {activeTab === 'archived' && 'Archived Messages'}
-                                </h2>
-
-                            </div>
-                            <p className="text-sm text-muted-foreground">
-                                {activeTab === 'main' && 'Messages waiting to be processed.'}
-                                {activeTab === 'processing' && 'Messages currently being processed.'}
-                                {activeTab === 'dead' && 'Messages that failed processing.'}
-                                {activeTab === 'acknowledged' && 'Successfully processed messages.'}
-                                {activeTab === 'archived' && 'Messages archived for long-term storage.'}
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            {selectedIds.size > 0 && (
-                                <>
-                                    <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() => {
-                                            // Set default target to first queue that isn't the current one
-                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived'];
-                                            const defaultTarget = queues.find(q => q !== activeTab) || 'main';
-                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }));
-                                        }}
-                                        className="h-8 animate-in fade-in zoom-in duration-200"
-                                    >
-                                        <Move className="h-3.5 w-3.5 mr-2" />
-                                        Move Selected ({selectedIds.size.toLocaleString()})
-                                    </Button>
-                                    <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        onClick={handleBulkDelete}
-                                        className="h-8 animate-in fade-in zoom-in duration-200"
-                                    >
-                                        <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                        Delete Selected ({selectedIds.size.toLocaleString()})
-                                    </Button>
-                                </>
-                            )}
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handleClearCurrentQueue}
-                                className="h-8 hover:bg-destructive hover:text-destructive-foreground"
-                            >
-                                <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                Clear {activeTab === 'dead' ? 'Dead Letter' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Queue
-                            </Button>
+                                </PopoverContent>
+                            </Popover>
                         </div>
                     </div>
 
                     <div className="relative flex flex-col flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
+                        {/* Queue Tabs */}
+                        <div className="flex items-center border-b bg-muted/30">
+                            {[
+                                { id: 'main' as const, icon: Inbox, count: statusData?.mainQueue?.length },
+                                { id: 'processing' as const, icon: Pickaxe, count: statusData?.processingQueue?.length },
+                                { id: 'dead' as const, icon: XCircle, count: statusData?.deadLetterQueue?.length, variant: 'destructive' as const },
+                                { id: 'acknowledged' as const, icon: Check, count: statusData?.acknowledgedQueue?.length, variant: 'success' as const },
+                                { id: 'archived' as const, icon: Archive, count: statusData?.archivedQueue?.length },
+                            ].map((tab) => {
+                                const Icon = tab.icon;
+                                const isActive = activeTab === tab.id;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => navigateToTab(tab.id)}
+                                        className={cn(
+                                            "flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors relative",
+                                            "hover:text-foreground hover:bg-muted/50",
+                                            isActive 
+                                                ? "text-foreground bg-background" 
+                                                : "text-muted-foreground"
+                                        )}
+                                    >
+                                        <Icon className={cn(
+                                            "h-4 w-4",
+                                            tab.variant === 'success' && tab.count && tab.count > 0 && "text-green-500"
+                                        )} />
+                                        {QUEUE_TAB_NAMES[tab.id]}
+                                        {typeof tab.count === 'number' && (
+                                            <span className={cn(
+                                                "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
+                                                tab.variant === 'success' && tab.count > 0
+                                                    ? "bg-green-500/10 text-green-500"
+                                                    : "bg-muted text-muted-foreground"
+                                            )}>
+                                                {tab.count.toLocaleString()}
+                                            </span>
+                                        )}
+                                        {isActive && (
+                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
                         {/* Unified Table Loading State */}
                         {showMessagesLoading && (
                             <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
@@ -1754,7 +1715,6 @@ export default function Dashboard() {
                             />
                         )}
                     </div>
-                </div>
             </div>
 
             {/* API Key Configuration Dialog */}
@@ -1890,13 +1850,7 @@ function MoveMessageDialog({
         if (isOpen) setIsSubmitting(false);
     }, [isOpen]);
 
-    const allQueues = [
-        { value: "main", label: "Main Queue" },
-        { value: "processing", label: "Processing Queue" },
-        { value: "dead", label: "Dead Letter Queue" },
-        { value: "acknowledged", label: "Acknowledged Queue" },
-        { value: "archived", label: "Archived Queue" },
-    ];
+    const allQueues = QUEUE_TABS.map(tab => ({ value: tab, label: QUEUE_TAB_NAMES[tab] }));
 
     // Filter out the current queue from available options
     const availableQueues = allQueues.filter(q => q.value !== currentQueue);
@@ -1914,22 +1868,21 @@ function MoveMessageDialog({
         }
     };
 
+    const currentQueueLabel = QUEUE_TAB_NAMES[currentQueue as keyof typeof QUEUE_TAB_NAMES] || currentQueue;
+
     return (
         <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && !isSubmitting && onClose()}>
-            <DialogContent>
+            <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Move Messages</DialogTitle>
-                    <DialogDescription>
-                        Move {count.toLocaleString()} selected messages to another queue.
-                    </DialogDescription>
+                    <DialogTitle>Move {count.toLocaleString()} {count === 1 ? 'message' : 'messages'}</DialogTitle>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-4 items-center gap-4">
-                        <label htmlFor="targetQueue" className="text-right text-sm font-medium">
-                            To Queue
-                        </label>
+                <div className="space-y-4 py-4">
+                    <div className="flex items-center gap-3 text-sm">
+                        <span className="text-muted-foreground">From</span>
+                        <span className="font-medium px-3 py-1.5 bg-muted rounded-md">{currentQueueLabel}</span>
+                        <span className="text-muted-foreground">to</span>
                         <Select value={targetQueue} onValueChange={setTargetQueue}>
-                            <SelectTrigger className="col-span-3">
+                            <SelectTrigger className="w-[140px]">
                                 <SelectValue placeholder="Select queue" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1940,16 +1893,16 @@ function MoveMessageDialog({
                         </Select>
                     </div>
                     {targetQueue === "dead" && (
-                        <div className="grid grid-cols-4 items-start gap-4">
-                            <label htmlFor="dlqReason" className="text-right text-sm font-medium pt-2">
+                        <div className="space-y-2">
+                            <label htmlFor="dlqReason" className="text-sm font-medium">
                                 Error Reason
                             </label>
                             <textarea
                                 id="dlqReason"
                                 value={dlqReason}
                                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDlqReason(e.target.value)}
-                                placeholder="Why are you moving these messages to DLQ?"
-                                className="col-span-3 flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                placeholder="Why are you moving these messages to Failed?"
+                                className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             />
                         </div>
                     )}
@@ -1958,7 +1911,7 @@ function MoveMessageDialog({
                     <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
                     <Button onClick={handleConfirm} disabled={isSubmitting}>
                         {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Move Messages
+                        Move
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -1966,40 +1919,55 @@ function MoveMessageDialog({
     )
 }
 
-function NavButton({ active, href, onClick, icon: Icon, label, count, variant = "default" }: any) {
+function NavButton({ active, href, onClick, icon: Icon, label, count, variant = "default", onDelete }: any) {
     const badgeColor =
         variant === "destructive" ? "bg-red-100 text-red-700 hover:bg-red-100" :
             variant === "success" ? "bg-green-100 text-green-700 hover:bg-green-100" :
                 "bg-secondary text-secondary-foreground hover:bg-secondary/80";
 
     return (
-        <Button
-            asChild
-            variant={active ? "secondary" : "ghost"}
-            className={cn(
-                "w-full justify-between font-normal h-10 px-3",
-                active && "bg-secondary font-medium shadow-sm"
-            )}
-        >
-            <a
-                href={href}
-                onClick={(e: React.MouseEvent) => {
-                    if (!onClick) return
-                    e.preventDefault()
-                    onClick()
-                }}
-            >
-                <span className="flex items-center gap-3">
-                    <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")} />
-                    <span className={cn(active ? "text-foreground" : "text-muted-foreground")}>{label}</span>
-                </span>
-                {typeof count === 'number' && (
-                    <Badge variant="secondary" className={cn("ml-auto text-[10px] h-5 px-1.5 min-w-[1.25rem] justify-center", badgeColor)}>
-                        {count.toLocaleString()}
-                    </Badge>
+        <div className="relative group">
+            <Button
+                asChild
+                variant={active ? "secondary" : "ghost"}
+                className={cn(
+                    "w-full justify-between font-normal h-10 px-3",
+                    active && "bg-secondary font-medium shadow-sm"
                 )}
-            </a>
-        </Button>
+            >
+                <a
+                    href={href}
+                    onClick={(e: React.MouseEvent) => {
+                        if (!onClick) return
+                        e.preventDefault()
+                        onClick()
+                    }}
+                >
+                    <span className="flex items-center gap-3">
+                        <Icon className={cn("h-4 w-4", active ? "text-foreground" : "text-muted-foreground")} />
+                        <span className={cn(active ? "text-foreground" : "text-muted-foreground")}>{label}</span>
+                    </span>
+                    {typeof count === 'number' && (
+                        <Badge variant="secondary" className={cn("ml-auto text-[10px] h-5 px-1.5 min-w-[1.25rem] justify-center transition-opacity", badgeColor, onDelete && "group-hover:opacity-0")}>
+                            {count.toLocaleString()}
+                        </Badge>
+                    )}
+                </a>
+            </Button>
+            {onDelete && (
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        onDelete()
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-muted rounded"
+                    title={`Clear ${label} Queue`}
+                >
+                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                </button>
+            )}
+        </div>
     )
 }
 
@@ -2023,7 +1991,7 @@ function PaginationFooter({
             <div className="flex items-center space-x-2">
                 <p className="text-sm font-medium text-muted-foreground">Rows per page</p>
                 <Select value={pageSize} onValueChange={setPageSize}>
-                    <SelectTrigger className="h-8 w-[70px]">
+                    <SelectTrigger className="h-8 w-[85px]">
                         <SelectValue placeholder={pageSize} />
                     </SelectTrigger>
                     <SelectContent side="top">
@@ -2221,20 +2189,34 @@ const MessageRow = React.memo(({
             </TableCell>
             <TableCell className="text-left"><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-            <TableCell className="max-w-[150px]">
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <div className="truncate text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
-                            {payloadText}
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <TableCell className="max-w-[150px] cursor-default group/payload">
+                        <div className="flex items-center gap-1">
+                            <div className="truncate text-xs font-mono text-muted-foreground group-hover/payload:text-foreground transition-colors">
+                                {payloadText}
+                            </div>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    navigator.clipboard.writeText(JSON.stringify(msg.payload, null, 2));
+                                    (e.target as HTMLElement).closest('button')?.blur();
+                                }}
+                                className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                tabIndex={-1}
+                            >
+                                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                            </button>
                         </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
-                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
-                        </pre>
-                    </TooltipContent>
-                </Tooltip>
-            </TableCell>
+                    </TableCell>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                    <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                        <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
+                    </pre>
+                </TooltipContent>
+            </Tooltip>
             <TableCell className="text-xs text-foreground whitespace-nowrap">
                 {formatTime(getTimeValue(msg))}
             </TableCell>
@@ -2265,24 +2247,38 @@ const MessageRow = React.memo(({
                 </TableCell>
             )}
             {queueType === 'processing' && (
-                <TableCell className="text-xs text-foreground whitespace-nowrap">
-                    {msg.lock_token ? (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <span className="font-mono cursor-help">
-                                    {msg.lock_token.substring(0, 8)}...
-                                </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="font-mono text-xs">
-                                <p className="font-semibold mb-1">Fencing Token</p>
-                                <p>{msg.lock_token}</p>
-                                <p className="text-muted-foreground mt-1 text-[10px]">Use this for ACK/Touch validation</p>
-                            </TooltipContent>
-                        </Tooltip>
-                    ) : (
+                msg.lock_token ? (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <TableCell className="text-xs text-foreground whitespace-nowrap cursor-default group/lock">
+                                <div className="flex items-center gap-1">
+                                    <span className="font-mono">
+                                        {msg.lock_token.substring(0, 8)}...
+                                    </span>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            navigator.clipboard.writeText(msg.lock_token!);
+                                            (e.target as HTMLElement).closest('button')?.blur();
+                                        }}
+                                        className="opacity-0 group-hover/lock:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                        tabIndex={-1}
+                                    >
+                                        <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                                    </button>
+                                </div>
+                            </TableCell>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="font-mono text-xs">
+                            <p>{msg.lock_token}</p>
+                        </TooltipContent>
+                    </Tooltip>
+                ) : (
+                    <TableCell className="text-xs text-foreground whitespace-nowrap">
                         <span className="text-muted-foreground italic">—</span>
-                    )}
-                </TableCell>
+                    </TableCell>
+                )
             )}
             {queueType === 'processing' && (
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
@@ -2306,19 +2302,6 @@ const MessageRow = React.memo(({
                             <Pencil className="h-4 w-4" />
                         </Button>
                     )}
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            onDelete(msg.id)
-                        }}
-                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                        title="Delete Message"
-                    >
-                        <Trash2 className="h-4 w-4" />
-                    </Button>
                 </div>
             </TableCell>
         </TableRow>
@@ -3012,9 +2995,9 @@ function CreateMessageDialog({
                                 <SelectValue placeholder="Select queue" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="main">Main Queue</SelectItem>
-                                <SelectItem value="dead">Dead Letter Queue</SelectItem>
-                                <SelectItem value="acknowledged">Acknowledged Queue</SelectItem>
+                                <SelectItem value="main">{QUEUE_TAB_NAMES.main}</SelectItem>
+                                <SelectItem value="dead">{QUEUE_TAB_NAMES.dead}</SelectItem>
+                                <SelectItem value="acknowledged">{QUEUE_TAB_NAMES.acknowledged}</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -3022,13 +3005,16 @@ function CreateMessageDialog({
                         <label htmlFor="create-priority" className="text-right text-sm font-medium">
                             Priority
                         </label>
-                        <input
-                            id="create-priority"
-                            type="number"
-                            value={priority}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriority(Number(e.target.value))}
-                            className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                        />
+                        <Select value={String(priority)} onValueChange={(val: string) => setPriority(Number(val))}>
+                            <SelectTrigger className="col-span-3" id="create-priority">
+                                <SelectValue placeholder="Select priority" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                                    <SelectItem key={p} value={String(p)}>{p}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-ackTimeout" className="text-right text-sm font-medium">
@@ -3133,20 +3119,34 @@ const DeadLetterRow = React.memo(({
             </TableCell>
             <TableCell><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-            <TableCell className="max-w-[150px]">
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <div className="truncate text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
-                            {payloadText}
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <TableCell className="max-w-[150px] cursor-default group/payload">
+                        <div className="flex items-center gap-1">
+                            <div className="truncate text-xs font-mono text-muted-foreground group-hover/payload:text-foreground transition-colors">
+                                {payloadText}
+                            </div>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    navigator.clipboard.writeText(JSON.stringify(msg.payload, null, 2));
+                                    (e.target as HTMLElement).closest('button')?.blur();
+                                }}
+                                className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                tabIndex={-1}
+                            >
+                                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                            </button>
                         </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
-                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
-                        </pre>
-                    </TooltipContent>
-                </Tooltip>
-            </TableCell>
+                    </TableCell>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                    <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                        <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
+                    </pre>
+                </TooltipContent>
+            </Tooltip>
             <TableCell className="text-xs text-foreground whitespace-nowrap">
                 {formatTime(msg.failed_at || msg.processing_started_at)}
             </TableCell>
@@ -3181,19 +3181,6 @@ const DeadLetterRow = React.memo(({
                             <Pencil className="h-4 w-4" />
                         </Button>
                     )}
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            onDelete(msg.id)
-                        }}
-                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all rounded-full h-8 w-8"
-                        title="Delete Message"
-                    >
-                        <Trash2 className="h-4 w-4" />
-                    </Button>
                 </div>
             </TableCell>
         </TableRow>

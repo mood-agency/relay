@@ -1,13 +1,17 @@
 import type { AppOpenAPI } from "../config/types";
 import { apiReference } from "@scalar/hono-api-reference";
+import env from "../config/env";
+
 export default function configureOpenApi(app: AppOpenAPI) {
-  app.doc("/doc", {
+  const openApiSpec = {
     openapi: "3.1.0",
     info: {
       title: "Redis Queue API",
       version: "1.0.0",
     },
-  });
+  };
+  app.doc("/doc", openApiSpec);
+  app.doc("/docs", openApiSpec);
   app.openAPIRegistry.registerComponent("securitySchemes", "Bearer", {
     type: "http",
     scheme: "bearer",
@@ -29,6 +33,12 @@ export default function configureOpenApi(app: AppOpenAPI) {
       defaultHttpClient: {
         targetKey: "node",
         clientKey: "fetch",
+      },
+      authentication: {
+        preferredSecurityScheme: "APIKey",
+        apiKey: {
+          token: env.SECRET_KEY || "",
+        },
       },
     })
   );
