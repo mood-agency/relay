@@ -29,6 +29,47 @@ export function _getManualStreamName() {
 }
 
 /**
+ * Gets the index key for a specific message type.
+ * @param {string} type - The message type.
+ * @returns {string} The Redis key for the type index.
+ * @private
+ */
+export function _getTypeIndexKey(type) {
+  return `${this.config.queue_name}:type_index:zset:${type}`;
+}
+
+export function _getTypeIndexTypesKey() {
+  return `${this.config.queue_name}:type_index:types`;
+}
+
+export function _getMessageLocationHashKey() {
+  return `${this.config.queue_name}:type_index:loc`;
+}
+
+/**
+ * Calculates the score for the type index ZSet.
+ * Lower score = Dequeued first (ZPOPMIN).
+ * High priority should come before Low priority.
+ * Formula: (MaxPriority - Priority) * 10^14 + Timestamp
+ * @param {number} priority - Priority level.
+ * @param {number} timestamp - Timestamp in milliseconds.
+ * @returns {number} The calculated score.
+ * @private
+ */
+export function _calculateTypeScore(priority, timestamp) {
+  const maxP = this.config.max_priority_levels || 10;
+  const p = Math.max(0, Math.min(priority || 0, maxP - 1));
+  // Invert priority: High priority (large p) -> Small rank
+  const rank = maxP - p;
+  
+  // 10^13 allows up to 900 max_priority_levels without overflow
+  // (900 * 10^13 = 9 * 10^15 < MAX_SAFE_INTEGER)
+  const multiplier = 10000000000000; 
+  
+  return (rank * multiplier) + timestamp;
+}
+
+/**
  * Gets the stream name for a specific priority level.
  * @param {number} priority - The priority level.
  * @returns {string} The stream name.

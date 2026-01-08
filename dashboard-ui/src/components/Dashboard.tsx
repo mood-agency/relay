@@ -28,7 +28,9 @@ import {
     Download,
     Upload,
     Archive,
-    Eye
+    Eye,
+    Key,
+    KeyRound
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -86,6 +88,7 @@ interface Message {
     custom_ack_timeout?: number
     custom_max_attempts?: number
     archived_at?: number
+    consumer_id?: string | null
 }
 
 interface Pagination {
@@ -150,7 +153,34 @@ const getDefaultSortBy = (queue: QueueTab): string => {
     }
 }
 
+// API Key helper - reads from environment variable or localStorage
+const getStoredApiKey = (): string => {
+    // First check environment variable (set at build time)
+    const envKey = import.meta.env.VITE_API_KEY;
+    if (envKey) return envKey;
+    
+    // Fall back to localStorage
+    return localStorage.getItem('queue-api-key') || '';
+};
+
+const setStoredApiKey = (key: string) => {
+    localStorage.setItem('queue-api-key', key);
+};
+
 export default function Dashboard() {
+    // API Key state for authentication
+    const [apiKey, setApiKey] = useState<string>(getStoredApiKey);
+    const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+    
+    // Helper function for authenticated fetch requests
+    const authFetch = useCallback(async (url: string, options: RequestInit = {}): Promise<Response> => {
+        const headers = new Headers(options.headers);
+        if (apiKey) {
+            headers.set('X-API-KEY', apiKey);
+        }
+        return fetch(url, { ...options, headers });
+    }, [apiKey]);
+
     const [confirmDialog, setConfirmDialog] = useState<{
         isOpen: boolean;
         title: string;
@@ -358,7 +388,7 @@ export default function Dashboard() {
     // Fetch Config
     const fetchConfig = useCallback(async () => {
         try {
-            const response = await fetch('/api/queue/config');
+            const response = await authFetch('/api/queue/config');
             if (response.ok) {
                 const json = await response.json();
                 setConfig(json);
@@ -366,12 +396,12 @@ export default function Dashboard() {
         } catch (err) {
             console.error("Fetch config error:", err);
         }
-    }, []);
+    }, [authFetch]);
 
     // Fetch System Status (Counts)
     const fetchStatus = useCallback(async (includeMessages = true) => {
         try {
-            const response = await fetch(`/api/queue/status${!includeMessages ? '?include_messages=false' : ''}`)
+            const response = await authFetch(`/api/queue/status${!includeMessages ? '?include_messages=false' : ''}`)
             if (!response.ok) {
                 let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
                 try {
@@ -409,7 +439,7 @@ export default function Dashboard() {
         } finally {
             setLoadingStatus(false)
         }
-    }, [])
+    }, [authFetch])
 
     // Fetch Messages (Table Data)
     const fetchMessages = useCallback(async (silent = false) => {
@@ -431,7 +461,7 @@ export default function Dashboard() {
             if (endDate) params.append('endDate', endDate.toISOString())
             if (search) params.append('search', search)
 
-            const response = await fetch(`/api/queue/${currentTab}/messages?${params.toString()}`)
+            const response = await authFetch(`/api/queue/${currentTab}/messages?${params.toString()}`)
             if (!response.ok) {
                 let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
                 try {
@@ -461,7 +491,7 @@ export default function Dashboard() {
 
             if (!silent) setLoadingMessages(false)
         }
-    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search])
+    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search, authFetch])
 
     const fetchAll = useCallback((silent = false) => {
         fetchStatus()
@@ -941,7 +971,7 @@ export default function Dashboard() {
             description: "Are you sure you want to delete this message? This action cannot be undone.",
             action: async () => {
                 try {
-                    const response = await fetch(`/api/queue/message/${id}?queueType=${queue}`, {
+                    const response = await authFetch(`/api/queue/message/${id}?queueType=${queue}`, {
                         method: 'DELETE',
                     })
                     if (response.ok) fetchAll()
@@ -963,7 +993,7 @@ export default function Dashboard() {
             description: "Are you sure you want to clear ALL queues? This cannot be undone.",
             action: async () => {
                 try {
-                    const response = await fetch('/api/queue/clear', { method: 'DELETE' })
+                    const response = await authFetch('/api/queue/clear', { method: 'DELETE' })
                     if (response.ok) fetchAll()
                     else {
                         const err = await response.json()
@@ -978,7 +1008,7 @@ export default function Dashboard() {
 
     const handleSaveEdit = useCallback(async (id: string, queueType: string, updates: any) => {
         try {
-            const response = await fetch(`/api/queue/message/${id}?queueType=${queueType}`, {
+            const response = await authFetch(`/api/queue/message/${id}?queueType=${queueType}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1000,7 +1030,7 @@ export default function Dashboard() {
 
     const handleCreateMessage = useCallback(async (data: any) => {
         try {
-            const response = await fetch('/api/queue/message', {
+            const response = await authFetch('/api/queue/message', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1028,7 +1058,7 @@ export default function Dashboard() {
 
         try {
             const reason = dlqReason.trim()
-            const response = await fetch('/api/queue/move', {
+            const response = await authFetch('/api/queue/move', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1124,7 +1154,7 @@ export default function Dashboard() {
             description: "Are you sure you want to delete the selected messages? This action cannot be undone.",
             action: async () => {
                 try {
-                    const response = await fetch(`/api/queue/messages/delete?queueType=${activeTab}`, {
+                    const response = await authFetch(`/api/queue/messages/delete?queueType=${activeTab}`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -1154,7 +1184,7 @@ export default function Dashboard() {
             description: `Are you sure you want to delete ALL messages in the ${activeTab} queue? This action cannot be undone.`,
             action: async () => {
                 try {
-                    await fetch(`/api/queue/${activeTab}/clear`, {
+                    await authFetch(`/api/queue/${activeTab}/clear`, {
                         method: 'DELETE',
                     })
                     fetchAll()
@@ -1195,7 +1225,7 @@ export default function Dashboard() {
             const formData = new FormData()
             formData.append('file', file)
 
-            const response = await fetch('/api/queue/import', {
+            const response = await authFetch('/api/queue/import', {
                 method: 'POST',
                 body: formData,
             })
@@ -1317,6 +1347,22 @@ export default function Dashboard() {
                                 </TooltipTrigger>
                                 <TooltipContent>
                                     <p>{autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={() => setShowApiKeyInput(true)}
+                                        variant="ghost"
+                                        size="icon"
+                                        className={cn("h-8 w-8", apiKey && "text-green-600")}
+                                        aria-label="Configure API Key"
+                                    >
+                                        {apiKey ? <KeyRound className="h-3.5 w-3.5" /> : <Key className="h-3.5 w-3.5" />}
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>{apiKey ? "API Key Configured" : "Configure API Key"}</p>
                                 </TooltipContent>
                             </Tooltip>
                             <Tooltip>
@@ -1686,6 +1732,44 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
+
+            {/* API Key Configuration Dialog */}
+            <Dialog open={showApiKeyInput} onOpenChange={setShowApiKeyInput}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>API Key Configuration</DialogTitle>
+                        <DialogDescription>
+                            Enter your API key to authenticate with the queue API. 
+                            This key is stored locally in your browser.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <input
+                            type="password"
+                            placeholder="Enter your SECRET_KEY..."
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <p className="text-xs text-muted-foreground mt-2">
+                            The API key should match the SECRET_KEY environment variable on the server.
+                        </p>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => {
+                            setApiKey('');
+                            setStoredApiKey('');
+                            setShowApiKeyInput(false);
+                        }}>Clear</Button>
+                        <Button onClick={() => {
+                            setStoredApiKey(apiKey);
+                            setShowApiKeyInput(false);
+                            // Refresh data after setting API key
+                            fetchAll();
+                        }}>Save</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={confirmDialog.isOpen} onOpenChange={(open: boolean) => setConfirmDialog(prev => ({ ...prev, isOpen: open }))}>
                 <DialogContent>
@@ -2135,6 +2219,19 @@ const MessageRow = React.memo(({
             )}
             {queueType === 'processing' && (
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
+                    <span className="font-mono" title={msg.consumer_id || 'Not specified'}>
+                        {msg.consumer_id ? (
+                            msg.consumer_id.length > 20 
+                                ? `${msg.consumer_id.substring(0, 20)}...` 
+                                : msg.consumer_id
+                        ) : (
+                            <span className="text-muted-foreground italic">—</span>
+                        )}
+                    </span>
+                </TableCell>
+            )}
+            {queueType === 'processing' && (
+                <TableCell className="text-xs text-foreground whitespace-nowrap">
                     {calculateTimeRemaining(msg)}
                 </TableCell>
             )}
@@ -2373,6 +2470,7 @@ const QueueTable = React.memo(({
                             <SortableHeader label={getTimeLabel()} field={getTimeField()} currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
+                            {queueType === 'processing' && <SortableHeader label="Consumer" field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />}
                             {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Time Remaining</TableHead>}
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
@@ -2381,7 +2479,7 @@ const QueueTable = React.memo(({
                         {messages.length === 0 ? (
                             !isLoading && (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={9} className="h-[400px] p-0">
+                                    <TableCell colSpan={queueType === 'processing' ? 10 : 9} className="h-[400px] p-0">
                                         <EmptyState
                                             icon={isFilterActive ? Search : Inbox}
                                             title="No messages found"
@@ -2395,7 +2493,7 @@ const QueueTable = React.memo(({
                             <>
                                 {virtual.topSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                        <TableCell colSpan={queueType === 'processing' ? 10 : 9} className="p-0" style={{ height: virtual.topSpacerHeight }} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleMessages.map((msg: Message) => (
@@ -2418,7 +2516,7 @@ const QueueTable = React.memo(({
                                 ))}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                        <TableCell colSpan={queueType === 'processing' ? 10 : 9} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
                                     </TableRow>
                                 )}
                             </>

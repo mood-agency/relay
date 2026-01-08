@@ -6,10 +6,23 @@ import { fetch } from "undici"; // Start with node native fetch if available, bu
 class QueueTester {
     private baseUrl: string;
     private apiBase: string;
+    private apiKey: string | undefined;
 
-    constructor(baseUrl: string = "http://localhost:3000") {
+    constructor(baseUrl: string = "http://localhost:3000", apiKey?: string) {
         this.baseUrl = baseUrl;
         this.apiBase = `${baseUrl}/api`;
+        this.apiKey = apiKey;
+    }
+
+    private getHeaders(contentType?: string): Record<string, string> {
+        const headers: Record<string, string> = {};
+        if (contentType) {
+            headers["Content-Type"] = contentType;
+        }
+        if (this.apiKey) {
+            headers["X-API-KEY"] = this.apiKey;
+        }
+        return headers;
     }
 
     async addSampleMessages(count: number = 10) {
@@ -39,9 +52,7 @@ class QueueTester {
             try {
                 const response = await fetch(`${this.apiBase}/queue/message`, {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
+                    headers: this.getHeaders("application/json"),
                     body: JSON.stringify(message),
                 });
 
@@ -59,24 +70,29 @@ class QueueTester {
         }
     }
 
-    async dequeueSomeMessages(count: number = 3) {
+    async dequeueSomeMessages(count: number = 3, consumerId?: string) {
+        const consumerName = consumerId || `test-worker-${Math.random().toString(36).substring(7)}`;
         console.log(
-            `\n⚡ Dequeuing ${count} messages (they'll go to processing queue)...`
+            `\n⚡ Dequeuing ${count} messages as consumer "${consumerName}"...`
         );
 
-        const dequeuedMessages = [];
+        const dequeuedMessages: any[] = [];
 
         for (let i = 0; i < count; i++) {
             try {
                 // Random ackTimeout between 30 and 120 seconds
                 const ackTimeout = Math.floor(Math.random() * (120 - 30 + 1)) + 30;
-                console.log(`Requesting AckTimeout: ${ackTimeout}s`);
-                const response = await fetch(`${this.apiBase}/queue/message`);
+                const params = new URLSearchParams({
+                    consumerId: consumerName,
+                });
+                const response = await fetch(`${this.apiBase}/queue/message?${params.toString()}`, {
+                    headers: this.getHeaders(),
+                });
                 if (response.status === 200) {
                     const message = (await response.json()) as any;
                     console.log(
                         `✅ Dequeued message: ${message.type || "unknown"} (ID: ${(message.id || "N/A").slice(0, 8)
-                        }...) [AckTimeout: ${ackTimeout}s]`
+                        }...) [Consumer: ${message.consumer_id || consumerName}]`
                     );
                     dequeuedMessages.push(message);
                 } else {
@@ -94,7 +110,9 @@ class QueueTester {
         console.log(`\n📊 Checking queue status...`);
 
         try {
-            const response = await fetch(`${this.apiBase}/queue/status`);
+            const response = await fetch(`${this.apiBase}/queue/status`, {
+                headers: this.getHeaders(),
+            });
             if (response.status === 200) {
                 const status = (await response.json()) as any;
                 console.log(`✅ Queue Status:`);
@@ -133,7 +151,8 @@ class QueueTester {
                 sortOrder: "desc",
             });
             const listResponse = await fetch(
-                `${this.apiBase}/queue/main/messages?${params.toString()}`
+                `${this.apiBase}/queue/main/messages?${params.toString()}`,
+                { headers: this.getHeaders() }
             );
 
             if (listResponse.status !== 200) {
@@ -152,9 +171,7 @@ class QueueTester {
 
             const moveResponse = await fetch(`${this.apiBase}/queue/move`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: this.getHeaders("application/json"),
                 body: JSON.stringify({
                     messages: toMove,
                     fromQueue: "main",
@@ -217,8 +234,10 @@ class QueueTester {
         // // Move some messages to DLQ (demo)
         await this.moveSomeMessagesToDeadLetter(2);
 
-        // Dequeue some messages
-        const dequeued = await this.dequeueSomeMessages(2);
+        // Dequeue some messages with different consumer IDs to demonstrate ownership tracking
+        const dequeued1 = await this.dequeueSomeMessages(2, "worker-1");
+        const dequeued2 = await this.dequeueSomeMessages(2, "worker-2");
+        const dequeued = [...dequeued1, ...dequeued2];
 
         // // Acknowledge some messages
         // if (dequeued && dequeued.length > 0) {
@@ -240,7 +259,10 @@ class QueueTester {
 
         console.log(`\n💡 Tips:`);
         console.log(
-            `   - Messages in processing queue will return to main queue after 30 seconds`
+            `   - Messages in processing queue will return to main queue after timeout`
+        );
+        console.log(
+            `   - The Processing queue shows which consumer owns each message`
         );
         console.log(
             `   - Use the 'Refresh Now' button to update the dashboard immediately`
@@ -257,9 +279,7 @@ class QueueTester {
             try {
                 const response = await fetch(`${this.apiBase}/queue/ack`, {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
+                    headers: this.getHeaders("application/json"),
                     body: JSON.stringify({
                         id: message.id,
                         _stream_id: message._stream_id,
@@ -287,6 +307,7 @@ const main = async () => {
     const args = process.argv.slice(2);
     let url = "http://localhost:3000";
     let messages_number = 500;
+    let apiKey: string | undefined = process.env.SECRET_KEY;
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === "--url" && args[i + 1]) {
@@ -295,10 +316,19 @@ const main = async () => {
         } else if (args[i] === "--messages" && args[i + 1]) {
             messages_number = parseInt(args[i + 1], 10);
             i++;
+        } else if (args[i] === "--api-key" && args[i + 1]) {
+            apiKey = args[i + 1];
+            i++;
         }
     }
 
-    const tester = new QueueTester(url);
+    if (apiKey) {
+        console.log("🔐 Using API key for authentication");
+    } else {
+        console.log("⚠️  No API key provided. Set SECRET_KEY env var or use --api-key flag");
+    }
+
+    const tester = new QueueTester(url, apiKey);
     await tester.runDemo(messages_number);
 };
 

@@ -78,7 +78,10 @@ Most queue libraries lock you into a specific language ecosystem. Relay provides
 // Node.js API Server
 const response = await fetch('http://localhost:3000/api/queue/message', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 
+    'Content-Type': 'application/json',
+    'X-API-KEY': process.env.SECRET_KEY  // Required if SECRET_KEY is set on server
+  },
   body: JSON.stringify({
     type: 'video_transcode',
     payload: { file: 'movie.mp4', quality: '1080p' },
@@ -92,13 +95,14 @@ const response = await fetch('http://localhost:3000/api/queue/message', {
 ```python
 # Python Worker
 import requests
-import json
+import os
 
 API_URL = 'http://localhost:3000/api/queue'
+HEADERS = {'X-API-KEY': os.environ.get('SECRET_KEY', '')}
 
 while True:
     # Get a message (blocks for up to 30 seconds)
-    response = requests.get(f'{API_URL}/message', params={'timeout': 30})
+    response = requests.get(f'{API_URL}/message', params={'timeout': 30}, headers=HEADERS)
     
     if response.status_code == 200:
         message = response.json()
@@ -108,7 +112,7 @@ while True:
         process_video(message['payload'])
         
         # Acknowledge
-        requests.post(f'{API_URL}/ack', json={
+        requests.post(f'{API_URL}/ack', headers=HEADERS, json={
             'id': message['id'],
             '_stream_id': message['_stream_id'],
             '_stream_name': message['_stream_name']
@@ -129,15 +133,19 @@ import (
     "encoding/json"
     "io"
     "net/http"
+    "os"
     "time"
 )
 
 func main() {
     apiURL := "http://localhost:3000/api/queue"
+    apiKey := os.Getenv("SECRET_KEY")
     
     for {
         // Get a message
-        resp, _ := http.Get(apiURL + "/message?timeout=30")
+        req, _ := http.NewRequest("GET", apiURL+"/message?timeout=30", nil)
+        req.Header.Set("X-API-KEY", apiKey)
+        resp, _ := http.DefaultClient.Do(req)
         
         if resp.StatusCode == 200 {
             body, _ := io.ReadAll(resp.Body)
@@ -153,7 +161,10 @@ func main() {
                 "_stream_id":   message["_stream_id"],
                 "_stream_name": message["_stream_name"],
             })
-            http.Post(apiURL+"/ack", "application/json", bytes.NewBuffer(ackData))
+            ackReq, _ := http.NewRequest("POST", apiURL+"/ack", bytes.NewBuffer(ackData))
+            ackReq.Header.Set("Content-Type", "application/json")
+            ackReq.Header.Set("X-API-KEY", apiKey)
+            http.DefaultClient.Do(ackReq)
         }
         
         time.Sleep(1 * time.Second)
@@ -404,14 +415,17 @@ The dashboard talks to the Node.js API; it does not connect to Redis directly. R
 Use the included TypeScript script to populate the dashboard with sample data:
 
 ```bash
-# Run the dashboard demo
-npx tsx test_dashboard.ts
+# Run the dashboard demo (uses SECRET_KEY from environment)
+SECRET_KEY=your-key npx tsx test_dashboard.ts
+
+# Or pass the API key directly
+npx tsx test_dashboard.ts --api-key your-secret-key
 
 # Add custom number of messages
-npx tsx test_dashboard.ts --messages 25
+npx tsx test_dashboard.ts --api-key your-key --messages 25
 
 # Use different server URL
-npx tsx test_dashboard.ts --url http://localhost:8080
+npx tsx test_dashboard.ts --api-key your-key --url http://localhost:8080
 ```
 
 ---
@@ -454,7 +468,64 @@ ACK_TIMEOUT_SECONDS=30
 MAX_ATTEMPTS=3
 BATCH_SIZE=100
 MAX_PRIORITY_LEVELS=10  # Number of priority levels (0 to N-1)
+
+# API Security (optional)
+SECRET_KEY=your-secret-key-here  # If set, all API requests require X-API-KEY header
 ```
+
+### Dashboard Environment Variables
+
+For the dashboard UI, create a `.env` file in the `dashboard-ui/` directory:
+
+```bash
+# Dashboard API Key (for authenticating with the backend)
+VITE_API_KEY=your-secret-key-here
+```
+
+This key should match the `SECRET_KEY` configured on the server.
+
+---
+
+## 🔐 API Authentication
+
+When `SECRET_KEY` is set, all API endpoints (except `/health` and `/queue/events`) require authentication via the `X-API-KEY` header.
+
+### Authenticated Requests
+
+```bash
+# Add a message with authentication
+curl -X POST http://localhost:3000/api/queue/message \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: your-secret-key-here" \
+  -d '{
+    "type": "email_send",
+    "payload": { "to": "user@example.com" }
+  }'
+```
+
+### Python Example with Auth
+
+```python
+import requests
+
+API_URL = 'http://localhost:3000/api/queue'
+API_KEY = 'your-secret-key-here'
+
+headers = {
+    'Content-Type': 'application/json',
+    'X-API-KEY': API_KEY
+}
+
+# Get a message
+response = requests.get(f'{API_URL}/message', headers=headers)
+```
+
+### Dashboard Authentication
+
+The dashboard supports two ways to configure the API key:
+
+1. **Environment Variable (Build-time)**: Set `VITE_API_KEY` in `dashboard-ui/.env`
+2. **Runtime Configuration**: Click the 🔑 key icon in the dashboard toolbar to enter the API key (stored in localStorage)
 
 ---
 

@@ -17,6 +17,7 @@ vi.mock('../../config/env', async () => {
 });
 
 import router from './queue.index';
+import { queue as apiQueue } from './queue.handlers';
 import { OptimizedRedisQueue, QueueConfig } from '../../lib/redis.js';
 import env from '../../config/env';
   
@@ -126,6 +127,83 @@ describe('Queue Routes - Integration Tests', () => {
         const metrics = await metricsRes.json();
         expect(metrics.main_queue_size).toBe(0);
     });
+  });
+
+  // Dequeue by Type
+  describe('GET /queue/message?type=...', () => {
+    it('should dequeue only messages of the specified type', async () => {
+      // 1. Enqueue messages of different types
+      await testClient(router).queue.message.$post({ json: { type: 'type-a', payload: { id: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'type-b', payload: { id: 2 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'type-a', payload: { id: 3 } } });
+
+      // 2. Dequeue by type-b
+      const res = await testClient(router).queue.message.$get({
+        query: { type: 'type-b' }
+      });
+      expect(res.status).toBe(200);
+      const message = await res.json();
+      expect(message.type).toBe('type-b');
+      expect(message.payload.id).toBe(2);
+
+      // 3. Verify type-b is moved to processing (via PEL in test context)
+      const processingRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'processing' }
+      });
+      const processing = await processingRes.json();
+      expect(processing.messages.some((m: any) => m.id === message.id)).toBe(true);
+
+      // 4. Dequeue again by type-a
+      const res2 = await testClient(router).queue.message.$get({
+        query: { type: 'type-a' }
+      });
+      expect(res2.status).toBe(200);
+      const message2 = await res2.json();
+      expect(message2.type).toBe('type-a');
+      expect(message2.payload.id).toBe(1); // Should be the first type-a
+    }, 15000);
+
+    it('should dequeue higher priority messages first within the same type', async () => {
+      // 1. Enqueue Low Priority (p=0) - Old
+      await testClient(router).queue.message.$post({ 
+        json: { type: 'priority-test', payload: { id: 'low', p: 0 }, priority: 0 } 
+      });
+
+      // 2. Enqueue High Priority (p=5) - New
+      await testClient(router).queue.message.$post({ 
+        json: { type: 'priority-test', payload: { id: 'high', p: 5 }, priority: 5 } 
+      });
+
+      // 3. Dequeue
+      const res1 = await testClient(router).queue.message.$get({
+        query: { type: 'priority-test' }
+      });
+      expect(res1.status).toBe(200);
+      const msg1 = await res1.json();
+      
+      // Expect High Priority First
+      expect(msg1.priority).toBe(5);
+      expect(msg1.payload.id).toBe('high');
+
+      // 4. Dequeue Next
+      const res2 = await testClient(router).queue.message.$get({
+        query: { type: 'priority-test' }
+      });
+      expect(res2.status).toBe(200);
+      const msg2 = await res2.json();
+      
+      expect(msg2.priority).toBe(0);
+      expect(msg2.payload.id).toBe('low');
+    }, 15000);
+
+    it('should return 404 when no message of the specified type exists', async () => {
+      await testClient(router).queue.message.$post({ json: { type: 'type-a', payload: { id: 1 } } });
+
+      const res = await testClient(router).queue.message.$get({
+        query: { type: 'type-non-existent', timeout: 1 } // 1 second timeout
+      });
+      expect(res.status).toBe(404);
+    }, 15000);
   });
 
   // Date Range Operations
@@ -748,6 +826,72 @@ describe('Queue Routes - Integration Tests', () => {
       const mainTypes = (status.mainQueue.messages || []).map((m: any) => m.type);
       expect(mainTypes).not.toContain('bulk-processing');
     }, 30000);
+  });
+
+  // Nack Message
+  describe('POST /queue/message/:messageId/nack', () => {
+    it('should requeue a message when nacked', async () => {
+      // 1. Enqueue
+      await testClient(router).queue.message.$post({ json: { type: 'nack-test', payload: { n: 1 } } });
+      
+      // 2. Dequeue
+      const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+      expect(dequeueRes.status).toBe(200);
+      const msg = await dequeueRes.json();
+      
+      // 3. Nack
+      const nackRes = await testClient(router).queue.message[':messageId'].nack.$post({
+        param: { messageId: msg.id },
+        json: { errorReason: 'Test failure' }
+      });
+      
+      expect(nackRes.status).toBe(200);
+      
+      // 4. Verify it's back in queue
+      const dequeue2Res = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+      expect(dequeue2Res.status).toBe(200);
+      const msg2 = await dequeue2Res.json();
+      expect(msg2.id).toBe(msg.id);
+      expect(msg2.last_error).toBe('Test failure');
+      
+      // Verify attempt count increased
+      // First dequeue -> attempt=1.
+      // Nack -> keeps metadata attempt=1.
+      // Second dequeue -> attempt=2.
+      expect(msg2.attempt_count).toBe(2);
+    });
+
+    it('should move to DLQ when nacked and max attempts exceeded', async () => {
+       // Mock config for max attempts on the API queue instance
+       const originalMaxAttempts = apiQueue.config.max_attempts;
+       (apiQueue.config as any).max_attempts = 1;
+
+       try {
+         await testClient(router).queue.message.$post({ json: { type: 'nack-dlq', payload: {} } });
+         
+         const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+         const msg = await dequeueRes.json();
+         // attempt = 1. max = 1.
+         // If we nack now, it should check attempt_count (1) >= max (1) -> DLQ.
+         
+         const nackRes = await testClient(router).queue.message[':messageId'].nack.$post({
+            param: { messageId: msg.id },
+            json: { errorReason: 'Fatal error' }
+         });
+         expect(nackRes.status).toBe(200);
+
+         // Verify in DLQ
+         const dlqRes = await testClient(router).queue[':queueType'].messages.$get({
+            param: { queueType: 'dead' }
+         });
+         const dlq = await dlqRes.json();
+         expect((dlq.messages || []).length).toBe(1);
+         expect(dlq.messages[0].id).toBe(msg.id);
+         expect(dlq.messages[0].last_error).toBe('Fatal error');
+       } finally {
+         (apiQueue.config as any).max_attempts = originalMaxAttempts;
+       }
+    });
   });
 
   // Robustness Tests

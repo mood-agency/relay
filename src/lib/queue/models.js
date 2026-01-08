@@ -11,6 +11,7 @@ export class MessageMetadata {
    * @param {number} [processing_duration=0.0] - Duration of processing.
    * @param {number|null} [custom_ack_timeout=null] - Custom timeout for this message.
    * @param {number|null} [custom_max_attempts=null] - Custom max attempts for this message.
+   * @param {string|null} [consumer_id=null] - ID of the consumer that dequeued this message.
    */
   constructor(
     attempt_count = 0,
@@ -19,7 +20,8 @@ export class MessageMetadata {
     last_error = null,
     processing_duration = 0.0,
     custom_ack_timeout = null,
-    custom_max_attempts = null
+    custom_max_attempts = null,
+    consumer_id = null
   ) {
     this.attempt_count = attempt_count;
     this.dequeued_at = dequeued_at; // timestamp in seconds
@@ -28,6 +30,7 @@ export class MessageMetadata {
     this.processing_duration = processing_duration;
     this.custom_ack_timeout = custom_ack_timeout;
     this.custom_max_attempts = custom_max_attempts;
+    this.consumer_id = consumer_id; // consumer that owns this message
   }
 
   /**
@@ -43,7 +46,8 @@ export class MessageMetadata {
       data.last_error,
       data.processing_duration,
       data.custom_ack_timeout,
-      data.custom_max_attempts
+      data.custom_max_attempts,
+      data.consumer_id
     );
   }
 }

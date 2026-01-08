@@ -82,5 +82,10 @@ export class QueueConfig {
     if (this.max_attempts <= 0) {
       throw new Error("MAX_ATTEMPTS must be greater than 0");
     }
+    // Max safe priority levels to prevent score overflow in type index
+    // 900 * 10^13 < MAX_SAFE_INTEGER
+    if (this.max_priority_levels > 900) {
+      throw new Error("MAX_PRIORITY_LEVELS must be 900 or less to ensure index stability");
+    }
   }
 }

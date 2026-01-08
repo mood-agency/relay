@@ -62,9 +62,20 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
 
   let movedCount = 0;
   const pipeline = this.redisManager.pipeline();
+  const typesKey = this._getTypeIndexTypesKey();
+  const locKey = this._getMessageLocationHashKey();
+  const destIndexEntries = [];
+  let pipelineCmdIndex = 0;
 
   for (const msg of enrichedMessages) {
     if (!msg || !msg.id) continue;
+
+    if (fromQueue === 'main' && msg.type) {
+      const indexKey = this._getTypeIndexKey(msg.type);
+      pipeline.zrem(indexKey, msg.id);
+      pipeline.hdel(locKey, msg.id);
+      pipelineCmdIndex += 2;
+    }
 
     // 1. Remove from Source
     if (fromQueue === 'acknowledged') {
@@ -72,6 +83,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
       const streamId = msg._stream_id;
       if (streamId) {
         pipeline.xdel(this.config.acknowledged_queue_name, streamId);
+        pipelineCmdIndex++;
       } else {
         throw new Error(`Message ${msg.id} not found in acknowledged queue`);
       }
@@ -86,8 +98,10 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
         if (fromQueue === 'processing') {
           // For processing, we must ACK to remove from PEL, and DEL to remove from Stream.
           pipeline.xack(actualStreamName, this.config.consumer_group_name, streamId);
+          pipelineCmdIndex++;
         }
         pipeline.xdel(actualStreamName, streamId);
+        pipelineCmdIndex++;
       } else {
         throw new Error(`Message ${msg.id} not found in ${fromQueue} queue`);
       }
@@ -124,19 +138,43 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
       destQueue = getQueueName(toQueue, newMsg.priority);
     }
 
+    const xaddCmdIndex = pipelineCmdIndex;
     pipeline.xadd(destQueue, "*", "data", msgJson);
+    pipelineCmdIndex++;
+    if (toQueue === 'main' && newMsg.type) {
+      destIndexEntries.push({ xaddCmdIndex, destQueue, message: newMsg });
+    }
 
     if (toQueue === 'acknowledged') {
       pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
       pipeline.incr(this.config.total_acknowledged_key);
       // Cleanup metadata hash
       pipeline.hdel(this.config.metadata_hash_name, newMsg.id);
+      pipelineCmdIndex += 3;
     }
 
     movedCount++;
   }
 
   const results = await pipeline.exec();
+
+  if (results && destIndexEntries.length > 0) {
+    const indexPipeline = this.redisManager.redis.pipeline();
+    let hasIndexOps = false;
+    for (const entry of destIndexEntries) {
+      const streamId = results[entry.xaddCmdIndex]?.[1];
+      const msg = entry.message;
+      if (!streamId || !msg?.id || !msg?.type) continue;
+      const indexKey = this._getTypeIndexKey(msg.type);
+      const ts = Math.floor((msg.created_at || Date.now() / 1000) * 1000);
+      const score = this._calculateTypeScore(msg.priority, ts);
+      indexPipeline.sadd(typesKey, msg.type);
+      indexPipeline.zadd(indexKey, score, msg.id);
+      indexPipeline.hset(locKey, msg.id, `${entry.destQueue}|${streamId}`);
+      hasIndexOps = true;
+    }
+    if (hasIndexOps) await indexPipeline.exec();
+  }
 
   // Check for errors in pipeline execution
   if (results) {
@@ -255,6 +293,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
 
           metadata.dequeued_at = now;
           metadata.attempt_count += 1;
+          // consumer_id is set when dequeued via API with consumerId param
 
           if (msgData.custom_ack_timeout) {
             metadata.custom_ack_timeout = msgData.custom_ack_timeout;
@@ -562,6 +601,8 @@ export async function deleteMessage(messageId, queueType) {
 
     // All queues now use Streams
     let deleted = false;
+    let foundMessage = null;
+
     for (const stream of streamNames) {
       // Scan stream to find message with matching ID in JSON
       const entries = await redis.xrange(stream, "-", "+");
@@ -571,6 +612,7 @@ export async function deleteMessage(messageId, queueType) {
         const msg = this._deserializeMessage(json);
         if (msg && msg.id === messageId) {
           // Found it.
+          foundMessage = msg;
           const pipeline = redis.pipeline();
           pipeline.xdel(stream, id);
           // XACK only for queues with consumer groups (not acknowledged)
@@ -587,7 +629,19 @@ export async function deleteMessage(messageId, queueType) {
     if (!deleted) throw new Error(`Message ${messageId} not found in ${queueType} queue`);
 
     // Metadata cleanup
-    await redis.hdel(this.config.metadata_hash_name, messageId);
+    const pipeline = redis.pipeline();
+    pipeline.hdel(this.config.metadata_hash_name, messageId);
+
+    // Type Index cleanup
+    if (foundMessage && foundMessage.type) {
+      const indexKey = this._getTypeIndexKey(foundMessage.type);
+      const locKey = this._getMessageLocationHashKey();
+      pipeline.zrem(indexKey, messageId);
+      pipeline.hdel(locKey, messageId);
+    }
+    
+    await pipeline.exec();
+
 
     logger.info(`Successfully deleted message ${messageId} from ${queueType} queue`);
     this.publishEvent('delete', { id: messageId, queue: queueType });
@@ -689,14 +743,37 @@ export async function updateMessage(messageId, queueType, updates) {
     const updatedMessageData = { ...originalMessageData, ...updates, id: messageId };
     const updatedMessageJson = this._serializeMessage(updatedMessageData);
 
-    const pipeline = redis.pipeline();
-    // Remove old
-    pipeline.xdel(originalStream, originalStreamId);
-    // Add new (Append to stream)
-    // Note: This changes the timestamp/order.
-    pipeline.xadd(originalStream, "*", "data", updatedMessageJson);
-
-    await pipeline.exec();
+    // BREAK PIPELINE: We need the new stream ID to update the index.
+    // So we delete first, then add.
+    
+    // 1. Delete old
+    const deletePipeline = redis.pipeline();
+    deletePipeline.xdel(originalStream, originalStreamId);
+    if (originalMessageData.type) {
+        const oldIndexKey = this._getTypeIndexKey(originalMessageData.type);
+        const locKey = this._getMessageLocationHashKey();
+        deletePipeline.zrem(oldIndexKey, messageId);
+        deletePipeline.hdel(locKey, messageId);
+    }
+    await deletePipeline.exec();
+    
+    // 2. Add new
+    const newStreamId = await redis.xadd(originalStream, "*", "data", updatedMessageJson);
+    
+    // 3. Update index for new
+    if (updatedMessageData.type) {
+         const newIndexKey = this._getTypeIndexKey(updatedMessageData.type);
+         const typesKey = this._getTypeIndexTypesKey();
+         const locKey = this._getMessageLocationHashKey();
+         const ts = Math.floor((updatedMessageData.created_at || Date.now() / 1000) * 1000);
+         const score = this._calculateTypeScore(updatedMessageData.priority, ts);
+         
+         const indexPipeline = redis.pipeline();
+         indexPipeline.sadd(typesKey, updatedMessageData.type);
+         indexPipeline.zadd(newIndexKey, score, messageId);
+         indexPipeline.hset(locKey, messageId, `${originalStream}|${newStreamId}`);
+         await indexPipeline.exec();
+    }
 
     logger.info(`Successfully updated message ${messageId} in ${queueType} queue`);
     this.publishEvent('update', { id: messageId, queue: queueType, updates });
@@ -909,11 +986,14 @@ export async function getQueueMessages(queueType, params = {}) {
               const p = item.pending;
               const streamName = item.streamName;
               if (!p || !streamName) return;
-              pendingMap.set(`${streamName}|${p[0]}`, { idle: p[2], count: p[3] });
+              // p = [streamId, consumer, idleMs, deliveryCount]
+              pendingMap.set(`${streamName}|${p[0]}`, { idle: p[2], count: p[3], consumer: p[1] });
             });
 
             messagesWithIds.forEach((m, index) => {
               const metaRes = metaResults[index];
+              const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
+              
               if (metaRes && !metaRes[0] && metaRes[1]) {
                 try {
                   const meta = JSON.parse(metaRes[1]);
@@ -923,13 +1003,15 @@ export async function getQueueMessages(queueType, params = {}) {
                   m.last_error = meta.last_error;
                   if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
                   if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+                  // Use consumer_id from metadata if available, otherwise from XPENDING
+                  m.consumer_id = meta.consumer_id || (pendingInfo ? pendingInfo.consumer : null);
                 } catch (e) { }
               } else {
-                const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
                 if (pendingInfo) {
                   m.attempt_count = pendingInfo.count;
                   m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;
                   m.processing_started_at = m.dequeued_at;
+                  m.consumer_id = pendingInfo.consumer;
                 }
               }
             });
@@ -1158,8 +1240,15 @@ export async function getQueueMessages(queueType, params = {}) {
  */
 export async function clearAllQueues() {
   try {
+    const redis = this.redisManager.redis;
     const pipeline = this.redisManager.pipeline();
     const streams = this._getAllPriorityStreams();
+    const typesKey = this._getTypeIndexTypesKey();
+    const locKey = this._getMessageLocationHashKey();
+    let knownTypes = [];
+    try {
+      knownTypes = await redis.smembers(typesKey);
+    } catch {}
 
     // Clear all priority streams
     for (const stream of streams) {
@@ -1178,6 +1267,12 @@ export async function clearAllQueues() {
     pipeline.del(this.config.archived_queue_name);
     pipeline.del(this.config.total_acknowledged_key);
     pipeline.del(this.config.metadata_hash_name);
+    pipeline.del(locKey);
+    pipeline.del(typesKey);
+    for (const t of knownTypes) {
+      if (!t) continue;
+      pipeline.del(this._getTypeIndexKey(t));
+    }
 
     await pipeline.exec();
 
@@ -1205,14 +1300,29 @@ export async function clearAllQueues() {
  */
 export async function clearQueue(queueType) {
   try {
+    const redis = this.redisManager.redis;
     const pipeline = this.redisManager.pipeline();
     const priorityStreams = this._getAllPriorityStreams();
+    const typesKey = this._getTypeIndexTypesKey();
+    const locKey = this._getMessageLocationHashKey();
 
     switch (queueType) {
       case 'main':
         // Clear all priority streams
         for (const stream of priorityStreams) {
           pipeline.del(stream);
+        }
+        {
+          let knownTypes = [];
+          try {
+            knownTypes = await redis.smembers(typesKey);
+          } catch {}
+          pipeline.del(locKey);
+          pipeline.del(typesKey);
+          for (const t of knownTypes) {
+            if (!t) continue;
+            pipeline.del(this._getTypeIndexKey(t));
+          }
         }
         break;
       case 'processing':

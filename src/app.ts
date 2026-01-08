@@ -4,9 +4,22 @@ import queue from "./routes/queue/queue.index";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { apiKeyAuth } from "./middlewares/api-key";
 
 // Create API app without base path
 const apiApp = createApp();
+
+// Apply API key authentication middleware to all API routes
+// Note: Health check (/health) and SSE events (/queue/events) are excluded from auth
+apiApp.use("*", async (c, next) => {
+  // Skip auth for health check and SSE events endpoints
+  // SSE events are read-only and EventSource doesn't support custom headers
+  const path = c.req.path;
+  if (path === "/health" || path.endsWith("/queue/events") || path.endsWith("/health")) {
+    return next();
+  }
+  return apiKeyAuth()(c, next);
+});
 
 const routes = [queue];
 configureOpenApi(apiApp);

@@ -19,7 +19,21 @@ export async function enqueueMessage(messageData, priority = 0) {
     const messageJson = this._serializeMessage(messageData);
     const queueName = this._getPriorityStreamName(priority);
 
-    await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
+    const streamId = await this.redisManager.redis.xadd(queueName, "*", "data", messageJson);
+
+    if (messageData.type) {
+      const indexKey = this._getTypeIndexKey(messageData.type);
+      const typesKey = this._getTypeIndexTypesKey();
+      const locKey = this._getMessageLocationHashKey();
+      const ts = Math.floor((messageData.created_at || Date.now() / 1000) * 1000);
+      const score = this._calculateTypeScore(priority, ts);
+      await this.redisManager.redis
+        .multi()
+        .sadd(typesKey, messageData.type)
+        .zadd(indexKey, score, messageData.id)
+        .hset(locKey, messageData.id, `${queueName}|${streamId}`)
+          .exec();
+    }
 
     this._stats.enqueued++;
     logger.info(
@@ -43,6 +57,7 @@ export async function enqueueBatch(messages) {
   if (!messages || messages.length === 0) return 0;
 
   const pipeline = this.redisManager.pipeline();
+  const queueNames = [];
   for (const msg of messages) {
     if (!msg.id) {
       msg.id = generateId();
@@ -53,17 +68,38 @@ export async function enqueueBatch(messages) {
     const messageJson = this._serializeMessage(msg);
     const priority = msg.priority || 0;
     const queueName = this._getPriorityStreamName(priority);
+    queueNames.push(queueName);
 
     pipeline.xadd(queueName, "*", "data", messageJson);
   }
 
   try {
     const results = await pipeline.exec();
-    results.forEach((result) => {
+    const indexPipeline = this.redisManager.pipeline();
+    let hasIndices = false;
+
+    results.forEach((result, i) => {
       if (!result[0]) {
         successful++;
+        const streamId = result[1];
+        const msg = messages[i];
+        if (msg.type) {
+          const indexKey = this._getTypeIndexKey(msg.type);
+          const typesKey = this._getTypeIndexTypesKey();
+          const locKey = this._getMessageLocationHashKey();
+          const ts = Math.floor((msg.created_at || Date.now() / 1000) * 1000);
+          const score = this._calculateTypeScore(msg.priority, ts);
+          indexPipeline.sadd(typesKey, msg.type);
+          indexPipeline.zadd(indexKey, score, msg.id);
+          indexPipeline.hset(locKey, msg.id, `${queueNames[i]}|${streamId}`);
+          hasIndices = true;
+        }
       }
     });
+
+    if (hasIndices) {
+      await indexPipeline.exec();
+    }
 
     this._stats.enqueued += successful;
     logger.info(

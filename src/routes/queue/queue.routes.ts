@@ -42,6 +42,7 @@ export const DequeuedMessageSchema = z.object({
   last_error: z.string().nullable(),
   processing_duration: z.number(),
   acknowledged_at: z.number().optional(),
+  consumer_id: z.string().nullable().optional(),
   _stream_id: z.string().optional(),
   _stream_name: z.string().optional(),
 });
@@ -106,7 +107,9 @@ export const getMessage = createRoute({
   request: {
     query: z.object({ 
       timeout: z.string().pipe(z.coerce.number()).optional(),
-      ackTimeout: z.string().pipe(z.coerce.number()).optional() 
+      ackTimeout: z.string().pipe(z.coerce.number()).optional(),
+      type: z.string().optional(),
+      consumerId: z.string().optional()
     }),
   },
   responses: {
@@ -115,7 +118,9 @@ export const getMessage = createRoute({
     422: jsonContent(
       createErrorSchema(z.object({ 
         timeout: z.number().optional(),
-        ackTimeout: z.number().optional()
+        ackTimeout: z.number().optional(),
+        type: z.string().optional(),
+        consumerId: z.string().optional()
       })),
       "Validation Error"
     ),
@@ -173,10 +178,34 @@ export const healthCheck = createRoute({
   },
 });
 
+export const nackMessage = createRoute({
+  path: "/queue/message/:messageId/nack",
+  method: "post",
+  tags,
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+    body: jsonContent(
+      z.object({
+        errorReason: z.string().optional(),
+      }),
+      "Nack Message"
+    ),
+  },
+  responses: {
+    200: jsonContent(z.object({ message: z.string() }), "Message Nacked"),
+    400: jsonContent(z.object({ message: z.string() }), "Bad Request"),
+    404: jsonContent(z.object({ message: z.string() }), "Message not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type AddMessageRoute = typeof addMessage;
 export type AddBatchRoute = typeof addBatch;
 export type GetMessageRoute = typeof getMessage;
 export type AcknowledgeMessageRoute = typeof acknowledgeMessage;
+export type NackMessageRoute = typeof nackMessage;
 export const removeMessagesByDateRange = createRoute({
   path: "/queue/messages",
   method: "delete",

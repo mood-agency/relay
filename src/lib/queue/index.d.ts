@@ -57,6 +57,7 @@ export interface DequeuedMessage {
   payload: any;
   priority: number;
   created_at: number;
+  consumer_id?: string | null;
   _stream_id: string;
   _stream_name: string;
   [key: string]: any;
@@ -160,8 +161,9 @@ export class OptimizedRedisQueue {
   enqueueBatch(messages: any[]): Promise<number>;
 
   // Consumer
-  dequeueMessage(timeout?: number, ackTimeout?: number | null, specificStreams?: string[] | null): Promise<DequeuedMessage | null>;
+  dequeueMessage(timeout?: number, ackTimeout?: number | null, specificStreams?: string[] | null, type?: string | null, consumerId?: string | null): Promise<DequeuedMessage | null>;
   acknowledgeMessage(message: DequeuedMessage | { id: string, _stream_id: string, _stream_name: string }): Promise<boolean>;
+  nackMessage(messageId: string, errorReason?: string): Promise<boolean>;
   requeueFailedMessages(): Promise<number>;
 
   // Admin

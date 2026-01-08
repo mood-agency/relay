@@ -17,6 +17,7 @@ import type {
   GetEventsRoute,
   ExportMessagesRoute,
   ImportMessagesRoute,
+  NackMessageRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "../../config/types";
 import { streamSSE } from "hono/streaming";
@@ -172,8 +173,8 @@ export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
 };
 
 export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
-  const { timeout, ackTimeout } = c.req.valid("query");
-  const message = (await queue.dequeueMessage(timeout, ackTimeout)) as DequeuedMessage;
+  const { timeout, ackTimeout, type, consumerId } = c.req.valid("query");
+  const message = (await queue.dequeueMessage(timeout, ackTimeout, null, type, consumerId)) as DequeuedMessage;
   if (!message) {
     return c.json({ message: "Message not found" }, 404);
   }
@@ -189,6 +190,18 @@ export const acknowledgeMessage: AppRouteHandler<
     return c.json({ message: "Message not acknowledged" }, 400);
   }
   return c.json({ message: "Message acknowledged" }, 200);
+};
+
+export const nackMessage: AppRouteHandler<NackMessageRoute> = async (c: any) => {
+  const { messageId } = c.req.valid("param");
+  const body = await c.req.json().catch(() => ({}));
+  const errorReason = body.errorReason;
+
+  const nacked = await queue.nackMessage(messageId, errorReason);
+  if (!nacked) {
+    return c.json({ message: "Message not found or could not be nacked" }, 404);
+  }
+  return c.json({ message: "Message nacked successfully" }, 200);
 };
 
 export const metrics: AppRouteHandler<MetricsRoute> = async (c: any) => {

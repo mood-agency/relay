@@ -6,17 +6,152 @@ import { MessageMetadata } from "./models.js";
  * @param {number} [timeout=0] - Timeout in seconds.
  * @param {number|null} [ackTimeout=null] - Acknowledgement timeout.
  * @param {string[]|null} [specificStreams=null] - Specific streams to poll.
+ * @param {string|null} [type=null] - Optional message type to filter by.
+ * @param {string|null} [consumerId=null] - Optional consumer identifier for tracking ownership.
  * @returns {Promise<Object|null>} The dequeued message or null.
  */
-export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStreams = null) {
+export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStreams = null, type = null, consumerId = null) {
   const priorityStreams = specificStreams || this._getAllPriorityStreams(); // Highest priority first
   const timeoutMs = Math.max(0, Math.floor(timeout * 1000));
+  const redis = this.redisManager.redis;
 
   try {
-    const redis = this.redisManager.redis;
     const deadlineMs = Date.now() + timeoutMs;
     const baseSleepMs = 50;
 
+    if (type) {
+      const indexKey = this._getTypeIndexKey(type);
+      const manualStream = this._getManualStreamName();
+      const locKey = this._getMessageLocationHashKey();
+      await this._ensureConsumerGroup(manualStream);
+
+      const lua = `
+local indexKey = KEYS[1]
+local locKey = KEYS[2]
+local manualStream = KEYS[3]
+
+local group = ARGV[1]
+local consumer = ARGV[2]
+local maxChecks = tonumber(ARGV[3]) or 50
+
+local function ensureGroup()
+  local ok, err = pcall(redis.call, 'XGROUP', 'CREATE', manualStream, group, '0', 'MKSTREAM')
+  if ok then return end
+  if err and string.find(err, 'BUSYGROUP') then return end
+end
+
+ensureGroup()
+
+for i = 1, maxChecks do
+  repeat
+    local popped = redis.call('ZPOPMIN', indexKey, 1)
+    if (not popped) or (#popped == 0) then
+      return nil
+    end
+
+    local messageId = popped[1]
+    local loc = redis.call('HGET', locKey, messageId)
+    if not loc then
+      break -- continue
+    end
+
+    local sep = string.find(loc, '|', 1, true)
+    if not sep then
+      redis.call('HDEL', locKey, messageId)
+      break -- continue
+    end
+
+    local streamName = string.sub(loc, 1, sep - 1)
+    local streamId = string.sub(loc, sep + 1)
+    if (not streamName) or (streamName == '') or (not streamId) or (streamId == '') then
+      redis.call('HDEL', locKey, messageId)
+      break -- continue
+    end
+
+    local pendingOk, pendingRes = pcall(redis.call, 'XPENDING', streamName, group, streamId, streamId, 1)
+    if pendingOk and type(pendingRes) == 'table' and #pendingRes > 0 then
+      redis.call('HDEL', locKey, messageId)
+      break -- continue
+    end
+
+    local range = redis.call('XRANGE', streamName, streamId, streamId)
+    if (not range) or (#range == 0) then
+      redis.call('HDEL', locKey, messageId)
+      break -- continue
+    end
+
+    local fields = range[1][2]
+    local data = nil
+    if fields then
+      for f = 1, #fields, 2 do
+        if fields[f] == 'data' then
+          data = fields[f + 1]
+          break
+        end
+      end
+    end
+    if not data then
+      redis.call('HDEL', locKey, messageId)
+      break -- continue
+    end
+
+    local newId = redis.call('XADD', manualStream, '*', 'data', data)
+    local delCount = redis.call('XDEL', streamName, streamId)
+    if (not delCount) or (tonumber(delCount) == 0) then
+      redis.call('XDEL', manualStream, newId)
+      break -- continue
+    end
+
+    redis.call('HDEL', locKey, messageId)
+
+    local read = redis.call(
+      'XREADGROUP',
+      'GROUP', group, consumer,
+      'COUNT', 1,
+      'STREAMS', manualStream, '>'
+    )
+    return read
+
+  until true
+end
+
+return nil
+`;
+
+      const findAndMoveByType = async () => {
+        const results = await redis.eval(
+          lua,
+          3,
+          indexKey,
+          locKey,
+          manualStream,
+          this.config.consumer_group_name,
+          this.config.consumer_name,
+          "50"
+        );
+        if (!results || results.length === 0) return null;
+        const [streamEntry] = results;
+        if (!streamEntry || streamEntry.length < 2) return null;
+        const [streamName, messages] = streamEntry;
+        if (!messages || messages.length === 0) return null;
+        const [streamId, fields] = messages[0];
+        return { streamName, streamId, fields };
+      };
+
+      let readResult = await findAndMoveByType();
+      
+      let sleepMs = baseSleepMs;
+      while (!readResult && Date.now() < deadlineMs) {
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+        readResult = await findAndMoveByType();
+        sleepMs = Math.min(500, Math.floor(sleepMs * 1.5));
+      }
+
+      if (!readResult) return null;
+      return this._processReadResult(readResult, ackTimeout, consumerId);
+    }
+
+    // Original logic for normal dequeue
     const readOne = async (streamName) => {
       const args = [
         "GROUP",
@@ -80,104 +215,7 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
       return null;
     }
 
-    const { streamName, streamId, fields } = readResult;
-
-    let messageJson = null;
-    for (let i = 0; i < fields.length; i += 2) {
-      if (fields[i] === "data") {
-        messageJson = fields[i + 1];
-        break;
-      }
-    }
-
-    if (!messageJson) {
-      // Corrupt message, ack and remove
-      await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
-      await this.redisManager.redis.xdel(streamName, streamId);
-      return null;
-    }
-
-    const messageData = this._deserializeMessage(messageJson);
-    if (!messageData) {
-      await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
-      await this.redisManager.redis.xdel(streamName, streamId);
-      logger.warn("Failed to deserialize message from stream, removed.");
-      return null;
-    }
-
-    const messageId = messageData.id;
-    // Attach stream metadata for acknowledgment
-    messageData._stream_id = streamId;
-    messageData._stream_name = streamName;
-
-    const currentTime = Date.now() / 1000;
-    const metadataKey = messageId;
-
-    let metadata;
-    const existingMetadataJson = await this.redisManager.redis.hget(
-      this.config.metadata_hash_name,
-      metadataKey
-    );
-
-    if (existingMetadataJson) {
-      metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
-    } else {
-      metadata = new MessageMetadata(
-        0,
-        null,
-        messageData.created_at || currentTime
-      );
-    }
-
-    metadata.dequeued_at = currentTime;
-    metadata.attempt_count += 1;
-    
-    if (ackTimeout) {
-      metadata.custom_ack_timeout = ackTimeout;
-    } else if (messageData.custom_ack_timeout) {
-      metadata.custom_ack_timeout = messageData.custom_ack_timeout;
-    }
-
-    if (
-      typeof messageData.custom_max_attempts === "number" &&
-      messageData.custom_max_attempts > 0
-    ) {
-      metadata.custom_max_attempts = messageData.custom_max_attempts;
-    }
-
-    // Update metadata (include the full message data for acknowledgment)
-    const metadataWithMessage = {
-      ...metadata,
-      _original_message: {
-        type: messageData.type,
-        payload: messageData.payload,
-        priority: messageData.priority,
-        created_at: messageData.created_at,
-        custom_ack_timeout: metadata.custom_ack_timeout,
-        custom_max_attempts: metadata.custom_max_attempts,
-        encryption: messageData.encryption,
-        signature: messageData.signature,
-      }
-    };
-    
-    await this.redisManager.redis.hset(
-      this.config.metadata_hash_name,
-      metadataKey,
-      JSON.stringify(metadataWithMessage)
-    );
-
-    this._stats.dequeued++;
-    logger.info(
-      `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
-    );
-    
-    // Return message with updated metadata
-    return {
-      ...messageData,
-      attempt_count: metadata.attempt_count,
-      dequeued_at: metadata.dequeued_at,
-      processing_started_at: metadata.dequeued_at
-    };
+    return this._processReadResult(readResult, ackTimeout, consumerId);
 
   } catch (e) {
     if (e.message && e.message.includes("NOGROUP")) {
@@ -185,11 +223,137 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
       for (const stream of priorityStreams) {
         await this._ensureConsumerGroup(stream);
       }
-      return this.dequeueMessage(timeout);
+      return this.dequeueMessage(timeout, ackTimeout, specificStreams, type, consumerId);
     }
     logger.error(`Error dequeuing message: ${e}`);
     return null;
   }
+}
+
+/**
+ * Processes a read result from Redis Stream and returns the message object.
+ * @param {Object} readResult - The result from readOne or similar.
+ * @param {number|null} [ackTimeout=null] - Acknowledgement timeout.
+ * @param {string|null} [consumerId=null] - Optional consumer identifier for tracking ownership.
+ * @returns {Promise<Object|null>} The processed message.
+ * @private
+ */
+export async function _processReadResult(readResult, ackTimeout = null, consumerId = null) {
+  const { streamName, streamId, fields } = readResult;
+
+  let messageJson = null;
+  for (let i = 0; i < fields.length; i += 2) {
+    if (fields[i] === "data") {
+      messageJson = fields[i + 1];
+      break;
+    }
+  }
+
+  if (!messageJson) {
+    // Corrupt message, ack and remove
+    await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
+    await this.redisManager.redis.xdel(streamName, streamId);
+    return null;
+  }
+
+  const messageData = this._deserializeMessage(messageJson);
+  if (!messageData) {
+    await this.redisManager.redis.xack(streamName, this.config.consumer_group_name, streamId);
+    await this.redisManager.redis.xdel(streamName, streamId);
+    logger.warn("Failed to deserialize message from stream, removed.");
+    return null;
+  }
+
+  const messageId = messageData.id;
+  // Attach stream metadata for acknowledgment
+  messageData._stream_id = streamId;
+  messageData._stream_name = streamName;
+
+  const currentTime = Date.now() / 1000;
+  const metadataKey = messageId;
+
+  let metadata;
+  const existingMetadataJson = await this.redisManager.redis.hget(
+    this.config.metadata_hash_name,
+    metadataKey
+  );
+
+  if (existingMetadataJson) {
+    metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
+  } else {
+    metadata = new MessageMetadata(
+      0,
+      null,
+      messageData.created_at || currentTime
+    );
+  }
+
+  metadata.dequeued_at = currentTime;
+  metadata.attempt_count += 1;
+  metadata.consumer_id = this.config.consumer_name;
+  
+  if (ackTimeout) {
+    metadata.custom_ack_timeout = ackTimeout;
+  } else if (messageData.custom_ack_timeout) {
+    metadata.custom_ack_timeout = messageData.custom_ack_timeout;
+  }
+
+  if (
+    typeof messageData.custom_max_attempts === "number" &&
+    messageData.custom_max_attempts > 0
+  ) {
+    metadata.custom_max_attempts = messageData.custom_max_attempts;
+  }
+
+  // Update metadata (include the full message data for acknowledgment)
+  const metadataWithMessage = {
+    ...metadata,
+    _original_message: {
+      type: messageData.type,
+      payload: messageData.payload,
+      priority: messageData.priority,
+      created_at: messageData.created_at,
+      custom_ack_timeout: metadata.custom_ack_timeout,
+      custom_max_attempts: metadata.custom_max_attempts,
+      encryption: messageData.encryption,
+      signature: messageData.signature,
+    }
+  };
+  
+  await this.redisManager.redis.hset(
+    this.config.metadata_hash_name,
+    metadataKey,
+    JSON.stringify(metadataWithMessage)
+  );
+
+  try {
+    if (messageData.type && messageId) {
+      const indexKey = this._getTypeIndexKey(messageData.type);
+      const locKey = this._getMessageLocationHashKey();
+      await this.redisManager.redis
+        .multi()
+        .zrem(indexKey, messageId)
+        .hdel(locKey, messageId)
+        .exec();
+    }
+  } catch {}
+
+  if (this._stats && typeof this._stats.dequeued === 'number') {
+    this._stats.dequeued++;
+  }
+  
+  logger.info(
+    `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
+  );
+  
+  // Return message with updated metadata
+  return {
+    ...messageData,
+    attempt_count: metadata.attempt_count,
+    dequeued_at: metadata.dequeued_at,
+    processing_started_at: metadata.dequeued_at,
+    consumer_id: metadata.consumer_id
+  };
 }
 
 /**
@@ -259,24 +423,29 @@ export async function acknowledgeMessage(ackPayload) {
               }
             }
           }
-        } catch (fetchError) {
-          logger.warn(`Could not fetch full message data from stream for ${messageId}: ${fetchError.message}`);
+        } catch (streamError) {
+          logger.warn(`Could not fetch message from stream for ${messageId}: ${streamError.message}`);
         }
       }
     }
 
     const pipeline = this.redisManager.pipeline();
 
-    // 1. Acknowledge in Stream
+    // 1. Acknowledge in Consumer Group
     pipeline.xack(streamName, this.config.consumer_group_name, streamId);
-    
-    // 2. Remove from Stream (optional, mimics queue behavior)
+
+    // 2. Remove from Source Stream
     pipeline.xdel(streamName, streamId);
 
-    // 3. Add to Acknowledged Queue (Stream) for history
+    // 3. Add to Acknowledged Queue (Stream)
+    // We want to store a lightweight version or full version? 
+    // Usually full version so we can inspect history.
     try {
-      const ackMsgData = { ...fullMessageData, acknowledged_at: Date.now() / 1000 };
-      // Remove internal fields before saving to history
+      const ackMsgData = {
+        ...fullMessageData,
+        acknowledged_at: Date.now() / 1000
+      };
+      // Clean up internal fields before archiving
       delete ackMsgData._stream_id;
       delete ackMsgData._stream_name;
       
@@ -402,6 +571,8 @@ export async function requeueFailedMessages() {
         }
 
         const processingPipeline = redis.pipeline();
+        const requeueIndexEntries = [];
+        let pipelineCmdIndex = 0;
         let operationsInPipeline = 0;
 
         for (const [msgId, , idleMs] of pending) {
@@ -411,6 +582,7 @@ export async function requeueFailedMessages() {
 
           if (!messageData) {
             processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+            pipelineCmdIndex++;
             operationsInPipeline++;
             continue;
           }
@@ -472,18 +644,27 @@ export async function requeueFailedMessages() {
             const dlqJson = this._serializeMessage(messageData);
 
             processingPipeline.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
+            pipelineCmdIndex++;
             processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+            pipelineCmdIndex++;
             processingPipeline.xdel(queueName, msgId);
+            pipelineCmdIndex++;
             processingPipeline.hdel(this.config.metadata_hash_name, messageData.id);
+            pipelineCmdIndex++;
             
             movedToDlqCount++;
             operationsInPipeline++;
           } else {
             const messageJson = this._serializeMessage(messageData);
             
+            const xaddCmdIndex = pipelineCmdIndex;
             processingPipeline.xadd(queueName, "*", "data", messageJson);
+            pipelineCmdIndex++;
+            requeueIndexEntries.push({ xaddCmdIndex, queueName, messageData });
             processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
+            pipelineCmdIndex++;
             processingPipeline.xdel(queueName, msgId);
+            pipelineCmdIndex++;
             
             requeuedCount++;
             operationsInPipeline++;
@@ -491,7 +672,29 @@ export async function requeueFailedMessages() {
         }
         
         if (operationsInPipeline > 0) {
-           await processingPipeline.exec();
+           const execResults = await processingPipeline.exec();
+           if (execResults && requeueIndexEntries.length > 0) {
+             const typesKey = this._getTypeIndexTypesKey();
+             const locKey = this._getMessageLocationHashKey();
+             const indexPipeline = redis.pipeline();
+             let hasIndexOps = false;
+
+             for (const entry of requeueIndexEntries) {
+               const streamId = execResults[entry.xaddCmdIndex]?.[1];
+               const msg = entry.messageData;
+               if (!streamId || !msg?.id || !msg?.type) continue;
+               const indexKey = this._getTypeIndexKey(msg.type);
+               const score = Math.floor((msg.created_at || Date.now() / 1000) * 1000);
+               indexPipeline.sadd(typesKey, msg.type);
+               indexPipeline.zadd(indexKey, score, msg.id);
+               indexPipeline.hset(locKey, msg.id, `${entry.queueName}|${streamId}`);
+               hasIndexOps = true;
+             }
+
+             if (hasIndexOps) {
+               await indexPipeline.exec();
+             }
+           }
         }
       } catch (e) {
         logger.error(`Error processing pending messages for ${queueName}: ${e}`);
@@ -516,4 +719,115 @@ export async function requeueFailedMessages() {
       );
     } catch {}
   }
+}
+
+/**
+ * Negative acknowledgement of a message.
+ * @param {string} messageId - The message ID (UUID).
+ * @param {string} [errorReason] - Optional error reason.
+ * @returns {Promise<boolean>} True if successful.
+ */
+export async function nackMessage(messageId, errorReason) {
+  // 1. Find message location
+  // We assume it's in a priority stream (main/processing)
+  const foundMsg = await this._ensureFullMessage({ id: messageId }, 'processing');
+
+  if (!foundMsg || !foundMsg._stream_id || !foundMsg._stream_name) {
+    const logger = this.logger || console;
+    logger.warn(`Cannot nack message ${messageId}: Not found in active streams.`);
+    return false;
+  }
+
+  const { _stream_name: streamName, _stream_id: streamId } = foundMsg;
+
+  // 2. Get/Update Metadata
+  const metadataKey = messageId;
+  let metadata;
+  const existingMetadataJson = await this.redisManager.redis.hget(
+    this.config.metadata_hash_name,
+    metadataKey
+  );
+
+  if (existingMetadataJson) {
+    metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
+  } else {
+    // Fallback if metadata missing
+    metadata = new MessageMetadata(0, null, foundMsg.created_at);
+  }
+
+  // Check constraints
+  let maxAttempts = this.config.max_attempts;
+  if (metadata.custom_max_attempts) maxAttempts = metadata.custom_max_attempts;
+  else if (foundMsg.custom_max_attempts)
+    maxAttempts = foundMsg.custom_max_attempts;
+
+  const pipeline = this.redisManager.pipeline();
+
+  // 3. Apply Retry Policy
+  if (metadata.attempt_count >= maxAttempts) {
+    // Move to DLQ
+    foundMsg.failed_at = Date.now() / 1000;
+    foundMsg.last_error = errorReason || "NACK: Max attempts exceeded";
+    foundMsg.attempt_count = metadata.attempt_count;
+
+    // Clean internal fields
+    const dlqMsg = { ...foundMsg };
+    delete dlqMsg._stream_id;
+    delete dlqMsg._stream_name;
+
+    pipeline.xadd(
+      this.config.dead_letter_queue_name,
+      "*",
+      "data",
+      this._serializeMessage(dlqMsg)
+    );
+    pipeline.xack(streamName, this.config.consumer_group_name, streamId);
+    pipeline.xdel(streamName, streamId);
+    pipeline.hdel(this.config.metadata_hash_name, messageId);
+
+    // Cleanup index
+    if (foundMsg.type) {
+      const indexKey = this._getTypeIndexKey(foundMsg.type);
+      const locKey = this._getMessageLocationHashKey();
+      pipeline.zrem(indexKey, messageId);
+      pipeline.hdel(locKey, messageId);
+    }
+
+    await pipeline.exec();
+    this.publishEvent("move_to_dlq", { count: 1, id: messageId });
+    const logger = this.logger || console;
+    logger.info(`Message ${messageId} moved to DLQ (NACK)`);
+  } else {
+    // Requeue (Back of queue)
+    foundMsg.last_error = errorReason || "NACK: Requeued";
+
+    const requeueMsg = { ...foundMsg };
+    delete requeueMsg._stream_id;
+    delete requeueMsg._stream_name;
+    delete requeueMsg.dequeued_at;
+    delete requeueMsg.processing_started_at;
+
+    const msgJson = this._serializeMessage(requeueMsg);
+
+    pipeline.xadd(streamName, "*", "data", msgJson);
+    pipeline.xack(streamName, this.config.consumer_group_name, streamId);
+    pipeline.xdel(streamName, streamId);
+
+    const results = await pipeline.exec();
+
+    // Update index if needed
+    const newStreamId = results[0][1]; // Result of XADD
+    if (foundMsg.type && newStreamId) {
+      const indexPipeline = this.redisManager.redis.pipeline();
+      const locKey = this._getMessageLocationHashKey();
+      indexPipeline.hset(locKey, messageId, `${streamName}|${newStreamId}`);
+      await indexPipeline.exec();
+    }
+
+    this.publishEvent("requeue", { count: 1, id: messageId });
+    const logger = this.logger || console;
+    logger.info(`Message ${messageId} requeued (NACK)`);
+  }
+
+  return true;
 }
