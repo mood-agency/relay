@@ -292,6 +292,9 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
   metadata.attempt_count += 1;
   metadata.consumer_id = this.config.consumer_name;
   
+  // Generate a unique lock_token for this dequeue (fencing token for split-brain prevention)
+  metadata.lock_token = generateId();
+  
   if (ackTimeout) {
     metadata.custom_ack_timeout = ackTimeout;
   } else if (messageData.custom_ack_timeout) {
@@ -343,7 +346,7 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
   }
   
   logger.info(
-    `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}) from ${streamName}`
+    `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}, lock: ${metadata.lock_token}) from ${streamName}`
   );
   
   // Return message with updated metadata
@@ -352,14 +355,15 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
     attempt_count: metadata.attempt_count,
     dequeued_at: metadata.dequeued_at,
     processing_started_at: metadata.dequeued_at,
-    consumer_id: metadata.consumer_id
+    consumer_id: metadata.consumer_id,
+    lock_token: metadata.lock_token
   };
 }
 
 /**
  * Acknowledges a message.
  * @param {Object} ackPayload - The message payload to acknowledge.
- * @returns {Promise<boolean>} True if successful.
+ * @returns {Promise<boolean|{success: boolean, error?: string}>} True if successful, or object with error if lock validation fails.
  */
 export async function acknowledgeMessage(ackPayload) {
   const messageId = ackPayload.id;
@@ -375,6 +379,24 @@ export async function acknowledgeMessage(ackPayload) {
   const logger = this.logger || console;
 
   try {
+    // Lock validation (Fencing Token): If lock_token is provided, verify it matches
+    if (ackPayload.lock_token !== undefined) {
+      const metadataJson = await this.redisManager.redis.hget(
+        this.config.metadata_hash_name,
+        messageId
+      );
+      
+      if (metadataJson) {
+        const metadata = JSON.parse(metadataJson);
+        if (metadata.lock_token !== ackPayload.lock_token) {
+          logger.warn(`ACK rejected for ${messageId}: lock_token mismatch (expected ${metadata.lock_token}, got ${ackPayload.lock_token}) - Lock was lost`);
+          return { success: false, error: "LOCK_LOST" };
+        }
+      }
+      // If metadata doesn't exist, the message might have already been processed or expired
+      // We'll continue with the ACK attempt and let Redis handle it
+    }
+
     // Fetch the full message data - try metadata first, then stream as fallback
     let fullMessageData = { ...ackPayload };
     
@@ -609,7 +631,14 @@ export async function requeueFailedMessages() {
             }
           }
 
-          if (idleMs < effectiveTimeout * 1000) continue;
+          // Use dequeued_at from metadata if available (may have been updated by touch),
+          // otherwise fall back to idleMs from XPENDING
+          let elapsedMs = idleMs;
+          if (metadata && typeof metadata.dequeued_at === 'number') {
+            elapsedMs = (currentTime - metadata.dequeued_at) * 1000;
+          }
+
+          if (elapsedMs < effectiveTimeout * 1000) continue;
 
           if (metadata.attempt_count >= effectiveMaxAttempts) {
             if (
@@ -830,4 +859,69 @@ export async function nackMessage(messageId, errorReason) {
   }
 
   return true;
+}
+
+/**
+ * Extends the lock/visibility timeout for a message in processing.
+ * This is used as a "heartbeat" or "keep-alive" mechanism to prevent
+ * the message from being re-queued while a slow worker is still processing it.
+ * 
+ * @param {string} messageId - The message ID (UUID).
+ * @param {number} attemptCount - The attempt_count received when the message was dequeued (fencing token).
+ * @param {number} [extendSeconds] - Optional seconds to extend. Defaults to ack_timeout_seconds.
+ * @returns {Promise<{success: boolean, error?: string, new_timeout_at?: number}>} Result object.
+ */
+/**
+ * Extends the lock/visibility timeout for a message in processing.
+ * This is used as a "heartbeat" or "keep-alive" mechanism to prevent
+ * the message from being re-queued while a slow worker is still processing it.
+ * 
+ * @param {string} messageId - The message ID (UUID).
+ * @param {string} lockToken - The lock_token received when the message was dequeued (fencing token).
+ * @param {number} [extendSeconds] - Optional seconds to extend. Defaults to ack_timeout_seconds.
+ * @returns {Promise<{success: boolean, error?: string, new_timeout_at?: number, lock_token?: string}>} Result object.
+ */
+export async function touchMessage(messageId, lockToken, extendSeconds) {
+  const redis = this.redisManager.redis;
+
+  try {
+    // 1. Get metadata from hash
+    const metadataJson = await redis.hget(this.config.metadata_hash_name, messageId);
+
+    if (!metadataJson) {
+      logger.warn(`Touch failed for ${messageId}: Message not found in metadata (not in processing)`);
+      return { success: false, error: "NOT_FOUND" };
+    }
+
+    const metadata = JSON.parse(metadataJson);
+
+    // 2. Verify lock_token matches (fencing token validation)
+    if (metadata.lock_token !== lockToken) {
+      logger.warn(`Touch failed for ${messageId}: lock_token mismatch (expected ${metadata.lock_token}, got ${lockToken})`);
+      return { success: false, error: "LOCK_LOST" };
+    }
+
+    // 3. Reset dequeued_at to now (extends visibility timeout)
+    const now = Date.now() / 1000;
+    metadata.dequeued_at = now;
+
+    await redis.hset(this.config.metadata_hash_name, messageId, JSON.stringify(metadata));
+
+    // Calculate new timeout deadline
+    const effectiveTimeout = metadata.custom_ack_timeout || this.config.ack_timeout_seconds;
+    const newTimeoutAt = now + effectiveTimeout;
+
+    logger.info(`Touch successful for ${messageId}: lock extended until ${new Date(newTimeoutAt * 1000).toISOString()}`);
+
+    return {
+      success: true,
+      new_timeout_at: newTimeoutAt,
+      extended_by: effectiveTimeout,
+      lock_token: metadata.lock_token
+    };
+
+  } catch (error) {
+    logger.error(`Error during touch for ${messageId}: ${error.message}`);
+    return { success: false, error: "INTERNAL_ERROR" };
+  }
 }

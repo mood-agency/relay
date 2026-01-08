@@ -43,6 +43,7 @@ export const DequeuedMessageSchema = z.object({
   processing_duration: z.number(),
   acknowledged_at: z.number().optional(),
   consumer_id: z.string().nullable().optional(),
+  lock_token: z.string().optional().describe("Unique fencing token for lock ownership - use this for ACK and touch operations"),
   _stream_id: z.string().optional(),
   _stream_name: z.string().optional(),
 });
@@ -54,6 +55,8 @@ export const AcknowledgedMessageSchema =
     id: true,
     _stream_id: true,
     _stream_name: true,
+  }).extend({
+    lock_token: z.string().optional().describe("Fencing token - if provided, ACK will be rejected if it doesn't match (prevents stale ACKs after re-queue)"),
   });
 
 export type AcknowledgedMessage = z.infer<typeof AcknowledgedMessageSchema>;
@@ -143,6 +146,13 @@ export const acknowledgeMessage = createRoute({
       z.object({ message: z.string() }),
       "Message not acknowledged"
     ),
+    409: jsonContent(
+      z.object({
+        message: z.string(),
+        error: z.literal("LOCK_LOST"),
+      }),
+      "Lock Lost - lock_token mismatch (message was re-queued and picked up by another worker)"
+    ),
     422: jsonContent(
       createErrorSchema(AcknowledgedMessageSchema),
       "Validation Error"
@@ -201,11 +211,51 @@ export const nackMessage = createRoute({
   },
 });
 
+export const touchMessage = createRoute({
+  path: "/queue/message/:messageId/touch",
+  method: "put",
+  tags,
+  description: "Extends the lock/visibility timeout for a message in processing. Use this as a heartbeat to prevent timeout while processing heavy tasks.",
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        lock_token: z.string().describe("The lock_token received when the message was dequeued (fencing token for validation)"),
+        extend_seconds: z.number().optional().describe("Optional seconds to extend. Defaults to ack_timeout_seconds from config."),
+      }),
+      "Touch Message Request"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        new_timeout_at: z.number().describe("Unix timestamp when the new timeout will expire"),
+        extended_by: z.number().describe("Seconds the timeout was extended by"),
+        lock_token: z.string().describe("The current lock_token (unchanged)"),
+      }),
+      "Lock Extended Successfully"
+    ),
+    404: jsonContent(z.object({ message: z.string() }), "Message not found in processing"),
+    409: jsonContent(
+      z.object({
+        message: z.string(),
+        error: z.literal("LOCK_LOST"),
+      }),
+      "Lock Lost - lock_token mismatch (message was re-queued)"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type AddMessageRoute = typeof addMessage;
 export type AddBatchRoute = typeof addBatch;
 export type GetMessageRoute = typeof getMessage;
 export type AcknowledgeMessageRoute = typeof acknowledgeMessage;
 export type NackMessageRoute = typeof nackMessage;
+export type TouchMessageRoute = typeof touchMessage;
 export const removeMessagesByDateRange = createRoute({
   path: "/queue/messages",
   method: "delete",

@@ -162,8 +162,9 @@ export class OptimizedRedisQueue {
 
   // Consumer
   dequeueMessage(timeout?: number, ackTimeout?: number | null, specificStreams?: string[] | null, type?: string | null, consumerId?: string | null): Promise<DequeuedMessage | null>;
-  acknowledgeMessage(message: DequeuedMessage | { id: string, _stream_id: string, _stream_name: string }): Promise<boolean>;
+  acknowledgeMessage(message: DequeuedMessage | { id: string, _stream_id: string, _stream_name: string, lock_token?: string }): Promise<boolean | { success: false, error: string }>;
   nackMessage(messageId: string, errorReason?: string): Promise<boolean>;
+  touchMessage(messageId: string, lockToken: string, extendSeconds?: number): Promise<{ success: boolean, error?: string, new_timeout_at?: number, extended_by?: number, lock_token?: string }>;
   requeueFailedMessages(): Promise<number>;
 
   // Admin

@@ -25,8 +25,8 @@ class QueueTester {
         return headers;
     }
 
-    async addSampleMessages(count: number = 10) {
-        console.log(`🚀 Adding ${count} sample messages to the queue...`);
+    async addSampleMessages(count: number = 10, batchSize: number = 50) {
+        console.log(`🚀 Adding ${count} sample messages to the queue in batches of ${batchSize}...`);
 
         const messageTypes = [
             "email_send",
@@ -35,39 +35,55 @@ class QueueTester {
             "notification",
             "backup",
         ];
+        const priorities = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-        for (let i = 0; i < count; i++) {
-            const priorities = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-            const message = {
-                type: messageTypes[Math.floor(Math.random() * messageTypes.length)],
-                payload: {
-                    id: `task_${i + 1}`,
-                    user_id: `user_${Math.floor(Math.random() * 100) + 1}`,
-                    data: `Sample data for task ${i + 1}`,
-                    timestamp: Date.now() / 1000,
-                },
-                priority: priorities[Math.floor(Math.random() * priorities.length)], // Mostly priority 0
-            };
+        const totalBatches = Math.ceil(count / batchSize);
+        let totalAdded = 0;
+
+        for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+            const startIdx = batchNum * batchSize;
+            const endIdx = Math.min(startIdx + batchSize, count);
+            const currentBatchSize = endIdx - startIdx;
+
+            const batch: any[] = [];
+            for (let i = startIdx; i < endIdx; i++) {
+                batch.push({
+                    type: messageTypes[Math.floor(Math.random() * messageTypes.length)],
+                    payload: {
+                        id: `task_${i + 1}`,
+                        user_id: `user_${Math.floor(Math.random() * 100) + 1}`,
+                        data: `Sample data for task ${i + 1}`,
+                        timestamp: Date.now() / 1000,
+                    },
+                    priority: priorities[Math.floor(Math.random() * priorities.length)],
+                });
+            }
 
             try {
-                const response = await fetch(`${this.apiBase}/queue/message`, {
+                const response = await fetch(`${this.apiBase}/queue/batch`, {
                     method: "POST",
                     headers: this.getHeaders("application/json"),
-                    body: JSON.stringify(message),
+                    body: JSON.stringify(batch),
                 });
 
                 if (response.status === 201) {
-                    console.log(`✅ Added message ${i + 1}: ${message.type}`);
+                    totalAdded += currentBatchSize;
+                    console.log(`✅ Batch ${batchNum + 1}/${totalBatches}: Added ${currentBatchSize} messages (${totalAdded}/${count} total)`);
                 } else {
-                    console.log(`❌ Failed to add message ${i + 1}: ${response.status}`);
+                    const errorText = await response.text();
+                    console.log(`❌ Batch ${batchNum + 1}/${totalBatches} failed: ${response.status} - ${errorText}`);
                 }
             } catch (e) {
-                console.log(`❌ Error adding message ${i + 1}: ${e}`);
+                console.log(`❌ Error sending batch ${batchNum + 1}/${totalBatches}: ${e}`);
             }
 
-            // Small delay to avoid overwhelming the server
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            // Small delay between batches to avoid overwhelming the server
+            if (batchNum < totalBatches - 1) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
         }
+
+        console.log(`📊 Finished: Added ${totalAdded}/${count} messages`);
     }
 
     async dequeueSomeMessages(count: number = 3, consumerId?: string) {
@@ -218,15 +234,15 @@ class QueueTester {
         }
     }
 
-    async runDemo(messagesCount: number = 15) {
+    async runDemo(messagesCount: number = 15, batchSize: number = 50) {
         console.log("🎯 Redis Queue Dashboard Demo");
         console.log("=".repeat(50));
 
         // Test dashboard access
         const dashboardOk = await this.testDashboardAccess();
 
-        // Add sample messages
-        await this.addSampleMessages(messagesCount);
+        // Add sample messages in batches
+        await this.addSampleMessages(messagesCount, batchSize);
 
         // Check initial status
         await this.checkQueueStatus();
@@ -307,6 +323,7 @@ const main = async () => {
     const args = process.argv.slice(2);
     let url = "http://localhost:3000";
     let messages_number = 500;
+    let batch_size = 50;
     let apiKey: string | undefined = process.env.SECRET_KEY;
 
     for (let i = 0; i < args.length; i++) {
@@ -316,9 +333,28 @@ const main = async () => {
         } else if (args[i] === "--messages" && args[i + 1]) {
             messages_number = parseInt(args[i + 1], 10);
             i++;
+        } else if (args[i] === "--batch-size" && args[i + 1]) {
+            batch_size = parseInt(args[i + 1], 10);
+            i++;
         } else if (args[i] === "--api-key" && args[i + 1]) {
             apiKey = args[i + 1];
             i++;
+        } else if (args[i] === "--help" || args[i] === "-h") {
+            console.log(`
+Usage: npx tsx test_dashboard.ts [options]
+
+Options:
+  --url <url>           Base URL of the queue API (default: http://localhost:3000)
+  --messages <count>    Total number of messages to add (default: 500)
+  --batch-size <size>   Number of messages per batch (default: 50)
+  --api-key <key>       API key for authentication (or set SECRET_KEY env var)
+  -h, --help            Show this help message
+
+Examples:
+  npx tsx test_dashboard.ts --messages 1000 --batch-size 100
+  npx tsx test_dashboard.ts --url http://localhost:8080 --api-key mykey
+`);
+            process.exit(0);
         }
     }
 
@@ -328,8 +364,10 @@ const main = async () => {
         console.log("⚠️  No API key provided. Set SECRET_KEY env var or use --api-key flag");
     }
 
+    console.log(`📦 Configuration: ${messages_number} messages in batches of ${batch_size}`);
+
     const tester = new QueueTester(url, apiKey);
-    await tester.runDemo(messages_number);
+    await tester.runDemo(messages_number, batch_size);
 };
 
 main().catch(console.error);

@@ -12,6 +12,7 @@ export class MessageMetadata {
    * @param {number|null} [custom_ack_timeout=null] - Custom timeout for this message.
    * @param {number|null} [custom_max_attempts=null] - Custom max attempts for this message.
    * @param {string|null} [consumer_id=null] - ID of the consumer that dequeued this message.
+   * @param {string|null} [lock_token=null] - Unique token for lock ownership (fencing token).
    */
   constructor(
     attempt_count = 0,
@@ -21,7 +22,8 @@ export class MessageMetadata {
     processing_duration = 0.0,
     custom_ack_timeout = null,
     custom_max_attempts = null,
-    consumer_id = null
+    consumer_id = null,
+    lock_token = null
   ) {
     this.attempt_count = attempt_count;
     this.dequeued_at = dequeued_at; // timestamp in seconds
@@ -31,6 +33,7 @@ export class MessageMetadata {
     this.custom_ack_timeout = custom_ack_timeout;
     this.custom_max_attempts = custom_max_attempts;
     this.consumer_id = consumer_id; // consumer that owns this message
+    this.lock_token = lock_token; // unique token for lock ownership (fencing token)
   }
 
   /**
@@ -39,7 +42,7 @@ export class MessageMetadata {
    * @returns {MessageMetadata} A new instance.
    */
   static fromObject(data) {
-    return new MessageMetadata(
+    const instance = new MessageMetadata(
       data.attempt_count,
       data.dequeued_at,
       data.created_at,
@@ -47,8 +50,10 @@ export class MessageMetadata {
       data.processing_duration,
       data.custom_ack_timeout,
       data.custom_max_attempts,
-      data.consumer_id
+      data.consumer_id,
+      data.lock_token
     );
+    return instance;
   }
 }
 

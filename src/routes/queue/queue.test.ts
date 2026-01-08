@@ -894,6 +894,267 @@ describe('Queue Routes - Integration Tests', () => {
     });
   });
 
+  // Split Brain Prevention - Touch and Lock Validation (using lock_token)
+  describe('Split Brain Prevention - Touch and Lock Validation', () => {
+    describe('PUT /queue/message/:messageId/touch', () => {
+      it('should extend the lock timeout successfully with lock_token', async () => {
+        // 1. Enqueue and dequeue a message
+        await testClient(router).queue.message.$post({ json: { type: 'touch-test', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        expect(dequeueRes.status).toBe(200);
+        const msg = await dequeueRes.json();
+        
+        // Verify lock_token is returned
+        expect(msg.lock_token).toBeDefined();
+        expect(typeof msg.lock_token).toBe('string');
+        
+        // 2. Touch the message with correct lock_token
+        const touchRes = await testClient(router).queue.message[':messageId'].touch.$put({
+          param: { messageId: msg.id },
+          json: { lock_token: msg.lock_token }
+        });
+        
+        expect(touchRes.status).toBe(200);
+        const result = await touchRes.json();
+        expect(result.message).toBe('Lock extended successfully');
+        expect(result.new_timeout_at).toBeGreaterThan(Date.now() / 1000);
+        expect(result.extended_by).toBeGreaterThan(0);
+        expect(result.lock_token).toBe(msg.lock_token);
+      });
+
+      it('should return 409 when lock_token does not match (lock lost)', async () => {
+        // 1. Enqueue and dequeue a message
+        await testClient(router).queue.message.$post({ json: { type: 'touch-conflict', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        expect(dequeueRes.status).toBe(200);
+        const msg = await dequeueRes.json();
+        
+        // 2. Try to touch with wrong lock_token (simulating stale worker)
+        const touchRes = await testClient(router).queue.message[':messageId'].touch.$put({
+          param: { messageId: msg.id },
+          json: { lock_token: 'wrong-token-xyz' }
+        });
+        
+        expect(touchRes.status).toBe(409);
+        const result = await touchRes.json();
+        expect(result.error).toBe('LOCK_LOST');
+      });
+
+      it('should return 404 when message is not in processing', async () => {
+        // Try to touch a non-existent message
+        const touchRes = await testClient(router).queue.message[':messageId'].touch.$put({
+          param: { messageId: 'non-existent-id' },
+          json: { lock_token: 'any-token' }
+        });
+        
+        expect(touchRes.status).toBe(404);
+      });
+
+      it('should allow multiple touch calls to keep extending the lock', async () => {
+        // 1. Enqueue and dequeue
+        await testClient(router).queue.message.$post({ json: { type: 'multi-touch', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        // 2. First touch
+        const touch1Res = await testClient(router).queue.message[':messageId'].touch.$put({
+          param: { messageId: msg.id },
+          json: { lock_token: msg.lock_token }
+        });
+        expect(touch1Res.status).toBe(200);
+        const touch1 = await touch1Res.json();
+        
+        // 3. Second touch (should still work with same lock_token)
+        const touch2Res = await testClient(router).queue.message[':messageId'].touch.$put({
+          param: { messageId: msg.id },
+          json: { lock_token: msg.lock_token }
+        });
+        expect(touch2Res.status).toBe(200);
+        const touch2 = await touch2Res.json();
+        
+        // The new timeout should be later than the first
+        expect(touch2.new_timeout_at).toBeGreaterThanOrEqual(touch1.new_timeout_at);
+      });
+    });
+
+    describe('POST /queue/ack - Lock Validation', () => {
+      it('should acknowledge successfully with matching lock_token', async () => {
+        // 1. Enqueue and dequeue
+        await testClient(router).queue.message.$post({ json: { type: 'ack-lock-test', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        // 2. Acknowledge with lock_token (lock validation)
+        const ackRes = await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name,
+            lock_token: msg.lock_token
+          }
+        });
+        
+        expect(ackRes.status).toBe(200);
+        const result = await ackRes.json();
+        expect(result.message).toBe('Message acknowledged');
+      });
+
+      it('should return 409 when lock_token does not match (stale ACK)', async () => {
+        // 1. Enqueue and dequeue
+        await testClient(router).queue.message.$post({ json: { type: 'stale-ack', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        // 2. Try to acknowledge with wrong lock_token
+        const ackRes = await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name,
+            lock_token: 'wrong-token-abc' // Wrong - simulating stale worker
+          }
+        });
+        
+        expect(ackRes.status).toBe(409);
+        const result = await ackRes.json();
+        expect(result.error).toBe('LOCK_LOST');
+      });
+
+      it('should still accept ACK without lock_token for backward compatibility', async () => {
+        // 1. Enqueue and dequeue
+        await testClient(router).queue.message.$post({ json: { type: 'no-lock-ack', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        // 2. Acknowledge WITHOUT lock_token (backward compatible)
+        const ackRes = await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name
+            // No lock_token - should still work
+          }
+        });
+        
+        expect(ackRes.status).toBe(200);
+      });
+    });
+
+    describe('Split Brain Scenario Simulation', () => {
+      it('should reject ACK from slow worker after message was re-queued (different lock_token)', async () => {
+        // This test simulates the split brain scenario:
+        // 1. Worker A dequeues message (gets lock_token_A)
+        // 2. Message times out and is re-queued
+        // 3. Worker B dequeues the same message (gets NEW lock_token_B)
+        // 4. Worker A tries to ACK with lock_token_A (should be rejected)
+
+        const originalTimeout = apiQueue.config.ack_timeout_seconds;
+        (apiQueue.config as any).ack_timeout_seconds = 1;
+
+        try {
+          // 1. Enqueue a message
+          await testClient(router).queue.message.$post({ json: { type: 'split-brain', payload: { test: 1 } } });
+
+          // 2. Worker A dequeues (gets lock_token_A)
+          const workerADequeue = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+          expect(workerADequeue.status).toBe(200);
+          const workerAMsg = await workerADequeue.json();
+          expect(workerAMsg.lock_token).toBeDefined();
+          
+          // Store Worker A's lock_token
+          const workerALockToken = workerAMsg.lock_token;
+
+          // 3. Simulate timeout - wait for message to be considered stale
+          await new Promise(resolve => setTimeout(resolve, 1100));
+          
+          // 4. Trigger requeue
+          const requeueCount = await apiQueue.requeueFailedMessages();
+          expect(requeueCount).toBe(1);
+
+          // 5. Worker B dequeues the re-queued message (gets NEW lock_token)
+          const workerBDequeue = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+          expect(workerBDequeue.status).toBe(200);
+          const workerBMsg = await workerBDequeue.json();
+          expect(workerBMsg.id).toBe(workerAMsg.id); // Same message
+          expect(workerBMsg.lock_token).not.toBe(workerALockToken); // Different lock_token!
+
+          // 6. Worker A (slow) tries to ACK with old lock_token - should be REJECTED
+          const workerAAck = await testClient(router).queue.ack.$post({
+            json: {
+              id: workerAMsg.id,
+              _stream_id: workerBMsg._stream_id,
+              _stream_name: workerBMsg._stream_name,
+              lock_token: workerALockToken // OLD lock_token
+            }
+          });
+          
+          expect(workerAAck.status).toBe(409);
+          const workerAResult = await workerAAck.json();
+          expect(workerAResult.error).toBe('LOCK_LOST');
+
+          // 7. Worker B can still ACK successfully with its lock_token
+          const workerBAck = await testClient(router).queue.ack.$post({
+            json: {
+              id: workerBMsg.id,
+              _stream_id: workerBMsg._stream_id,
+              _stream_name: workerBMsg._stream_name,
+              lock_token: workerBMsg.lock_token // Current lock_token
+            }
+          });
+          
+          expect(workerBAck.status).toBe(200);
+
+        } finally {
+          (apiQueue.config as any).ack_timeout_seconds = originalTimeout;
+        }
+      }, 15000);
+
+      it('should allow touch to prevent timeout during heavy processing', async () => {
+        const originalTimeout = apiQueue.config.ack_timeout_seconds;
+        (apiQueue.config as any).ack_timeout_seconds = 2;
+
+        try {
+          // 1. Enqueue and dequeue
+          await testClient(router).queue.message.$post({ json: { type: 'heavy-task', payload: { size: 'large' } } });
+          const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+          const msg = await dequeueRes.json();
+
+          // 2. Simulate heavy processing with periodic touch
+          // Wait 1.5 seconds (would timeout at 2s without touch)
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          
+          // 3. Touch to extend the lock
+          const touchRes = await testClient(router).queue.message[':messageId'].touch.$put({
+            param: { messageId: msg.id },
+            json: { lock_token: msg.lock_token }
+          });
+          expect(touchRes.status).toBe(200);
+
+          // 4. Wait another 1.5 seconds (total 3s, would have timed out without touch)
+          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          // 5. Trigger requeue check - should NOT requeue because we touched
+          const requeueCount = await apiQueue.requeueFailedMessages();
+          expect(requeueCount).toBe(0);
+
+          // 6. ACK should still work with same lock_token
+          const ackRes = await testClient(router).queue.ack.$post({
+            json: {
+              id: msg.id,
+              _stream_id: msg._stream_id,
+              _stream_name: msg._stream_name,
+              lock_token: msg.lock_token
+            }
+          });
+          expect(ackRes.status).toBe(200);
+
+        } finally {
+          (apiQueue.config as any).ack_timeout_seconds = originalTimeout;
+        }
+      }, 15000);
+    });
+  });
+
   // Robustness Tests
   describe('Robustness Tests - Retry and DLQ', () => {
     it('should return processing messages even if stream IDs collide across streams', async () => {

@@ -18,6 +18,7 @@ import type {
   ExportMessagesRoute,
   ImportMessagesRoute,
   NackMessageRoute,
+  TouchMessageRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "../../config/types";
 import { streamSSE } from "hono/streaming";
@@ -185,8 +186,17 @@ export const acknowledgeMessage: AppRouteHandler<
   AcknowledgeMessageRoute
 > = async (c: any) => {
   const message = c.req.valid("json");
-  const acknowledged = await queue.acknowledgeMessage(message);
-  if (!acknowledged) {
+  const result = await queue.acknowledgeMessage(message);
+  
+  // Handle lock lost error (fencing token mismatch)
+  if (result && typeof result === 'object' && result.error === "LOCK_LOST") {
+    return c.json({ 
+      message: "Lock lost - lock_token mismatch. The message was re-queued and picked up by another worker. Your work should be discarded.",
+      error: "LOCK_LOST"
+    }, 409);
+  }
+  
+  if (!result) {
     return c.json({ message: "Message not acknowledged" }, 400);
   }
   return c.json({ message: "Message acknowledged" }, 200);
@@ -202,6 +212,33 @@ export const nackMessage: AppRouteHandler<NackMessageRoute> = async (c: any) => 
     return c.json({ message: "Message not found or could not be nacked" }, 404);
   }
   return c.json({ message: "Message nacked successfully" }, 200);
+};
+
+export const touchMessage: AppRouteHandler<TouchMessageRoute> = async (c: any) => {
+  const { messageId } = c.req.valid("param");
+  const { lock_token, extend_seconds } = c.req.valid("json");
+
+  const result = await queue.touchMessage(messageId, lock_token, extend_seconds);
+  
+  if (!result.success) {
+    if (result.error === "NOT_FOUND") {
+      return c.json({ message: "Message not found in processing queue" }, 404);
+    }
+    if (result.error === "LOCK_LOST") {
+      return c.json({ 
+        message: "Lock lost - lock_token mismatch. The message may have been re-queued and picked up by another worker.",
+        error: "LOCK_LOST"
+      }, 409);
+    }
+    return c.json({ message: "Failed to extend message lock" }, 500);
+  }
+  
+  return c.json({ 
+    message: "Lock extended successfully",
+    new_timeout_at: result.new_timeout_at,
+    extended_by: result.extended_by,
+    lock_token: result.lock_token
+  }, 200);
 };
 
 export const metrics: AppRouteHandler<MetricsRoute> = async (c: any) => {

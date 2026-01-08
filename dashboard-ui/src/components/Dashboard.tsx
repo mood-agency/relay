@@ -71,6 +71,29 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
+// Helper function to syntax highlight JSON
+function syntaxHighlightJson(json: string): string {
+    return json.replace(
+        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+        (match) => {
+            let cls = 'text-amber-400'; // number
+            if (/^"/.test(match)) {
+                if (/:$/.test(match)) {
+                    cls = 'text-sky-400'; // key
+                    match = match.slice(0, -1) + '<span class="text-slate-500">:</span>';
+                } else {
+                    cls = 'text-emerald-400'; // string
+                }
+            } else if (/true|false/.test(match)) {
+                cls = 'text-purple-400'; // boolean
+            } else if (/null/.test(match)) {
+                cls = 'text-rose-400'; // null
+            }
+            return `<span class="${cls}">${match}</span>`;
+        }
+    );
+}
+
 // Types
 interface Message {
     id: string
@@ -89,6 +112,7 @@ interface Message {
     custom_max_attempts?: number
     archived_at?: number
     consumer_id?: string | null
+    lock_token?: string
 }
 
 interface Pagination {
@@ -1801,6 +1825,7 @@ export default function Dashboard() {
                 onSave={handleSaveEdit}
                 message={editDialog.message}
                 queueType={editDialog.queueType}
+                defaultAckTimeout={config?.ack_timeout_seconds ?? 60}
             />
 
             <ViewPayloadDialog
@@ -2196,10 +2221,19 @@ const MessageRow = React.memo(({
             </TableCell>
             <TableCell className="text-left"><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-            <TableCell className="max-w-[300px]">
-                <div className="truncate text-xs font-mono" title={payloadText}>
-                    {payloadText}
-                </div>
+            <TableCell className="max-w-[150px]">
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="truncate text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+                            {payloadText}
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
+                        </pre>
+                    </TooltipContent>
+                </Tooltip>
             </TableCell>
             <TableCell className="text-xs text-foreground whitespace-nowrap">
                 {formatTime(getTimeValue(msg))}
@@ -2221,8 +2255,8 @@ const MessageRow = React.memo(({
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
                     <span className="font-mono" title={msg.consumer_id || 'Not specified'}>
                         {msg.consumer_id ? (
-                            msg.consumer_id.length > 20 
-                                ? `${msg.consumer_id.substring(0, 20)}...` 
+                            msg.consumer_id.length > 20
+                                ? `${msg.consumer_id.substring(0, 20)}...`
                                 : msg.consumer_id
                         ) : (
                             <span className="text-muted-foreground italic">—</span>
@@ -2232,24 +2266,31 @@ const MessageRow = React.memo(({
             )}
             {queueType === 'processing' && (
                 <TableCell className="text-xs text-foreground whitespace-nowrap">
+                    {msg.lock_token ? (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span className="font-mono cursor-help">
+                                    {msg.lock_token.substring(0, 8)}...
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="font-mono text-xs">
+                                <p className="font-semibold mb-1">Fencing Token</p>
+                                <p>{msg.lock_token}</p>
+                                <p className="text-muted-foreground mt-1 text-[10px]">Use this for ACK/Touch validation</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    ) : (
+                        <span className="text-muted-foreground italic">—</span>
+                    )}
+                </TableCell>
+            )}
+            {queueType === 'processing' && (
+                <TableCell className="text-xs text-foreground whitespace-nowrap">
                     {calculateTimeRemaining(msg)}
                 </TableCell>
             )}
             <TableCell className="text-right pr-6">
                 <div className="flex justify-end gap-1">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            onViewPayload(msg.payload)
-                        }}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                        title="View Payload"
-                    >
-                        <Eye className="h-4 w-4" />
-                    </Button>
                     {onEdit && (
                         <Button
                             type="button"
@@ -2471,6 +2512,7 @@ const QueueTable = React.memo(({
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             {(queueType === 'main' || queueType === 'acknowledged' || queueType === 'archived') && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>}
                             {queueType === 'processing' && <SortableHeader label="Consumer" field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />}
+                            {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Lock Token</TableHead>}
                             {queueType === 'processing' && <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Time Remaining</TableHead>}
                             <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
@@ -2638,13 +2680,15 @@ function EditMessageDialog({
     onClose,
     onSave,
     message,
-    queueType
+    queueType,
+    defaultAckTimeout = 60
 }: {
     isOpen: boolean;
     onClose: () => void;
     onSave: (id: string, queueType: string, updates: any) => Promise<void>;
     message: Message | null;
     queueType: string;
+    defaultAckTimeout?: number;
 }) {
     const [payload, setPayload] = useState("");
     const [priority, setPriority] = useState(0);
@@ -2659,10 +2703,11 @@ function EditMessageDialog({
             setPayload(JSON.stringify(message.payload, null, 2));
             setPriority(message.priority || 0);
             setType(message.type || "default");
-            setCustomAckTimeout(message.custom_ack_timeout || "");
+            // Use message's custom_ack_timeout if set, otherwise use default
+            setCustomAckTimeout(message.custom_ack_timeout ?? defaultAckTimeout);
             setError(null);
         }
-    }, [message]);
+    }, [message, defaultAckTimeout]);
 
     const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
         try {
@@ -2697,6 +2742,10 @@ function EditMessageDialog({
                 updates.payload = parsedPayload;
                 updates.priority = priority;
                 updates.type = type;
+                // Include custom_ack_timeout for main queue if specified
+                if (customAckTimeout !== "" && Number(customAckTimeout) > 0) {
+                    updates.custom_ack_timeout = Number(customAckTimeout);
+                }
             }
 
             await onSave(message.id, queueType, updates);
@@ -2804,6 +2853,19 @@ function EditMessageDialog({
                                     type="number"
                                     value={priority}
                                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriority(Number(e.target.value))}
+                                    className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                                <label htmlFor="ackTimeout-main" className="text-right text-sm font-medium">
+                                    Ack Timeout (s)
+                                </label>
+                                <input
+                                    id="ackTimeout-main"
+                                    type="number"
+                                    value={customAckTimeout}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
+                                    placeholder={`Default: ${defaultAckTimeout}s`}
                                     className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             </div>
@@ -3071,10 +3133,19 @@ const DeadLetterRow = React.memo(({
             </TableCell>
             <TableCell><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-            <TableCell className="max-w-[300px]">
-                <div className="truncate text-xs text-muted-foreground font-mono" title={payloadText}>
-                    {payloadText}
-                </div>
+            <TableCell className="max-w-[150px]">
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="truncate text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
+                            {payloadText}
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
+                        </pre>
+                    </TooltipContent>
+                </Tooltip>
             </TableCell>
             <TableCell className="text-xs text-foreground whitespace-nowrap">
                 {formatTime(msg.failed_at || msg.processing_started_at)}
@@ -3095,19 +3166,6 @@ const DeadLetterRow = React.memo(({
             </TableCell>
             <TableCell className="text-right pr-6">
                 <div className="flex justify-end gap-1">
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            onViewPayload(msg.payload)
-                        }}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                        title="View Payload"
-                    >
-                        <Eye className="h-4 w-4" />
-                    </Button>
                     {onEdit && (
                         <Button
                             type="button"

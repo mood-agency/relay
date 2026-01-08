@@ -293,6 +293,8 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
 
           metadata.dequeued_at = now;
           metadata.attempt_count += 1;
+          // Generate lock_token for split-brain prevention (fencing token)
+          metadata.lock_token = generateId();
           // consumer_id is set when dequeued via API with consumerId param
 
           if (msgData.custom_ack_timeout) {
@@ -1003,6 +1005,8 @@ export async function getQueueMessages(queueType, params = {}) {
                   m.last_error = meta.last_error;
                   if (meta.custom_ack_timeout) m.custom_ack_timeout = meta.custom_ack_timeout;
                   if (meta.custom_max_attempts) m.custom_max_attempts = meta.custom_max_attempts;
+                  // Include lock_token for split-brain prevention
+                  if (meta.lock_token) m.lock_token = meta.lock_token;
                   // Use consumer_id from metadata if available, otherwise from XPENDING
                   m.consumer_id = meta.consumer_id || (pendingInfo ? pendingInfo.consumer : null);
                 } catch (e) { }

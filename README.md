@@ -64,6 +64,8 @@ Most queue libraries lock you into a specific language ecosystem. Relay provides
 
 ✅ **Built-in Retry Logic**: Failed messages are automatically retried with configurable attempts.
 
+✅ **Split Brain Prevention**: Heartbeat/Touch endpoint prevents duplicate processing when workers are slow but not dead. Lock validation ensures stale ACKs are rejected.
+
 ✅ **Mission Control Dashboard**: Read/write GUI for inspecting and fixing live jobs.
 
 ✅ **Standard Protocol**: Any Redis GUI (like RedisInsight) can visualize your queues instantly because they are just standard Streams.
@@ -329,6 +331,112 @@ flowchart TD
 - `1-8` = Intermediate priorities
 - `9` = Highest priority (processed first)
 
+### Visibility Timeout & Split Brain Prevention
+
+**The Problem: "Slow Worker" vs "Dead Worker"**
+
+Consider this scenario with a 30-second ACK timeout:
+
+1. Worker A takes Message #1 and starts processing
+2. The task is heavy and takes 40 seconds (longer than timeout)
+3. At 30s, the system thinks Worker A is dead and re-queues Message #1
+4. Worker B sees Message #1 in the queue and takes it
+5. **Result**: Both A and B are now processing the same message (Split Brain)
+6. At 40s, Worker A finishes and sends ACK
+7. **Danger**: If the ACK is accepted, it could corrupt data or cause duplicate side effects
+
+**The Solution: Touch Endpoint + Lock Validation**
+
+Relay provides two mechanisms to prevent this:
+
+1. **Touch/Heartbeat Endpoint** (`PUT /queue/message/:id/touch`)
+   - Workers can extend their lock before timeout expires
+   - Resets the visibility timeout without releasing the message
+
+2. **Lock Validation (Fencing Token)**
+   - Each dequeue generates a unique `lock_token` (random string)
+   - ACK and touch requests must include `lock_token` for validation
+   - If the message was re-queued and picked up by another worker, `lock_token` won't match → Request rejected with 409
+   - `attempt_count` is kept separate for retry tracking (business logic)
+
+**Example: Safe Processing of Heavy Tasks**
+
+```python
+import requests
+import time
+import threading
+
+API_URL = 'http://localhost:3000/api/queue'
+HEADERS = {'X-API-KEY': 'your-key'}
+
+def process_with_heartbeat(message):
+    """Process a message with periodic heartbeats to prevent timeout."""
+    message_id = message['id']
+    lock_token = message['lock_token']  # Unique token for this dequeue
+    stop_heartbeat = threading.Event()
+    lock_lost = threading.Event()
+    
+    def send_heartbeats():
+        """Send touch requests every 20 seconds to extend the lock."""
+        while not stop_heartbeat.is_set():
+            time.sleep(20)  # Send heartbeat before 30s timeout
+            if stop_heartbeat.is_set():
+                break
+            response = requests.put(
+                f'{API_URL}/message/{message_id}/touch',
+                headers=HEADERS,
+                json={'lock_token': lock_token}
+            )
+            if response.status_code == 409:
+                print(f"Lock lost for {message_id}! Another worker took over.")
+                lock_lost.set()
+                stop_heartbeat.set()
+                return
+            print(f"Lock extended for {message_id}")
+    
+    # Start heartbeat thread
+    heartbeat_thread = threading.Thread(target=send_heartbeats)
+    heartbeat_thread.start()
+    
+    try:
+        # Simulate heavy processing (e.g., video transcoding, ML inference)
+        result = process_heavy_task(message['payload'])  # Takes 2 minutes
+        
+        # Check if lock was lost during processing
+        if lock_lost.is_set():
+            print(f"Lock was lost - discarding work for {message_id}")
+            return
+        
+        # Acknowledge with lock token validation
+        response = requests.post(
+            f'{API_URL}/ack',
+            headers=HEADERS,
+            json={
+                'id': message_id,
+                '_stream_id': message['_stream_id'],
+                '_stream_name': message['_stream_name'],
+                'lock_token': lock_token  # Fencing token validation
+            }
+        )
+        
+        if response.status_code == 409:
+            print(f"ACK rejected - lock was lost. Work discarded.")
+        else:
+            print(f"Message {message_id} processed successfully!")
+            
+    finally:
+        stop_heartbeat.set()
+        heartbeat_thread.join()
+```
+
+**Why This Matters**
+
+| Scenario | Without Protection | With Touch + Lock Validation |
+|----------|-------------------|------------------------------|
+| Worker slow but alive | Duplicate processing | Worker extends lock via touch |
+| Worker crashed | Message re-queued ✓ | Message re-queued ✓ |
+| Stale ACK from revived worker | Accepted (data corruption!) | Rejected with 409 |
+
 ### Configuration
 
 - **ACK_TIMEOUT_SECONDS**: `30` - Time before a message in the Pending Entries List (PEL) is considered stalled
@@ -353,6 +461,8 @@ This API includes a fully interactive documentation UI (Scalar) and a raw OpenAP
 - `GET /api/queue/message?timeout=30` - Get a message from the queue
 - `POST /api/queue/ack` - Acknowledge message processing
 - `POST /api/queue/batch` - Add multiple messages at once
+- `PUT /api/queue/message/:id/touch` - Extend message lock (heartbeat/keep-alive)
+- `POST /api/queue/message/:id/nack` - Negative acknowledge (reject and requeue message)
 
 ### Monitoring
 
