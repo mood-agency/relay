@@ -704,6 +704,84 @@ describe('Queue Routes - Integration Tests', () => {
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ message: 'Message not found' });
     });
+
+    it('should track the correct worker name (consumer_id) when passed as parameter', async () => {
+      // 1. Enqueue a message
+      await testClient(router).queue.message.$post({ json: { type: 'worker-test', payload: { n: 1 } } });
+
+      // 2. Dequeue with a specific consumerId
+      const workerName = 'my-worker-1';
+      const res = await testClient(router).queue.message.$get({ 
+        query: { timeout: '1', consumerId: workerName } 
+      });
+
+      expect(res.status).toBe(200);
+      const result = await res.json();
+      
+      // 3. Verify consumer_id is returned in the response
+      expect(result.consumer_id).toBe(workerName);
+      
+      // 4. Verify consumer_id is stored in metadata
+      const metadataJson = await queue.redisManager.redis.hget(
+        queue.config.metadata_hash_name,
+        result.id
+      );
+      expect(metadataJson).toBeTruthy();
+      const metadata = JSON.parse(metadataJson!);
+      expect(metadata.consumer_id).toBe(workerName);
+    });
+
+    it('should track different worker names for different dequeues', async () => {
+      // 1. Enqueue two messages
+      await testClient(router).queue.message.$post({ json: { type: 'multi-worker', payload: { n: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'multi-worker', payload: { n: 2 } } });
+
+      // 2. Dequeue with worker-1
+      const res1 = await testClient(router).queue.message.$get({ 
+        query: { timeout: '1', consumerId: 'worker-1' } 
+      });
+      expect(res1.status).toBe(200);
+      const msg1 = await res1.json();
+      expect(msg1.consumer_id).toBe('worker-1');
+
+      // 3. Dequeue with worker-2
+      const res2 = await testClient(router).queue.message.$get({ 
+        query: { timeout: '1', consumerId: 'worker-2' } 
+      });
+      expect(res2.status).toBe(200);
+      const msg2 = await res2.json();
+      expect(msg2.consumer_id).toBe('worker-2');
+
+      // 4. Verify processing queue shows correct consumer_ids
+      const processingRes = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'processing' }
+      });
+      expect(processingRes.status).toBe(200);
+      const processing = await processingRes.json();
+      
+      const processingMessages = processing.messages || [];
+      expect(processingMessages.length).toBe(2);
+      
+      const worker1Msg = processingMessages.find((m: any) => m.id === msg1.id);
+      const worker2Msg = processingMessages.find((m: any) => m.id === msg2.id);
+      
+      expect(worker1Msg?.consumer_id).toBe('worker-1');
+      expect(worker2Msg?.consumer_id).toBe('worker-2');
+    }, 15000);
+
+    it('should have null consumer_id when no consumerId is passed', async () => {
+      // 1. Enqueue a message
+      await testClient(router).queue.message.$post({ json: { type: 'no-consumer', payload: { n: 1 } } });
+
+      // 2. Dequeue WITHOUT consumerId
+      const res = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+      expect(res.status).toBe(200);
+      const result = await res.json();
+      
+      // 3. consumer_id should be null (not a random generated ID)
+      expect(result.consumer_id).toBeNull();
+    });
   });
 
   // Acknowledge
@@ -1152,6 +1230,435 @@ describe('Queue Routes - Integration Tests', () => {
           (apiQueue.config as any).ack_timeout_seconds = originalTimeout;
         }
       }, 15000);
+    });
+  });
+
+  // Activity Log Tests
+  describe('Activity Log Endpoints', () => {
+    describe('GET /queue/activity', () => {
+      it('should return empty logs when no activity exists', async () => {
+        const res = await testClient(router).queue.activity.$get();
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        expect(result).toHaveProperty('logs');
+        expect(result).toHaveProperty('pagination');
+        expect(result.logs).toEqual([]);
+      });
+
+      it('should log enqueue events when messages are added', async () => {
+        // Enqueue a message
+        await testClient(router).queue.message.$post({ json: { type: 'activity-test', payload: { foo: 'bar' } } });
+
+        // Wait briefly for async logging
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get activity logs
+        const res = await testClient(router).queue.activity.$get({
+          query: { action: 'enqueue' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        expect(result.logs.length).toBeGreaterThanOrEqual(1);
+        expect(result.logs[0].action).toBe('enqueue');
+        expect(result.logs[0].message_type).toBe('activity-test');
+      });
+
+      it('should log dequeue events when messages are consumed', async () => {
+        // Enqueue and dequeue a message
+        await testClient(router).queue.message.$post({ json: { type: 'dequeue-log-test', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        expect(dequeueRes.status).toBe(200);
+        const msg = await dequeueRes.json();
+
+        // Wait briefly for async logging
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get activity logs filtered by message_id
+        const res = await testClient(router).queue.activity.$get({
+          query: { message_id: msg.id }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        const actions = result.logs.map((l: any) => l.action);
+        expect(actions).toContain('enqueue');
+        expect(actions).toContain('dequeue');
+      });
+
+      it('should log ack events when messages are acknowledged', async () => {
+        // Enqueue, dequeue, and acknowledge
+        await testClient(router).queue.message.$post({ json: { type: 'ack-log-test', payload: { n: 1 } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name,
+            lock_token: msg.lock_token
+          }
+        });
+
+        // Wait briefly for async logging
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get activity logs
+        const res = await testClient(router).queue.activity.$get({
+          query: { message_id: msg.id }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        const actions = result.logs.map((l: any) => l.action);
+        expect(actions).toContain('ack');
+      });
+
+      it('should filter logs by action type', async () => {
+        // Create some activity
+        await testClient(router).queue.message.$post({ json: { type: 'filter-test', payload: {} } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Filter by enqueue only
+        const res = await testClient(router).queue.activity.$get({
+          query: { action: 'enqueue' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        // All returned logs should be enqueue actions
+        for (const log of result.logs) {
+          expect(log.action).toBe('enqueue');
+        }
+      });
+
+      it('should filter logs by has_anomaly', async () => {
+        // Enqueue and dequeue quickly (might trigger flash_message anomaly)
+        await testClient(router).queue.message.$post({ json: { type: 'anomaly-filter-test', payload: {} } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get logs with anomalies
+        const res = await testClient(router).queue.activity.$get({
+          query: { has_anomaly: 'true' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        // All returned logs should have anomaly
+        for (const log of result.logs) {
+          expect(log.anomaly).not.toBeNull();
+        }
+      });
+
+      it('should support pagination', async () => {
+        // Create multiple messages
+        for (let i = 0; i < 5; i++) {
+          await testClient(router).queue.message.$post({ json: { type: 'pagination-test', payload: { i } } });
+        }
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get with limit
+        const res = await testClient(router).queue.activity.$get({
+          query: { limit: '2', offset: '0' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result.logs.length).toBeLessThanOrEqual(2);
+        expect(result.pagination).toHaveProperty('total');
+        expect(result.pagination).toHaveProperty('limit');
+        expect(result.pagination).toHaveProperty('offset');
+        expect(result.pagination).toHaveProperty('has_more');
+      });
+    });
+
+    describe('GET /queue/activity/message/:messageId', () => {
+      it('should return full message history in chronological order', async () => {
+        // Create a message with full lifecycle: enqueue -> dequeue -> ack
+        await testClient(router).queue.message.$post({ json: { type: 'history-test', payload: { test: true } } });
+        const dequeueRes = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+        const msg = await dequeueRes.json();
+        
+        await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name,
+            lock_token: msg.lock_token
+          }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get message history
+        const res = await testClient(router).queue.activity.message[':messageId'].$get({
+          param: { messageId: msg.id }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result.message_id).toBe(msg.id);
+        expect(result.history).toBeInstanceOf(Array);
+        expect(result.history.length).toBeGreaterThanOrEqual(3); // enqueue, dequeue, ack
+        
+        // Verify chronological order (oldest first)
+        const actions = result.history.map((h: any) => h.action);
+        expect(actions[0]).toBe('enqueue');
+        expect(actions[1]).toBe('dequeue');
+        expect(actions[2]).toBe('ack');
+        
+        // Verify timestamps are in order
+        for (let i = 1; i < result.history.length; i++) {
+          expect(result.history[i].timestamp).toBeGreaterThanOrEqual(result.history[i-1].timestamp);
+        }
+      });
+
+      it('should return empty history for non-existent message', async () => {
+        const res = await testClient(router).queue.activity.message[':messageId'].$get({
+          param: { messageId: 'non-existent-message-id' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result.message_id).toBe('non-existent-message-id');
+        expect(result.history).toEqual([]);
+      });
+    });
+
+    describe('GET /queue/activity/anomalies', () => {
+      it('should detect dlq_movement anomaly when message moves to DLQ', async () => {
+        // Create and move message to DLQ
+        await testClient(router).queue.message.$post({ json: { type: 'dlq-anomaly-test', payload: {} } });
+        
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'dlq-anomaly-test' }
+        });
+        const list = await listRes.json();
+        const msg = list.messages[0];
+
+        // Move to DLQ
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test DLQ move' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies
+        const res = await testClient(router).queue.activity.anomalies.$get();
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result).toHaveProperty('anomalies');
+        expect(result).toHaveProperty('summary');
+        
+        // Should have dlq_movement anomaly
+        const dlqAnomalies = result.anomalies.filter((a: any) => 
+          a.anomaly?.type === 'dlq_movement' || a.anomaly?.type?.includes('dlq')
+        );
+        expect(dlqAnomalies.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should filter anomalies by severity', async () => {
+        // Create activity that might generate anomalies
+        await testClient(router).queue.message.$post({ json: { type: 'severity-test', payload: {} } });
+        
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' }
+        });
+        const list = await listRes.json();
+        if (list.messages.length > 0) {
+          await testClient(router).queue.move.$post({
+            json: { messages: [list.messages[0]], fromQueue: 'main', toQueue: 'dead' }
+          });
+        }
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get only critical anomalies
+        const res = await testClient(router).queue.activity.anomalies.$get({
+          query: { severity: 'critical' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        // All returned anomalies should be critical
+        for (const log of result.anomalies) {
+          if (log.anomaly) {
+            expect(log.anomaly.severity).toBe('critical');
+          }
+        }
+      });
+
+      it('should return summary with counts by type and severity', async () => {
+        // Create some activity
+        await testClient(router).queue.message.$post({ json: { type: 'summary-test', payload: {} } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const res = await testClient(router).queue.activity.anomalies.$get();
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result.summary).toHaveProperty('total');
+        expect(result.summary).toHaveProperty('by_type');
+        expect(result.summary).toHaveProperty('by_severity');
+        expect(result.summary.by_severity).toHaveProperty('critical');
+        expect(result.summary.by_severity).toHaveProperty('warning');
+        expect(result.summary.by_severity).toHaveProperty('info');
+      });
+    });
+
+    describe('GET /queue/activity/consumers', () => {
+      it('should return consumer statistics', async () => {
+        // Create some dequeue activity to generate consumer stats
+        await testClient(router).queue.message.$post({ json: { type: 'consumer-stats-test', payload: {} } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const res = await testClient(router).queue.activity.consumers.$get();
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result).toHaveProperty('stats');
+      });
+
+      it('should filter by consumer_id', async () => {
+        // Create some activity
+        await testClient(router).queue.message.$post({ json: { type: 'consumer-filter-test', payload: {} } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const consumerName = queue.config.consumer_name;
+        const res = await testClient(router).queue.activity.consumers.$get({
+          query: { consumer_id: consumerName }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        expect(result).toHaveProperty('stats');
+      });
+    });
+
+    describe('Anomaly Detection Scenarios', () => {
+      it('should detect near_dlq anomaly when message has few attempts remaining', async () => {
+        // Set max_attempts low temporarily
+        const originalMaxAttempts = apiQueue.config.max_attempts;
+        (apiQueue.config as any).max_attempts = 2;
+
+        try {
+          // Enqueue and dequeue (attempt 1)
+          await testClient(router).queue.message.$post({ json: { type: 'near-dlq-test', payload: {} } });
+          const dequeue1 = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+          const msg1 = await dequeue1.json();
+
+          // Nack to requeue
+          await testClient(router).queue.message[':messageId'].nack.$post({
+            param: { messageId: msg1.id },
+            json: { errorReason: 'First failure' }
+          });
+
+          // Dequeue again (attempt 2) - should trigger near_dlq
+          const dequeue2 = await testClient(router).queue.message.$get({ query: { timeout: '1' } });
+          expect(dequeue2.status).toBe(200);
+
+          // Wait briefly
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          // Check for near_dlq anomaly
+          const res = await testClient(router).queue.activity.$get({
+            query: { message_id: msg1.id, has_anomaly: 'true' }
+          });
+          expect(res.status).toBe(200);
+          const result = await res.json();
+          
+          const nearDlqAnomalies = result.logs.filter((l: any) => 
+            l.anomaly?.type === 'near_dlq'
+          );
+          expect(nearDlqAnomalies.length).toBeGreaterThanOrEqual(1);
+        } finally {
+          (apiQueue.config as any).max_attempts = originalMaxAttempts;
+        }
+      }, 15000);
+
+      it('should log bulk operations with batch context', async () => {
+        // Enqueue multiple messages
+        for (let i = 0; i < 3; i++) {
+          await testClient(router).queue.message.$post({ json: { type: 'bulk-log-test', payload: { i } } });
+        }
+
+        // Get messages and delete them in bulk
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' }
+        });
+        const list = await listRes.json();
+        const bulkMessages = list.messages.filter((m: any) => m.type === 'bulk-log-test');
+        const ids = bulkMessages.map((m: any) => m.id);
+
+        await testClient(router).queue.messages['delete'].$post({
+          query: { queueType: 'main' },
+          json: { messageIds: ids }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Check activity logs for delete actions
+        const res = await testClient(router).queue.activity.$get({
+          query: { action: 'delete' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        // Should have delete logs
+        const deleteLogs = result.logs.filter((l: any) => l.action === 'delete');
+        expect(deleteLogs.length).toBeGreaterThanOrEqual(1);
+        
+        // Check batch_id is present
+        const logsWithBatch = deleteLogs.filter((l: any) => l.batch_id !== null);
+        expect(logsWithBatch.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should log clear queue operations', async () => {
+        // Add a message
+        await testClient(router).queue.message.$post({ json: { type: 'clear-log-test', payload: {} } });
+
+        // Clear the main queue
+        await testClient(router).queue[':queueType'].clear.$delete({
+          param: { queueType: 'main' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Check for clear action in logs
+        const res = await testClient(router).queue.activity.$get({
+          query: { action: 'clear' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+        
+        const clearLogs = result.logs.filter((l: any) => l.action === 'clear');
+        expect(clearLogs.length).toBeGreaterThanOrEqual(1);
+        expect(clearLogs[0].triggered_by).toBe('admin');
+      });
     });
   });
 

@@ -660,3 +660,171 @@ export const getEvents = createRoute({
 
 export type GetConfigRoute = typeof getConfig;
 export type GetEventsRoute = typeof getEvents;
+
+// === Activity Log Routes ===
+
+export const ActivityLogEntrySchema = z.object({
+  log_id: z.string(),
+  message_id: z.string().nullable(),
+  action: z.enum(["enqueue", "dequeue", "ack", "nack", "timeout", "requeue", "dlq", "touch", "move", "delete", "clear"]),
+  timestamp: z.number(),
+  queue: z.string(),
+  source_queue: z.string().nullable(),
+  dest_queue: z.string().nullable(),
+  priority: z.number(),
+  message_type: z.string().nullable(),
+  consumer_id: z.string().nullable(),
+  prev_consumer_id: z.string().nullable(),
+  lock_token: z.string().nullable(),
+  prev_lock_token: z.string().nullable(),
+  attempt_count: z.number().nullable(),
+  max_attempts: z.number().nullable(),
+  attempts_remaining: z.number().nullable(),
+  message_created_at: z.number().nullable(),
+  message_age_ms: z.number().nullable(),
+  time_in_queue_ms: z.number().nullable(),
+  processing_time_ms: z.number().nullable(),
+  total_processing_time_ms: z.number().nullable(),
+  payload_size_bytes: z.number().nullable(),
+  redis_operation_ms: z.number().nullable(),
+  queue_depth: z.number().nullable(),
+  processing_depth: z.number().nullable(),
+  dlq_depth: z.number().nullable(),
+  error_reason: z.string().nullable(),
+  error_code: z.string().nullable(),
+  triggered_by: z.string(),
+  user_id: z.string().nullable(),
+  reason: z.string().nullable(),
+  batch_id: z.string().nullable(),
+  batch_size: z.number().nullable(),
+  prev_action: z.string().nullable(),
+  prev_timestamp: z.number().nullable(),
+  anomaly: z.object({
+    type: z.string(),
+    severity: z.enum(["info", "warning", "critical"]),
+    description: z.string(),
+  }).nullable(),
+});
+
+export const getActivityLogs = createRoute({
+  path: "/queue/activity",
+  method: "get",
+  tags,
+  description: "Get activity logs with optional filters. Use message_id to see full message journey.",
+  request: {
+    query: z.object({
+      message_id: z.string().optional().describe("Filter by message ID (correlation key)"),
+      consumer_id: z.string().optional().describe("Filter by consumer ID"),
+      action: z.string().optional().describe("Filter by action(s), comma-separated"),
+      has_anomaly: z.enum(["true", "false"]).optional().describe("Only entries with anomalies"),
+      anomaly_type: z.string().optional().describe("Filter by anomaly type"),
+      start_time: z.string().optional().describe("Start timestamp (Unix seconds)"),
+      end_time: z.string().optional().describe("End timestamp (Unix seconds)"),
+      limit: z.string().optional().describe("Max entries to return (default: 100)"),
+      offset: z.string().optional().describe("Offset for pagination"),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        logs: z.array(ActivityLogEntrySchema),
+        pagination: z.object({
+          total: z.number(),
+          limit: z.number(),
+          offset: z.number(),
+          has_more: z.boolean(),
+        }),
+      }),
+      "Activity Logs"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const getMessageHistory = createRoute({
+  path: "/queue/activity/message/:messageId",
+  method: "get",
+  tags,
+  description: "Get full activity history for a specific message (chronological order)",
+  request: {
+    params: z.object({
+      messageId: z.string(),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message_id: z.string(),
+        history: z.array(ActivityLogEntrySchema),
+      }),
+      "Message Activity History"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const getAnomalies = createRoute({
+  path: "/queue/activity/anomalies",
+  method: "get",
+  tags,
+  description: "Get detected anomalies with summary",
+  request: {
+    query: z.object({
+      severity: z.enum(["info", "warning", "critical"]).optional().describe("Filter by severity"),
+      type: z.string().optional().describe("Filter by anomaly type"),
+      start_time: z.string().optional().describe("Start timestamp (Unix seconds)"),
+      end_time: z.string().optional().describe("End timestamp (Unix seconds)"),
+      limit: z.string().optional().describe("Max entries to return (default: 100)"),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        anomalies: z.array(ActivityLogEntrySchema),
+        summary: z.object({
+          total: z.number(),
+          by_type: z.record(z.number()),
+          by_severity: z.object({
+            critical: z.number(),
+            warning: z.number(),
+            info: z.number(),
+          }),
+        }),
+        pagination: z.object({
+          total: z.number(),
+          limit: z.number(),
+          offset: z.number(),
+          has_more: z.boolean(),
+        }),
+      }),
+      "Anomalies Summary"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const getConsumerStats = createRoute({
+  path: "/queue/activity/consumers",
+  method: "get",
+  tags,
+  description: "Get consumer statistics for burst detection",
+  request: {
+    query: z.object({
+      consumer_id: z.string().optional().describe("Filter by consumer ID"),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        stats: z.any(),
+      }),
+      "Consumer Statistics"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type GetActivityLogsRoute = typeof getActivityLogs;
+export type GetMessageHistoryRoute = typeof getMessageHistory;
+export type GetAnomaliesRoute = typeof getAnomalies;
+export type GetConsumerStatsRoute = typeof getConsumerStats;

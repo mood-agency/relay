@@ -138,14 +138,44 @@ export const addBatch: AppRouteHandler<AddBatchRoute> = async (c: any) => {
 };
 
 export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
+  // Check for API key authentication via query parameter
+  // (EventSource doesn't support custom headers, so we use query params)
+  const apiKey = c.req.query("apiKey");
+  const secretKey = env.SECRET_KEY;
+  const isAuthenticated = !secretKey || (apiKey && apiKey === secretKey);
+
   return streamSSE(c, async (stream) => {
     const subscriber = queue.redisManager.subscriber;
     const channel = queue.config.events_channel;
 
     const messageHandler = (chan: string, message: string) => {
       if (chan === channel) {
+        let dataToSend = message;
+        
+        // If not authenticated, strip sensitive payload data from events
+        if (!isAuthenticated) {
+          try {
+            const parsed = JSON.parse(message);
+            // Strip payload from individual messages
+            if (parsed.payload?.message) {
+              const { payload: msgPayload, ...rest } = parsed.payload.message;
+              parsed.payload.message = { ...rest, payload: "[REDACTED]" };
+            }
+            // Strip payloads from batch messages
+            if (parsed.payload?.messages && Array.isArray(parsed.payload.messages)) {
+              parsed.payload.messages = parsed.payload.messages.map((m: any) => {
+                const { payload: msgPayload, ...rest } = m;
+                return { ...rest, payload: "[REDACTED]" };
+              });
+            }
+            dataToSend = JSON.stringify(parsed);
+          } catch (e) {
+            // If parsing fails, still send the original message
+          }
+        }
+        
         stream.writeSSE({
-          data: message,
+          data: dataToSend,
           event: 'queue-update',
           id: String(Date.now()),
         });
@@ -465,5 +495,69 @@ export const getConfig: AppRouteHandler<GetConfigRoute> = async (c: any) => {
     }, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to get config" }, 500);
+  }
+};
+
+// === Activity Log Handlers ===
+
+export const getActivityLogs: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const query = c.req.query();
+    const filters = {
+      message_id: query.message_id?.trim(),
+      consumer_id: query.consumer_id?.trim(),
+      action: query.action,
+      has_anomaly: query.has_anomaly === "true" ? true : query.has_anomaly === "false" ? false : undefined,
+      anomaly_type: query.anomaly_type,
+      start_time: query.start_time ? parseFloat(query.start_time) : undefined,
+      end_time: query.end_time ? parseFloat(query.end_time) : undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : 100,
+      offset: query.offset ? parseInt(query.offset, 10) : 0,
+    };
+
+    const result = await queue.getActivityLogs(filters);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get activity logs" }, 500);
+  }
+};
+
+export const getMessageHistory: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const { messageId } = c.req.param();
+    const trimmedId = messageId?.trim();
+    const history = await queue.getMessageHistory(trimmedId);
+    return c.json({ message_id: trimmedId, history }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get message history" }, 500);
+  }
+};
+
+export const getAnomalies: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const query = c.req.query();
+    const filters = {
+      severity: query.severity,
+      type: query.type,
+      start_time: query.start_time ? parseFloat(query.start_time) : undefined,
+      end_time: query.end_time ? parseFloat(query.end_time) : undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : 100,
+    };
+
+    const result = await queue.getAnomalies(filters);
+    return c.json(result, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get anomalies" }, 500);
+  }
+};
+
+export const getConsumerStats: AppRouteHandler<any> = async (c: any) => {
+  try {
+    const query = c.req.query();
+    const consumerId = query.consumer_id;
+    const stats = await queue.getConsumerStats(consumerId);
+    return c.json({ stats }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to get consumer stats" }, 500);
   }
 };

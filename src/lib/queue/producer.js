@@ -40,6 +40,20 @@ export async function enqueueMessage(messageData, priority = 0) {
       `Message enqueued to stream ${queueName}: ${messageData.id} (priority: ${priority})`
     );
     this.publishEvent('enqueue', { count: 1, message: messageData });
+
+    // Calculate payload size
+    const payloadSizeBytes = messageData.payload
+      ? JSON.stringify(messageData.payload).length
+      : 0;
+
+    // Log activity
+    await this.logActivity("enqueue", messageData, {
+      queue: "main",
+      priority,
+      payload_size_bytes: payloadSizeBytes,
+      triggered_by: "api",
+    });
+
     return true;
   } catch (e) {
     logger.error(`Error enqueuing message ${messageData.id || "N/A"}: ${e}`);
@@ -112,6 +126,26 @@ export async function enqueueBatch(messages) {
         this.publishEvent('enqueue', { count: successful, force_refresh: true });
       } else {
         this.publishEvent('enqueue', { count: successful, messages: messages });
+      }
+
+      // Log activity for batch enqueue
+      const batchId = `batch_${generateId()}`;
+      for (let i = 0; i < messages.length; i++) {
+        if (results[i] && !results[i][0]) {
+          const msg = messages[i];
+          const payloadSizeBytes = msg.payload
+            ? JSON.stringify(msg.payload).length
+            : 0;
+
+          await this.logActivity("enqueue", msg, {
+            queue: "main",
+            priority: msg.priority || 0,
+            payload_size_bytes: payloadSizeBytes,
+            batch_id: batchId,
+            batch_size: successful,
+            triggered_by: "api",
+          });
+        }
       }
     }
     return successful;

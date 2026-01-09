@@ -4,6 +4,7 @@ import * as producer from "./producer.js";
 import * as consumer from "./consumer.js";
 import * as admin from "./admin.js";
 import * as metrics from "./metrics.js";
+import * as activity from "./activity.js";
 
 /**
  * Optimized Redis Queue implementation using Streams.
@@ -33,3 +34,4 @@ Object.assign(OptimizedRedisQueue.prototype, producer);
 Object.assign(OptimizedRedisQueue.prototype, consumer);
 Object.assign(OptimizedRedisQueue.prototype, admin);
 Object.assign(OptimizedRedisQueue.prototype, metrics);
+Object.assign(OptimizedRedisQueue.prototype, activity);

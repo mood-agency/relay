@@ -47,7 +47,7 @@ export class QueueConfig {
     
     // Stream-specific configuration
     this.consumer_group_name = config.consumer_group_name || "queue_group";
-    this.consumer_name = config.consumer_name || `consumer-${generateId()}`;
+    this.consumer_name = config.consumer_name || `relay-${generateId()}`;
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
@@ -63,6 +63,61 @@ export class QueueConfig {
     this.secret_key = config.secret_key || null;
 
     this.events_channel = config.events_channel || "queue_events";
+
+    // Activity Log Configuration
+    this.activity_log_enabled =
+      (config.activity_log_enabled || "true").toLowerCase() === "true";
+    this.activity_log_stream_name =
+      config.activity_log_stream_name || `${this.queue_name}_activity`;
+    this.activity_log_max_entries = parseInt(
+      config.activity_log_max_entries || "50000",
+      10
+    );
+    this.activity_log_retention_hours = parseInt(
+      config.activity_log_retention_hours || "24",
+      10
+    );
+
+    // Anomaly Detection Thresholds
+    this.activity_burst_threshold_count = parseInt(
+      config.activity_burst_threshold_count || "10",
+      10
+    );
+    this.activity_burst_threshold_seconds = parseInt(
+      config.activity_burst_threshold_seconds || "5",
+      10
+    );
+    this.activity_flash_message_threshold_ms = parseInt(
+      config.activity_flash_message_threshold_ms || "2000",
+      10
+    );
+    this.activity_zombie_message_threshold_hours = parseInt(
+      config.activity_zombie_message_threshold_hours || "1",
+      10
+    );
+    this.activity_long_processing_multiplier = parseFloat(
+      config.activity_long_processing_multiplier || "2"
+    );
+    this.activity_near_dlq_threshold = parseInt(
+      config.activity_near_dlq_threshold || "1",
+      10
+    );
+    this.activity_bulk_operation_threshold = parseInt(
+      config.activity_bulk_operation_threshold || "50",
+      10
+    );
+    this.activity_large_payload_bytes = parseInt(
+      config.activity_large_payload_bytes || "1048576",
+      10
+    ); // 1MB
+    this.activity_queue_growth_threshold = parseInt(
+      config.activity_queue_growth_threshold || "100",
+      10
+    );
+    this.activity_dlq_spike_threshold = parseInt(
+      config.activity_dlq_spike_threshold || "10",
+      10
+    );
 
     this._validate();
   }

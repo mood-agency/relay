@@ -290,7 +290,7 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
 
   metadata.dequeued_at = currentTime;
   metadata.attempt_count += 1;
-  metadata.consumer_id = this.config.consumer_name;
+  metadata.consumer_id = consumerId || null;
   
   // Generate a unique lock_token for this dequeue (fencing token for split-brain prevention)
   metadata.lock_token = generateId();
@@ -348,6 +348,28 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
   logger.info(
     `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}, lock: ${metadata.lock_token}) from ${streamName}`
   );
+
+  // Calculate time in queue (from created_at to now)
+  const timeInQueueMs = messageData.created_at
+    ? Math.floor((currentTime - messageData.created_at) * 1000)
+    : null;
+
+  // Calculate payload size
+  const payloadSizeBytes = messageData.payload
+    ? JSON.stringify(messageData.payload).length
+    : 0;
+
+  // Log activity
+  await this.logActivity("dequeue", messageData, {
+    queue: "processing",
+    consumer_id: metadata.consumer_id,
+    lock_token: metadata.lock_token,
+    attempt_count: metadata.attempt_count,
+    max_attempts: metadata.custom_max_attempts || this.config.max_attempts,
+    time_in_queue_ms: timeInQueueMs,
+    payload_size_bytes: payloadSizeBytes,
+    triggered_by: "consumer",
+  });
   
   // Return message with updated metadata
   return {
@@ -498,6 +520,22 @@ export async function acknowledgeMessage(ackPayload) {
     }
     logger.info(`Message acknowledged successfully: ${messageId}`);
     this.publishEvent('acknowledge', { id: messageId });
+
+    // Calculate processing time
+    const processingTimeMs = ackPayload.dequeued_at
+      ? Math.floor((Date.now() / 1000 - ackPayload.dequeued_at) * 1000)
+      : null;
+
+    // Log activity
+    await this.logActivity("ack", fullMessageData, {
+      queue: "acknowledged",
+      consumer_id: ackPayload.consumer_id || null,
+      lock_token: ackPayload.lock_token,
+      attempt_count: ackPayload.attempt_count,
+      processing_time_ms: processingTimeMs,
+      triggered_by: "consumer",
+    });
+
     return true;
 
   } catch (error) {
@@ -683,6 +721,19 @@ export async function requeueFailedMessages() {
             
             movedToDlqCount++;
             operationsInPipeline++;
+
+            // Log activity for timeout -> DLQ
+            await this.logActivity("dlq", messageData, {
+              queue: "dead",
+              source_queue: "processing",
+              dest_queue: "dead",
+              consumer_id: metadata.consumer_id || null,
+              attempt_count: metadata.attempt_count,
+              max_attempts: effectiveMaxAttempts,
+              processing_time_ms: elapsedMs,
+              error_reason: "Max attempts exceeded (timeout)",
+              triggered_by: "scheduler",
+            });
           } else {
             const messageJson = this._serializeMessage(messageData);
             
@@ -697,6 +748,26 @@ export async function requeueFailedMessages() {
             
             requeuedCount++;
             operationsInPipeline++;
+
+            // Log activity for timeout -> requeue
+            await this.logActivity("timeout", messageData, {
+              queue: "processing",
+              consumer_id: metadata.consumer_id || null,
+              attempt_count: metadata.attempt_count,
+              max_attempts: effectiveMaxAttempts,
+              processing_time_ms: elapsedMs,
+              error_reason: "Processing timeout",
+              triggered_by: "scheduler",
+            });
+
+            await this.logActivity("requeue", messageData, {
+              queue: "main",
+              source_queue: "processing",
+              consumer_id: metadata.consumer_id || null,
+              attempt_count: metadata.attempt_count,
+              max_attempts: effectiveMaxAttempts,
+              triggered_by: "scheduler",
+            });
           }
         }
         
@@ -826,6 +897,18 @@ export async function nackMessage(messageId, errorReason) {
     this.publishEvent("move_to_dlq", { count: 1, id: messageId });
     const logger = this.logger || console;
     logger.info(`Message ${messageId} moved to DLQ (NACK)`);
+
+    // Log activity for DLQ movement
+    await this.logActivity("dlq", foundMsg, {
+      queue: "dead",
+      source_queue: "processing",
+      dest_queue: "dead",
+      consumer_id: metadata.consumer_id || null,
+      attempt_count: metadata.attempt_count,
+      max_attempts: maxAttempts,
+      error_reason: errorReason || "NACK: Max attempts exceeded",
+      triggered_by: "consumer",
+    });
   } else {
     // Requeue (Back of queue)
     foundMsg.last_error = errorReason || "NACK: Requeued";
@@ -856,6 +939,17 @@ export async function nackMessage(messageId, errorReason) {
     this.publishEvent("requeue", { count: 1, id: messageId });
     const logger = this.logger || console;
     logger.info(`Message ${messageId} requeued (NACK)`);
+
+    // Log activity for NACK requeue
+    await this.logActivity("nack", foundMsg, {
+      queue: "main",
+      source_queue: "processing",
+      consumer_id: metadata.consumer_id || null,
+      attempt_count: metadata.attempt_count,
+      max_attempts: maxAttempts,
+      error_reason: errorReason || "NACK: Requeued",
+      triggered_by: "consumer",
+    });
   }
 
   return true;
@@ -912,6 +1006,15 @@ export async function touchMessage(messageId, lockToken, extendSeconds) {
     const newTimeoutAt = now + effectiveTimeout;
 
     logger.info(`Touch successful for ${messageId}: lock extended until ${new Date(newTimeoutAt * 1000).toISOString()}`);
+
+    // Log activity for touch/heartbeat
+    await this.logActivity("touch", { id: messageId }, {
+      queue: "processing",
+      consumer_id: metadata.consumer_id || null,
+      lock_token: metadata.lock_token,
+      attempt_count: metadata.attempt_count,
+      triggered_by: "consumer",
+    });
 
     return {
       success: true,

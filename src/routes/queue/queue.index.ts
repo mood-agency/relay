@@ -30,6 +30,11 @@ const router = createRouter()
   .openapi(routes.clearQueue, handlers.clearQueue)
   .openapi(routes.clearAllQueues, handlers.clearAllQueues)
   .openapi(routes.getConfig, handlers.getConfig)
-  .openapi(routes.getEvents, handlers.getEvents);
+  .openapi(routes.getEvents, handlers.getEvents)
+  // Activity Log Routes
+  .openapi(routes.getActivityLogs, handlers.getActivityLogs)
+  .openapi(routes.getMessageHistory, handlers.getMessageHistory)
+  .openapi(routes.getAnomalies, handlers.getAnomalies)
+  .openapi(routes.getConsumerStats, handlers.getConsumerStats);
 
 export default router;

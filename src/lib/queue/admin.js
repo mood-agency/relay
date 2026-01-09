@@ -367,6 +367,23 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
   if (movedCount > 0) {
     const movedIds = enrichedMessages.filter(m => m && m.id).map(m => m.id);
     this.publishEvent('move', { from: fromQueue, to: toQueue, count: movedCount, ids: movedIds });
+
+    // Log activity for each moved message
+    const batchId = `move_${Date.now()}`;
+    for (const msg of enrichedMessages) {
+      if (!msg || !msg.id) continue;
+      await this.logActivity("move", msg, {
+        queue: toQueue,
+        source_queue: fromQueue,
+        dest_queue: toQueue,
+        attempt_count: msg.attempt_count,
+        error_reason: errorReason || null,
+        batch_id: batchId,
+        batch_size: movedCount,
+        triggered_by: "admin",
+        reason: errorReason || `Manual move from ${fromQueue} to ${toQueue}`,
+      });
+    }
   }
 
   return movedCount;
@@ -562,6 +579,18 @@ export async function deleteMessages(messageIds, queueType) {
 
     if (totalDeleted > 0) {
       this.publishEvent('delete', { ids: Array.from(idsToDelete), count: totalDeleted, queue: queueType });
+
+      // Log activity for bulk delete
+      const batchId = `delete_${Date.now()}`;
+      for (const msgId of idsToDelete) {
+        await this.logActivity("delete", { id: msgId }, {
+          queue: queueType,
+          batch_id: batchId,
+          batch_size: totalDeleted,
+          triggered_by: "admin",
+          reason: "Bulk delete",
+        });
+      }
     }
 
     return totalDeleted;
@@ -647,6 +676,14 @@ export async function deleteMessage(messageId, queueType) {
 
     logger.info(`Successfully deleted message ${messageId} from ${queueType} queue`);
     this.publishEvent('delete', { id: messageId, queue: queueType });
+
+    // Log activity for single delete
+    await this.logActivity("delete", foundMessage || { id: messageId }, {
+      queue: queueType,
+      triggered_by: "admin",
+      reason: "Manual delete",
+    });
+
     return { success: true, messageId, queueType, message: 'Message deleted successfully' };
 
   } catch (error) {
@@ -1290,6 +1327,14 @@ export async function clearAllQueues() {
     };
 
     logger.info("All queues and metadata cleared.");
+
+    // Log activity for clear all
+    await this.logActivity("clear", {}, {
+      queue: "all",
+      triggered_by: "admin",
+      reason: "All queues cleared",
+    });
+
     return true;
   } catch (error) {
     logger.error(`Error clearing all queues: ${error.message}`);
@@ -1352,6 +1397,14 @@ export async function clearQueue(queueType) {
 
     await pipeline.exec();
     logger.info(`Cleared ${queueType} queue`);
+
+    // Log activity for clear specific queue
+    await this.logActivity("clear", {}, {
+      queue: queueType,
+      triggered_by: "admin",
+      reason: `Queue ${queueType} cleared`,
+    });
+
     return true;
   } catch (error) {
     logger.error(`Error clearing ${queueType} queue: ${error.message}`);

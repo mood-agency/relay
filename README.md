@@ -520,6 +520,60 @@ Most queues are "black boxes": you push a message and hope it works. This API sh
 
 The dashboard talks to the Node.js API; it does not connect to Redis directly. Redis credentials stay on the server, and the UI uses the same endpoints your workers use.
 
+### 🚨 Anomaly Detection
+
+The activity log automatically detects and flags unusual patterns in your queue operations. Anomalies are classified by severity:
+
+| Anomaly | Severity | Description |
+|---------|----------|-------------|
+| **flash_message** | `info` | Message was dequeued extremely quickly (< 2s by default). May indicate a hot loop or test traffic. |
+| **zombie_message** | `warning` | Message sat in the queue for hours before being picked up. May indicate consumer scaling issues. |
+| **near_dlq** | `warning` | Message has only 1-2 attempts remaining before moving to the Dead Letter Queue. |
+| **dlq_movement** | `critical` | Message was moved to the Dead Letter Queue after exhausting all retry attempts. |
+| **long_processing** | `warning` | Message processing took significantly longer than the average (2x the expected time). |
+| **lock_stolen** | `critical` | A message's lock token changed mid-processing, indicating another worker took over (split-brain scenario). |
+| **burst_dequeue** | `warning` | A single consumer dequeued 10+ messages within 5 seconds. May indicate runaway consumer or hot partition. |
+| **bulk_delete** | `warning` | A bulk delete operation removed many messages at once. |
+| **bulk_move** | `info` | A bulk move operation transferred many messages between queues. |
+| **queue_cleared** | `critical` | An entire queue was cleared. This is a destructive operation that should be audited. |
+| **large_payload** | `warning` | Message payload exceeds the size threshold (100KB by default). Large payloads can impact performance. |
+
+#### Configuring Anomaly Thresholds
+
+You can tune anomaly detection via environment variables:
+
+```bash
+# Activity Log Settings
+ACTIVITY_LOG_ENABLED=true              # Enable/disable activity logging
+ACTIVITY_LOG_MAX_ENTRIES=50000         # Max entries before trimming
+ACTIVITY_LOG_RETENTION_HOURS=24        # How long to keep logs
+
+# Anomaly Thresholds
+ACTIVITY_FLASH_MESSAGE_THRESHOLD_MS=2000       # Flash message threshold (ms)
+ACTIVITY_ZOMBIE_MESSAGE_THRESHOLD_HOURS=1      # Zombie message threshold (hours)
+ACTIVITY_BURST_THRESHOLD_COUNT=10              # Burst detection count
+ACTIVITY_BURST_THRESHOLD_SECONDS=5             # Burst detection window (seconds)
+ACTIVITY_LONG_PROCESSING_MULTIPLIER=2          # Multiplier for long processing detection
+ACTIVITY_LARGE_PAYLOAD_BYTES=102400            # Large payload threshold (bytes)
+ACTIVITY_BULK_OPERATION_THRESHOLD=10           # Bulk operation threshold
+```
+
+#### Using Anomaly Data
+
+**Via Dashboard:** The Anomalies tab shows all detected anomalies with filtering by severity.
+
+**Via API:**
+```bash
+# Get all anomalies
+curl "http://localhost:3000/api/queue/activity/anomalies"
+
+# Filter by severity
+curl "http://localhost:3000/api/queue/activity/anomalies?severity=critical"
+
+# Get full message history including anomalies
+curl "http://localhost:3000/api/queue/activity/message/{messageId}"
+```
+
 ### Testing the Dashboard
 
 Use the included TypeScript script to populate the dashboard with sample data:
@@ -581,6 +635,11 @@ MAX_PRIORITY_LEVELS=10  # Number of priority levels (0 to N-1)
 
 # API Security (optional)
 SECRET_KEY=your-secret-key-here  # If set, all API requests require X-API-KEY header
+
+# Activity Log & Anomaly Detection (optional)
+ACTIVITY_LOG_ENABLED=true
+ACTIVITY_LOG_MAX_ENTRIES=50000
+ACTIVITY_LOG_RETENTION_HOURS=24
 ```
 
 ### Dashboard Environment Variables
