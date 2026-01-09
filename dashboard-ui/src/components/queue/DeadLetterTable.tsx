@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 import { Message, QueueConfig, syntaxHighlightJson } from "./types"
+import { IdCell } from "./QueueTableBase"
 
 // ============================================================================
 // Dead Letter Row Component
@@ -70,11 +71,7 @@ export const DeadLetterRow = React.memo(({
                     }}
                 />
             </TableCell>
-            <TableCell>
-                <span className="text-xs text-foreground font-mono">
-                    {msg.id}
-                </span>
-            </TableCell>
+            <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
             <TableCell><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
             <Tooltip>
@@ -122,25 +119,7 @@ export const DeadLetterRow = React.memo(({
             <TableCell className="text-xs text-foreground whitespace-nowrap">
                 {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
             </TableCell>
-            <TableCell className="text-right pr-6">
-                <div className="flex justify-end gap-1">
-                    {onEdit && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation()
-                                onEdit(msg)
-                            }}
-                            className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
-                            title="Edit Message"
-                        >
-                            <Pencil className="h-4 w-4" />
-                        </Button>
-                    )}
-                </div>
-            </TableCell>
+
         </TableRow>
     )
 })
@@ -227,7 +206,7 @@ export const DeadLetterTable = React.memo(({
         enabled: shouldVirtualize
     })
 
-    const colSpan = 10
+    const colSpan = 9
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
@@ -256,7 +235,6 @@ export const DeadLetterTable = React.memo(({
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -276,11 +254,9 @@ export const DeadLetterTable = React.memo(({
                             )
                         ) : shouldVirtualize && virtual ? (
                             <>
-                                {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.topSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                                 {virtual.visibleItems.map((msg: Message) => (
                                     <DeadLetterRow
                                         key={msg.id}
@@ -296,11 +272,9 @@ export const DeadLetterTable = React.memo(({
                                         onToggleSelect={onToggleSelect}
                                     />
                                 ))}
-                                {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                             </>
                         ) : (
                             messages.map((msg: Message) => (

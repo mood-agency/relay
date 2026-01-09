@@ -49,18 +49,17 @@ const MainQueueRow = React.memo(({
 }) => (
     <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
         <SelectCell id={msg.id} isSelected={isSelected} onToggleSelect={onToggleSelect} />
-        <IdCell id={msg.id} />
+        <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
         <TypeCell type={msg.type} />
         <PriorityCell priority={msg.priority} />
         <PayloadCell payload={msg.payload} />
         <TimeCell timestamp={msg.created_at} formatTime={formatTime} />
-        <AttemptsCell 
-            attemptCount={msg.attempt_count} 
+        <AttemptsCell
+            attemptCount={msg.attempt_count}
             maxAttempts={msg.custom_max_attempts ?? config?.max_attempts}
             defaultAttempts={0}
         />
         <AckTimeoutCell customTimeout={msg.custom_ack_timeout} configTimeout={config?.ack_timeout_seconds} />
-        <ActionsCell msg={msg} onEdit={onEdit} />
     </TableRow>
 ))
 
@@ -68,7 +67,7 @@ const MainQueueRow = React.memo(({
 // Main Queue Table Component
 // ============================================================================
 
-export interface MainQueueTableProps extends BaseQueueTableProps {}
+export interface MainQueueTableProps extends BaseQueueTableProps { }
 
 export const MainQueueTable = React.memo(({
     messages,
@@ -97,7 +96,7 @@ export const MainQueueTable = React.memo(({
 }: MainQueueTableProps) => {
     const { shouldVirtualize, scrollContainerRef, setScrollTop, virtual } = useTableVirtualization(messages, scrollResetKey)
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
-    const colSpan = 9
+    const colSpan = 8
 
     const renderRow = (msg: Message) => (
         <MainQueueRow
@@ -131,14 +130,13 @@ export const MainQueueTable = React.memo(({
                                     onChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                 />
                             </TableHead>
-                            <SortableHeader label="ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Created At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card text-right font-semibold text-foreground pr-6 text-xs">Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -151,17 +149,13 @@ export const MainQueueTable = React.memo(({
                             />
                         ) : shouldVirtualize && virtual ? (
                             <>
-                                {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.topSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                                 {virtual.visibleItems.map(renderRow)}
-                                {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                             </>
                         ) : (
                             messages.map(renderRow)

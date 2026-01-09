@@ -285,10 +285,10 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
             try {
               metadata = MessageMetadata.fromObject(JSON.parse(existingMetaJson));
             } catch {
-              metadata = new MessageMetadata(0, null, msgData.created_at || now);
+              metadata = new MessageMetadata(msgData.attempt_count || 0, null, msgData.created_at || now);
             }
           } else {
-            metadata = new MessageMetadata(0, null, msgData.created_at || now);
+            metadata = new MessageMetadata(msgData.attempt_count || 0, null, msgData.created_at || now);
           }
 
           metadata.dequeued_at = now;
@@ -346,6 +346,15 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
           pipeline2.xadd(mainStream, "*", "data", this._serializeMessage(cleanMsg));
           pipeline2.xack(manualStream, this.config.consumer_group_name, entry.streamId);
           pipeline2.xdel(manualStream, entry.streamId);
+
+          // Log silent return to main
+          await this.logActivity("requeue", msgData, {
+            queue: "main",
+            source_queue: "processing",
+            dest_queue: "main",
+            reason: "Stale message in manual queue during move",
+            triggered_by: "system",
+          });
         }
 
         if (pipeline2.length > 0) {
@@ -670,7 +679,7 @@ export async function deleteMessage(messageId, queueType) {
       pipeline.zrem(indexKey, messageId);
       pipeline.hdel(locKey, messageId);
     }
-    
+
     await pipeline.exec();
 
 
@@ -784,34 +793,34 @@ export async function updateMessage(messageId, queueType, updates) {
 
     // BREAK PIPELINE: We need the new stream ID to update the index.
     // So we delete first, then add.
-    
+
     // 1. Delete old
     const deletePipeline = redis.pipeline();
     deletePipeline.xdel(originalStream, originalStreamId);
     if (originalMessageData.type) {
-        const oldIndexKey = this._getTypeIndexKey(originalMessageData.type);
-        const locKey = this._getMessageLocationHashKey();
-        deletePipeline.zrem(oldIndexKey, messageId);
-        deletePipeline.hdel(locKey, messageId);
+      const oldIndexKey = this._getTypeIndexKey(originalMessageData.type);
+      const locKey = this._getMessageLocationHashKey();
+      deletePipeline.zrem(oldIndexKey, messageId);
+      deletePipeline.hdel(locKey, messageId);
     }
     await deletePipeline.exec();
-    
+
     // 2. Add new
     const newStreamId = await redis.xadd(originalStream, "*", "data", updatedMessageJson);
-    
+
     // 3. Update index for new
     if (updatedMessageData.type) {
-         const newIndexKey = this._getTypeIndexKey(updatedMessageData.type);
-         const typesKey = this._getTypeIndexTypesKey();
-         const locKey = this._getMessageLocationHashKey();
-         const ts = Math.floor((updatedMessageData.created_at || Date.now() / 1000) * 1000);
-         const score = this._calculateTypeScore(updatedMessageData.priority, ts);
-         
-         const indexPipeline = redis.pipeline();
-         indexPipeline.sadd(typesKey, updatedMessageData.type);
-         indexPipeline.zadd(newIndexKey, score, messageId);
-         indexPipeline.hset(locKey, messageId, `${originalStream}|${newStreamId}`);
-         await indexPipeline.exec();
+      const newIndexKey = this._getTypeIndexKey(updatedMessageData.type);
+      const typesKey = this._getTypeIndexTypesKey();
+      const locKey = this._getMessageLocationHashKey();
+      const ts = Math.floor((updatedMessageData.created_at || Date.now() / 1000) * 1000);
+      const score = this._calculateTypeScore(updatedMessageData.priority, ts);
+
+      const indexPipeline = redis.pipeline();
+      indexPipeline.sadd(typesKey, updatedMessageData.type);
+      indexPipeline.zadd(newIndexKey, score, messageId);
+      indexPipeline.hset(locKey, messageId, `${originalStream}|${newStreamId}`);
+      await indexPipeline.exec();
     }
 
     logger.info(`Successfully updated message ${messageId} in ${queueType} queue`);
@@ -1032,7 +1041,7 @@ export async function getQueueMessages(queueType, params = {}) {
             messagesWithIds.forEach((m, index) => {
               const metaRes = metaResults[index];
               const pendingInfo = pendingMap.get(`${m._stream_name}|${m._stream_id}`);
-              
+
               if (metaRes && !metaRes[0] && metaRes[1]) {
                 try {
                   const meta = JSON.parse(metaRes[1]);
@@ -1289,7 +1298,7 @@ export async function clearAllQueues() {
     let knownTypes = [];
     try {
       knownTypes = await redis.smembers(typesKey);
-    } catch {}
+    } catch { }
 
     // Clear all priority streams
     for (const stream of streams) {
@@ -1343,6 +1352,29 @@ export async function clearAllQueues() {
 }
 
 /**
+ * Clears activity logs and consumer stats.
+ * @returns {Promise<boolean>} True if successful.
+ */
+export async function clearActivityLogs() {
+  try {
+    const pipeline = this.redisManager.pipeline();
+
+    // Clear activity logs and stats
+    pipeline.del(this.config.activity_log_stream_name);
+    pipeline.del(`${this.config.queue_name}:consumer_burst`);
+    pipeline.del(`${this.config.queue_name}:consumer_stats`);
+
+    await pipeline.exec();
+
+    logger.info("Activity logs and consumer stats cleared.");
+    return true;
+  } catch (error) {
+    logger.error(`Error clearing activity logs: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
  * Clears a specific queue.
  * @param {string} queueType - Queue type to clear.
  * @returns {Promise<boolean>} True if successful.
@@ -1365,7 +1397,7 @@ export async function clearQueue(queueType) {
           let knownTypes = [];
           try {
             knownTypes = await redis.smembers(typesKey);
-          } catch {}
+          } catch { }
           pipeline.del(locKey);
           pipeline.del(typesKey);
           for (const t of knownTypes) {

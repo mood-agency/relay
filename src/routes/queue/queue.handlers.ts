@@ -151,7 +151,7 @@ export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
     const messageHandler = (chan: string, message: string) => {
       if (chan === channel) {
         let dataToSend = message;
-        
+
         // If not authenticated, strip sensitive payload data from events
         if (!isAuthenticated) {
           try {
@@ -173,7 +173,7 @@ export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
             // If parsing fails, still send the original message
           }
         }
-        
+
         stream.writeSSE({
           data: dataToSend,
           event: 'queue-update',
@@ -217,15 +217,15 @@ export const acknowledgeMessage: AppRouteHandler<
 > = async (c: any) => {
   const message = c.req.valid("json");
   const result = await queue.acknowledgeMessage(message);
-  
+
   // Handle lock lost error (fencing token mismatch)
   if (result && typeof result === 'object' && result.error === "LOCK_LOST") {
-    return c.json({ 
+    return c.json({
       message: "Lock lost - lock_token mismatch. The message was re-queued and picked up by another worker. Your work should be discarded.",
       error: "LOCK_LOST"
     }, 409);
   }
-  
+
   if (!result) {
     return c.json({ message: "Message not acknowledged" }, 400);
   }
@@ -249,21 +249,21 @@ export const touchMessage: AppRouteHandler<TouchMessageRoute> = async (c: any) =
   const { lock_token, extend_seconds } = c.req.valid("json");
 
   const result = await queue.touchMessage(messageId, lock_token, extend_seconds);
-  
+
   if (!result.success) {
     if (result.error === "NOT_FOUND") {
       return c.json({ message: "Message not found in processing queue" }, 404);
     }
     if (result.error === "LOCK_LOST") {
-      return c.json({ 
+      return c.json({
         message: "Lock lost - lock_token mismatch. The message may have been re-queued and picked up by another worker.",
         error: "LOCK_LOST"
       }, 409);
     }
     return c.json({ message: "Failed to extend message lock" }, 500);
   }
-  
-  return c.json({ 
+
+  return c.json({
     message: "Lock extended successfully",
     new_timeout_at: result.new_timeout_at,
     extended_by: result.extended_by,
@@ -351,10 +351,10 @@ export const exportMessages: AppRouteHandler<ExportMessagesRoute> = async (c: an
 
     const now = new Date();
     const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19); // YYYY-MM-DDTHH-mm-ss
-    
+
     c.header("Content-Type", "application/json");
     c.header("Content-Disposition", `attachment; filename="${queueType}-queue-export-${timestamp}.json"`);
-    
+
     return c.body(jsonString, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to export messages" }, 500);
@@ -379,7 +379,7 @@ export const importMessages: AppRouteHandler<ImportMessagesRoute> = async (c: an
     }
 
     const messages = Array.isArray(data) ? data : [data];
-    
+
     // Transform to match QueueMessageSchema
     // The export format (DequeuedMessage) is slightly different from import (QueueMessage)
     // We need to map fields:
@@ -388,7 +388,7 @@ export const importMessages: AppRouteHandler<ImportMessagesRoute> = async (c: an
     // - priority -> priority
     // - type -> type
     // - payload -> payload
-    
+
     const batch = messages.map((m: any) => ({
       type: m.type || "default",
       payload: m.payload || {},
@@ -400,7 +400,7 @@ export const importMessages: AppRouteHandler<ImportMessagesRoute> = async (c: an
     // Use existing batch enqueue logic
     const enqueuedCount = await queue.enqueueBatch(batch);
 
-    return c.json({ 
+    return c.json({
       message: `Imported ${enqueuedCount} messages successfully`,
       count: enqueuedCount
     }, 200);
@@ -559,5 +559,14 @@ export const getConsumerStats: AppRouteHandler<any> = async (c: any) => {
     return c.json({ stats }, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to get consumer stats" }, 500);
+  }
+};
+
+export const clearActivityLogs: AppRouteHandler<any> = async (c: any) => {
+  try {
+    await queue.clearActivityLogs();
+    return c.json({ message: "Activity logs and stats cleared successfully" }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to clear activity logs" }, 500);
   }
 };

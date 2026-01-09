@@ -2,7 +2,7 @@ import React, { useState } from "react"
 import {
     Loader2,
     Search,
-    ArrowRightLeft,
+    ArrowRight,
     Clock,
     Zap,
     FileText,
@@ -76,24 +76,7 @@ export function MessageHistoryTable({
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[100px]">Consumer</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[120px]">Timing</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Details</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card text-right pr-4">
-                                <div className="relative flex-1 max-w-xs inline-flex items-center gap-2">
-                                    <div className="relative">
-                                        <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                                        <input
-                                            type="text"
-                                            placeholder="Message ID..."
-                                            value={inputValue}
-                                            onChange={(e) => setInputValue(e.target.value)}
-                                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                                            className="flex h-7 w-[160px] rounded-md border border-input bg-background px-2 py-1 pl-7 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                        />
-                                    </div>
-                                    <Button size="sm" variant="outline" className="h-7 px-2" onClick={handleSearch} disabled={loading || !inputValue.trim()}>
-                                        <Search className="h-3.5 w-3.5" />
-                                    </Button>
-                                </div>
-                            </TableHead>
+                            <TableHead className="sticky top-0 z-20 bg-card w-[50px]"></TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -135,7 +118,7 @@ export function MessageHistoryTable({
                                         {event.source_queue && event.dest_queue ? (
                                             <span className="flex items-center gap-1">
                                                 <span>{event.source_queue}</span>
-                                                <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
+                                                <ArrowRight className="h-3 w-3 text-muted-foreground" />
                                                 <span>{event.dest_queue}</span>
                                             </span>
                                         ) : (
@@ -197,18 +180,7 @@ export function MessageHistoryTable({
                 </Table>
             </ScrollArea>
 
-            {/* Footer */}
-            {history && history.history.length > 0 && (
-                <div className="shrink-0 flex items-center justify-between px-4 py-4 border-t bg-muted/5">
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-muted-foreground">Message ID:</span>
-                        <span className="text-sm font-mono">{history.message_id}</span>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                        {history.history.length} events in journey
-                    </div>
-                </div>
-            )}
+
         </div>
     )
 }

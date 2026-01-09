@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { format } from "date-fns"
+import { NavigateFunction, useSearchParams, useLocation } from "react-router-dom"
 
 import {
     type Message,
@@ -20,40 +21,43 @@ import {
 export interface UseQueueMessagesOptions {
     authFetch: (url: string, options?: RequestInit) => Promise<Response>
     apiKey: string
+    queueTab: QueueTab
+    navigate: NavigateFunction
+    onEvent?: (type: string, payload: any) => void
 }
 
 export interface UseQueueMessagesReturn {
     // Status data
     statusData: SystemStatus | null
     loadingStatus: boolean
-    
+
     // Messages data
     messagesData: MessagesResponse | null
     effectiveMessagesData: MessagesResponse | null
     loadingMessages: boolean
     showMessagesLoading: boolean
-    
+
     // Config
     config: QueueConfig | null
-    
+
     // Error state
     error: string | null
-    
+
     // Tab state
     activeTab: QueueTab
     navigateToTab: (tab: QueueTab) => void
-    
+
     // Pagination
     currentPage: number
     setCurrentPage: (page: number) => void
     pageSize: string
     setPageSize: (size: string) => void
-    
+
     // Sorting
     sortBy: string
     sortOrder: SortOrder
     handleSort: (field: string) => void
-    
+
     // Filtering
     filterType: string
     setFilterType: (type: string) => void
@@ -69,22 +73,22 @@ export interface UseQueueMessagesReturn {
     setSearch: (search: string) => void
     isFilterActive: boolean
     activeFiltersDescription: string
-    
+
     // Selection
     selectedIds: Set<string>
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>
     handleToggleSelect: (id: string, shiftKey?: boolean) => void
     handleSelectAll: (ids: string[]) => void
-    
+
     // Highlighting
     highlightedIds: Set<string>
     scrollResetKey: number
-    
+
     // Auto refresh
     autoRefresh: boolean
     setAutoRefresh: (value: boolean) => void
     handleToggleAutoRefresh: () => void
-    
+
     // Actions
     fetchAll: (silent?: boolean) => void
     handleRefresh: () => void
@@ -96,18 +100,19 @@ export interface UseQueueMessagesReturn {
     handleBulkDelete: () => void
     handleClearQueue: (queueType: string, label: string) => void
     handleClearAll: () => void
+    handleClearActivityLogs: () => void
     handleExport: () => void
     handleImport: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>
-    
+
     // Dialog triggers
     openEditDialog: (message: Message) => void
-    
+
     // Utilities
     formatTimestamp: (ts?: number) => string
     availableTypes: string[]
     messagesRef: React.RefObject<Message[]>
     fileInputRef: React.RefObject<HTMLInputElement>
-    
+
     // Confirmation dialog state (for parent to render)
     confirmDialog: {
         isOpen: boolean
@@ -121,7 +126,7 @@ export interface UseQueueMessagesReturn {
         description: string
         action: () => Promise<void>
     }>>
-    
+
     // Edit dialog state (for parent to render)
     editDialog: {
         isOpen: boolean
@@ -139,27 +144,16 @@ export interface UseQueueMessagesReturn {
 // URL State Helpers
 // ============================================================================
 
-const parseQueueTab = (value: string | null): QueueTab | null => {
-    if (!value) return null
-    if ((QUEUE_TABS as readonly string[]).includes(value)) return value as QueueTab
-    return null
-}
-
-const getDashboardStateFromLocation = (): DashboardState => {
-    const url = new URL(window.location.href)
-    const params = url.searchParams
-
-    const queue = parseQueueTab(params.get("queue")) ?? "main"
-
+const getFilterStateFromSearchParams = (params: URLSearchParams, queueTab: QueueTab) => {
     const rawPage = params.get("page")
     const parsedPage = rawPage ? Number(rawPage) : 1
     const page = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1
 
     const rawLimit = params.get("limit")
-    const parsedLimit = rawLimit ? Number(rawLimit) : 25
-    const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit).toString() : "25"
+    const parsedLimit = rawLimit ? Number(rawLimit) : 100
+    const limit = Number.isFinite(parsedLimit) && parsedLimit >= 1 ? Math.floor(parsedLimit).toString() : "100"
 
-    const sortBy = params.get("sortBy") || getDefaultSortBy(queue)
+    const sortBy = params.get("sortBy") || getDefaultSortBy(queueTab)
     const sortOrder: SortOrder = params.get("sortOrder") === "asc" ? "asc" : "desc"
 
     const filterType = params.get("filterType") || "all"
@@ -177,7 +171,6 @@ const getDashboardStateFromLocation = (): DashboardState => {
     const search = params.get("search") || ""
 
     return {
-        queue,
         page,
         limit,
         sortBy,
@@ -191,26 +184,12 @@ const getDashboardStateFromLocation = (): DashboardState => {
     }
 }
 
-const buildDashboardHref = (state: DashboardState) => {
-    const url = new URL(window.location.href)
-    const params = url.searchParams
+const buildSearchParams = (state: Omit<DashboardState, 'queue'>, queueTab: QueueTab): string => {
+    const params = new URLSearchParams()
 
-    params.delete("queue")
-    params.delete("page")
-    params.delete("limit")
-    params.delete("sortBy")
-    params.delete("sortOrder")
-    params.delete("filterType")
-    params.delete("filterPriority")
-    params.delete("filterAttempts")
-    params.delete("startDate")
-    params.delete("endDate")
-    params.delete("search")
-
-    if (state.queue !== "main") params.set("queue", state.queue)
     if (state.page !== 1) params.set("page", state.page.toString())
-    if (state.limit !== "25") params.set("limit", state.limit)
-    if (state.sortBy !== getDefaultSortBy(state.queue)) params.set("sortBy", state.sortBy)
+    if (state.limit !== "100") params.set("limit", state.limit)
+    if (state.sortBy !== getDefaultSortBy(queueTab)) params.set("sortBy", state.sortBy)
     if (state.sortOrder !== "desc") params.set("sortOrder", state.sortOrder)
     if (state.filterType && state.filterType !== "all") params.set("filterType", state.filterType)
     if (state.filterPriority) params.set("filterPriority", state.filterPriority)
@@ -219,22 +198,19 @@ const buildDashboardHref = (state: DashboardState) => {
     if (state.endDate) params.set("endDate", state.endDate.toISOString())
     if (state.search) params.set("search", state.search)
 
-    return `${url.pathname}${url.search}${url.hash}`
-}
-
-const writeDashboardStateToUrl = (state: DashboardState, mode: "push" | "replace") => {
-    const next = buildDashboardHref(state)
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
-    if (next === current) return
-    if (mode === "push") window.history.pushState(state, "", next)
-    else window.history.replaceState(state, "", next)
+    const str = params.toString()
+    return str ? `?${str}` : ''
 }
 
 // ============================================================================
 // Main Hook
 // ============================================================================
 
-export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions): UseQueueMessagesReturn {
+export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEvent }: UseQueueMessagesOptions): UseQueueMessagesReturn {
+    // Use search params and location from react-router
+    const [searchParams] = useSearchParams()
+    const location = useLocation()
+
     // Dialog state
     const [confirmDialog, setConfirmDialog] = useState<{
         isOpen: boolean
@@ -273,22 +249,23 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
     // Config State
     const [config, setConfig] = useState<QueueConfig | null>(null)
 
-    // Initialize state from URL
-    const initialDashboardState = useMemo(() => getDashboardStateFromLocation(), [])
+    // Initialize state from URL search params
+    const initialFilterState = useMemo(() => getFilterStateFromSearchParams(searchParams, queueTab), [])
 
-    const [activeTab, setActiveTab] = useState<QueueTab>(() => initialDashboardState.queue)
+    // Use queueTab from props (router param)
+    const activeTab = queueTab
 
     // Filter & Sort State
-    const [filterType, setFilterType] = useState(() => initialDashboardState.filterType)
-    const [filterPriority, setFilterPriority] = useState(() => initialDashboardState.filterPriority)
-    const [filterAttempts, setFilterAttempts] = useState(() => initialDashboardState.filterAttempts)
-    const [startDate, setStartDate] = useState<Date | undefined>(() => initialDashboardState.startDate)
-    const [endDate, setEndDate] = useState<Date | undefined>(() => initialDashboardState.endDate)
-    const [pageSize, setPageSize] = useState(() => initialDashboardState.limit)
-    const [currentPage, setCurrentPage] = useState(() => initialDashboardState.page)
-    const [sortBy, setSortBy] = useState(() => initialDashboardState.sortBy)
-    const [sortOrder, setSortOrder] = useState<SortOrder>(() => initialDashboardState.sortOrder)
-    const [search, setSearch] = useState(() => initialDashboardState.search)
+    const [filterType, setFilterType] = useState(() => initialFilterState.filterType)
+    const [filterPriority, setFilterPriority] = useState(() => initialFilterState.filterPriority)
+    const [filterAttempts, setFilterAttempts] = useState(() => initialFilterState.filterAttempts)
+    const [startDate, setStartDate] = useState<Date | undefined>(() => initialFilterState.startDate)
+    const [endDate, setEndDate] = useState<Date | undefined>(() => initialFilterState.endDate)
+    const [pageSize, setPageSize] = useState(() => initialFilterState.limit)
+    const [currentPage, setCurrentPage] = useState(() => initialFilterState.page)
+    const [sortBy, setSortBy] = useState(() => initialFilterState.sortBy)
+    const [sortOrder, setSortOrder] = useState<SortOrder>(() => initialFilterState.sortOrder)
+    const [search, setSearch] = useState(() => initialFilterState.search)
 
     // Selection State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -318,7 +295,7 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
     // Active Tab Ref (for race condition handling)
     const activeTabRef = useRef(activeTab)
     const prevAutoRefreshRef = useRef(autoRefresh)
-    
+
     useEffect(() => {
         activeTabRef.current = activeTab
     }, [activeTab])
@@ -449,7 +426,7 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
         let eventSource: EventSource
 
         if (autoRefresh) {
-            const sseUrl = apiKey 
+            const sseUrl = apiKey
                 ? `/api/queue/events?apiKey=${encodeURIComponent(apiKey)}`
                 : '/api/queue/events'
             eventSource = new EventSource(sseUrl)
@@ -458,6 +435,11 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
                 try {
                     const data = JSON.parse(event.data)
                     const { type, payload } = data
+
+                    // Call the onEvent callback if provided
+                    if (onEvent) {
+                        onEvent(type, payload)
+                    }
 
                     const now = Date.now()
                     if (now - lastStatusFetchRef.current > 2000) {
@@ -481,7 +463,7 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
                             fetchMessages(true)
                             return
                         }
-                        
+
                         const hasRedactedPayload = messagesToAdd.some((m: Message) => m.payload === "[REDACTED]")
                         if (hasRedactedPayload) {
                             fetchMessages(true)
@@ -494,7 +476,7 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
                                 pagination: {
                                     total: 0,
                                     page: 1,
-                                    limit: Number(pageSize) || 25,
+                                    limit: Number(pageSize) || 100,
                                     totalPages: 1
                                 }
                             }
@@ -700,12 +682,31 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
     }, [autoRefresh, fetchAll, apiKey])
 
     // =========================================================================
-    // URL Sync
+    // URL Sync - Update search params when filter state changes (not tab changes)
     // =========================================================================
 
+    // Track when we're navigating to prevent URL sync interference
+    const isNavigatingRef = useRef(false)
+    const prevTabRef = useRef(activeTab)
+
     useEffect(() => {
-        writeDashboardStateToUrl({
-            queue: activeTab,
+        // Only sync URL when we're on a queue route
+        if (!location.pathname.startsWith('/queue/')) {
+            return
+        }
+
+        // Skip URL sync when we're in the middle of a tab navigation
+        if (isNavigatingRef.current) {
+            return
+        }
+
+        // Skip URL sync when tab just changed - let the navigation settle
+        if (prevTabRef.current !== activeTab) {
+            prevTabRef.current = activeTab
+            return
+        }
+
+        const searchStr = buildSearchParams({
             page: currentPage,
             limit: pageSize,
             sortBy,
@@ -716,8 +717,11 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
             startDate,
             endDate,
             search,
-        }, "replace")
-    }, [activeTab, currentPage, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate])
+        }, activeTab)
+
+        // Use replace to update search params without adding to history
+        navigate(`/queue/${activeTab}${searchStr}`, { replace: true })
+    }, [navigate, location.pathname, activeTab, currentPage, endDate, filterAttempts, filterPriority, filterType, pageSize, search, sortBy, sortOrder, startDate])
 
     // Fetch on filter/autoRefresh changes
     useEffect(() => {
@@ -730,99 +734,42 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
 
     // Initial Load
     useEffect(() => {
-        const url = new URL(window.location.href)
-        const rawQueue = url.searchParams.get("queue")
-        const parsedQueue = parseQueueTab(rawQueue)
-        let shouldReplace = false
-
-        if (rawQueue && !parsedQueue) {
-            url.searchParams.delete("queue")
-            shouldReplace = true
-        }
-
-        const pageRaw = url.searchParams.get("page")
-        if (pageRaw) {
-            const n = Number(pageRaw)
-            if (!Number.isFinite(n) || n < 1) {
-                url.searchParams.delete("page")
-                shouldReplace = true
-            }
-        }
-
-        const limitRaw = url.searchParams.get("limit")
-        if (limitRaw) {
-            const n = Number(limitRaw)
-            if (!Number.isFinite(n) || n < 1) {
-                url.searchParams.delete("limit")
-                shouldReplace = true
-            }
-        }
-
-        const sortOrderRaw = url.searchParams.get("sortOrder")
-        if (sortOrderRaw && sortOrderRaw !== "asc" && sortOrderRaw !== "desc") {
-            url.searchParams.delete("sortOrder")
-            shouldReplace = true
-        }
-
-        const startDateRaw = url.searchParams.get("startDate")
-        if (startDateRaw) {
-            const d = new Date(startDateRaw)
-            if (Number.isNaN(d.getTime())) {
-                url.searchParams.delete("startDate")
-                shouldReplace = true
-            }
-        }
-
-        const endDateRaw = url.searchParams.get("endDate")
-        if (endDateRaw) {
-            const d = new Date(endDateRaw)
-            if (Number.isNaN(d.getTime())) {
-                url.searchParams.delete("endDate")
-                shouldReplace = true
-            }
-        }
-
-        if (shouldReplace) {
-            window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
-        }
-
-        const onPopState = () => {
-            const next = getDashboardStateFromLocation()
-            setActiveTab(next.queue)
-            setCurrentPage(next.page)
-            setPageSize(next.limit)
-            setSortBy(next.sortBy)
-            setSortOrder(next.sortOrder)
-            setFilterType(next.filterType)
-            setFilterPriority(next.filterPriority)
-            setFilterAttempts(next.filterAttempts)
-            setStartDate(next.startDate)
-            setEndDate(next.endDate)
-            setSearch(next.search)
-            setSelectedIds(new Set())
-            setLastSelectedId(null)
-        }
-
-        window.addEventListener("popstate", onPopState)
         fetchConfig()
         fetchStatus()
-        return () => window.removeEventListener("popstate", onPopState)
     }, [fetchConfig, fetchStatus])
+
+    // Sync state with URL search params when they change
+    useEffect(() => {
+        const filterState = getFilterStateFromSearchParams(searchParams, activeTab)
+        setCurrentPage(filterState.page)
+        setPageSize(filterState.limit)
+        setSortBy(filterState.sortBy)
+        setSortOrder(filterState.sortOrder)
+        setFilterType(filterState.filterType)
+        setFilterPriority(filterState.filterPriority)
+        setFilterAttempts(filterState.filterAttempts)
+        setStartDate(filterState.startDate)
+        setEndDate(filterState.endDate)
+        setSearch(filterState.search)
+    }, [searchParams, activeTab])
 
     // =========================================================================
     // Handlers
     // =========================================================================
 
     const navigateToTab = useCallback((tab: QueueTab) => {
+        // Set flag to prevent URL sync effect from interfering
+        isNavigatingRef.current = true
+
         const defaultSortBy = getDefaultSortBy(tab)
-        setActiveTab(tab)
         setSelectedIds(new Set())
         setLastSelectedId(null)
         setCurrentPage(1)
         setSortBy(defaultSortBy)
         setSortOrder("desc")
-        writeDashboardStateToUrl({
-            queue: tab,
+
+        // Build search params for filters
+        const searchStr = buildSearchParams({
             page: 1,
             limit: pageSize,
             sortBy: defaultSortBy,
@@ -833,8 +780,15 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
             startDate,
             endDate,
             search,
-        }, "push")
-    }, [endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate])
+        }, tab)
+
+        navigate(`/queue/${tab}${searchStr}`)
+
+        // Clear flag after navigation (use setTimeout to ensure it happens after React batches updates)
+        setTimeout(() => {
+            isNavigatingRef.current = false
+        }, 0)
+    }, [navigate, endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate])
 
     const handleRefresh = useCallback(() => {
         fetchAll()
@@ -899,6 +853,30 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
                     }
                 } catch (err) {
                     alert("Failed to clear queues")
+                }
+            }
+        })
+    }, [authFetch, fetchAll])
+
+    const handleClearActivityLogs = useCallback(() => {
+        setConfirmDialog({
+            isOpen: true,
+            title: "Clear Activity Logs",
+            description: "Are you sure you want to clear the activity logs? This action cannot be undone.",
+            action: async () => {
+                try {
+                    const response = await authFetch('/api/queue/activity/clear', { method: 'DELETE' })
+                    if (response.ok) {
+                        // If we are on Activity tab, we might want to refresh. 
+                        // But fetchAll refreshes everything so it's fine.
+                        fetchAll()
+                    }
+                    else {
+                        const err = await response.json()
+                        alert(`Error: ${err.message}`)
+                    }
+                } catch (err) {
+                    alert("Failed to clear activity logs")
                 }
             }
         })
@@ -1176,34 +1154,34 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
         // Status data
         statusData,
         loadingStatus,
-        
+
         // Messages data
         messagesData,
         effectiveMessagesData,
         loadingMessages,
         showMessagesLoading,
-        
+
         // Config
         config,
-        
+
         // Error state
         error,
-        
+
         // Tab state
         activeTab,
         navigateToTab,
-        
+
         // Pagination
         currentPage,
         setCurrentPage,
         pageSize,
         setPageSize,
-        
+
         // Sorting
         sortBy,
         sortOrder,
         handleSort,
-        
+
         // Filtering
         filterType,
         setFilterType,
@@ -1219,22 +1197,22 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
         setSearch,
         isFilterActive,
         activeFiltersDescription,
-        
+
         // Selection
         selectedIds,
         setSelectedIds,
         handleToggleSelect,
         handleSelectAll,
-        
+
         // Highlighting
         highlightedIds,
         scrollResetKey,
-        
+
         // Auto refresh
         autoRefresh,
         setAutoRefresh,
         handleToggleAutoRefresh,
-        
+
         // Actions
         fetchAll,
         handleRefresh,
@@ -1246,18 +1224,19 @@ export function useQueueMessages({ authFetch, apiKey }: UseQueueMessagesOptions)
         handleBulkDelete,
         handleClearQueue,
         handleClearAll,
+        handleClearActivityLogs,
         handleExport,
         handleImport,
-        
+
         // Dialog triggers
         openEditDialog,
-        
+
         // Utilities
         formatTimestamp,
         availableTypes,
         messagesRef,
         fileInputRef,
-        
+
         // Dialog state
         confirmDialog,
         setConfirmDialog,

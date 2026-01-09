@@ -27,6 +27,8 @@ export async function logActivity(action, messageData, context = {}) {
       message_id: messageId,
       action,
       timestamp: now,
+      payload: messageData?.payload || context.payload || (messageData && !messageData.id ? messageData : null),
+      test_field: "log_activity_updated",
 
       // Queue Context
       queue: context.queue || "main",
@@ -263,30 +265,37 @@ export async function _detectAnomalies(logEntry) {
 }
 
 /**
- * Updates consumer statistics for burst detection.
+ * Updates consumer statistics for burst detection and tracking.
  * @param {string} consumerId - The consumer ID.
  * @param {number} timestamp - Current timestamp in seconds.
  * @private
  */
 export async function _updateConsumerStats(consumerId, timestamp) {
   const redis = this.redisManager.redis;
+  const burstKey = `${this.config.queue_name}:consumer_burst`;
   const statsKey = `${this.config.queue_name}:consumer_stats`;
   const windowSeconds = this.config.activity_burst_threshold_seconds;
 
   try {
-    const existingJson = await redis.hget(statsKey, consumerId);
-    let stats = existingJson ? JSON.parse(existingJson) : { timestamps: [] };
+    // Update burst detection stats (with TTL)
+    const burstJson = await redis.hget(burstKey, consumerId);
+    let burstStats = burstJson ? JSON.parse(burstJson) : { timestamps: [] };
 
-    // Add current timestamp
-    stats.timestamps.push(timestamp);
-
-    // Remove timestamps outside the window
+    burstStats.timestamps.push(timestamp);
     const cutoff = timestamp - windowSeconds;
-    stats.timestamps = stats.timestamps.filter((t) => t > cutoff);
+    burstStats.timestamps = burstStats.timestamps.filter((t) => t > cutoff);
 
-    // Store updated stats (with TTL via expiration)
+    await redis.hset(burstKey, consumerId, JSON.stringify(burstStats));
+    await redis.expire(burstKey, windowSeconds * 2);
+
+    // Update persistent consumer stats (no TTL)
+    const statsJson = await redis.hget(statsKey, consumerId);
+    let stats = statsJson ? JSON.parse(statsJson) : { dequeue_count: 0, last_dequeue: null };
+
+    stats.dequeue_count = (stats.dequeue_count || 0) + 1;
+    stats.last_dequeue = timestamp;
+
     await redis.hset(statsKey, consumerId, JSON.stringify(stats));
-    await redis.expire(statsKey, windowSeconds * 2); // TTL for cleanup
   } catch (e) {
     logger.warn(`Failed to update consumer stats: ${e.message}`);
   }
@@ -300,14 +309,14 @@ export async function _updateConsumerStats(consumerId, timestamp) {
  */
 export async function _checkConsumerBurst(consumerId) {
   const redis = this.redisManager.redis;
-  const statsKey = `${this.config.queue_name}:consumer_stats`;
+  const burstKey = `${this.config.queue_name}:consumer_burst`;
 
   try {
-    const existingJson = await redis.hget(statsKey, consumerId);
+    const existingJson = await redis.hget(burstKey, consumerId);
     if (!existingJson) return false;
 
     const stats = JSON.parse(existingJson);
-    return stats.timestamps.length >= this.config.activity_burst_threshold_count;
+    return (stats.timestamps?.length || 0) >= this.config.activity_burst_threshold_count;
   } catch (e) {
     return false;
   }
@@ -480,16 +489,40 @@ export async function getAnomalies(filters = {}) {
 /**
  * Gets consumer statistics.
  * @param {string} [consumerId] - Optional consumer ID to filter.
- * @returns {Promise<Object>} Consumer statistics.
+ * @returns {Promise<Object>} Consumer statistics with dequeue_count and last_dequeue.
  */
 export async function getConsumerStats(consumerId) {
   const redis = this.redisManager.redis;
   const statsKey = `${this.config.queue_name}:consumer_stats`;
 
+  // Helper to normalize stats (handle old format with timestamps array)
+  const normalizeStats = (parsed) => {
+    if (typeof parsed.dequeue_count === 'number') {
+      // New format - already correct
+      return {
+        dequeue_count: parsed.dequeue_count,
+        last_dequeue: parsed.last_dequeue || null
+      };
+    }
+    // Old format (timestamps array) - convert
+    if (Array.isArray(parsed.timestamps)) {
+      return {
+        dequeue_count: parsed.timestamps.length,
+        last_dequeue: parsed.timestamps.length > 0
+          ? Math.max(...parsed.timestamps)
+          : null
+      };
+    }
+    // Unknown format
+    return { dequeue_count: 0, last_dequeue: null };
+  };
+
   try {
     if (consumerId) {
       const json = await redis.hget(statsKey, consumerId);
-      return json ? JSON.parse(json) : null;
+      if (!json) return null;
+      const parsed = JSON.parse(json);
+      return normalizeStats(parsed);
     }
 
     const allStats = await redis.hgetall(statsKey);
@@ -497,7 +530,8 @@ export async function getConsumerStats(consumerId) {
 
     for (const [id, json] of Object.entries(allStats || {})) {
       try {
-        result[id] = JSON.parse(json);
+        const parsed = JSON.parse(json);
+        result[id] = normalizeStats(parsed);
       } catch (e) {
         // Skip invalid entries
       }

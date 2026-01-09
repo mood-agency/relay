@@ -574,22 +574,29 @@ curl "http://localhost:3000/api/queue/activity/anomalies?severity=critical"
 curl "http://localhost:3000/api/queue/activity/message/{messageId}"
 ```
 
-### Testing the Dashboard
+### Helper Scripts
 
-Use the included TypeScript script to populate the dashboard with sample data:
+Use the included TypeScript scripts to populate the queue with sample data or test dequeuing:
 
+#### Enqueue Tool
 ```bash
-# Run the dashboard demo (uses SECRET_KEY from environment)
-SECRET_KEY=your-key npx tsx test_dashboard.ts
+# Add sample messages (uses SECRET_KEY from environment)
+SECRET_KEY=your-key npx tsx enqueue_messages.ts
 
-# Or pass the API key directly
-npx tsx test_dashboard.ts --api-key your-secret-key
-
-# Add custom number of messages
-npx tsx test_dashboard.ts --api-key your-key --messages 25
+# Add custom number of messages and batch size
+npx tsx enqueue_messages.ts --api-key your-key --messages 100 --batch-size 20
 
 # Use different server URL
-npx tsx test_dashboard.ts --api-key your-key --url http://localhost:8080
+npx tsx enqueue_messages.ts --url http://localhost:8080 --messages 10
+```
+
+#### Dequeue Tool
+```bash
+# Dequeue some messages (uses SECRET_KEY from environment)
+SECRET_KEY=your-key npx tsx dequeue_messages.ts
+
+# Dequeue 5 messages, wait up to 60s for each, and set 120s processing timeout
+npx tsx dequeue_messages.ts --count 5 --timeout 60 --ack-timeout 120 --consumer my-worker
 ```
 
 ---

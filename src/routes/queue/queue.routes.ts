@@ -108,7 +108,7 @@ export const getMessage = createRoute({
   method: "get",
   tags,
   request: {
-    query: z.object({ 
+    query: z.object({
       timeout: z.string().pipe(z.coerce.number()).optional(),
       ackTimeout: z.string().pipe(z.coerce.number()).optional(),
       type: z.string().optional(),
@@ -119,7 +119,7 @@ export const getMessage = createRoute({
     200: jsonContent(DequeuedMessageSchema, "Queue Message"),
     404: jsonContent(z.object({ message: z.string() }), "Message not found"),
     422: jsonContent(
-      createErrorSchema(z.object({ 
+      createErrorSchema(z.object({
         timeout: z.number().optional(),
         ackTimeout: z.number().optional(),
         type: z.string().optional(),
@@ -699,6 +699,7 @@ export const ActivityLogEntrySchema = z.object({
   batch_size: z.number().nullable(),
   prev_action: z.string().nullable(),
   prev_timestamp: z.number().nullable(),
+  payload: z.any().optional(),
   anomaly: z.object({
     type: z.string(),
     severity: z.enum(["info", "warning", "critical"]),
@@ -799,6 +800,17 @@ export const getAnomalies = createRoute({
       }),
       "Anomalies Summary"
     ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const clearActivityLogs = createRoute({
+  path: "/queue/activity/clear",
+  method: "delete",
+  tags,
+  description: "Clear all activity logs and consumer statistics",
+  responses: {
+    200: jsonContent(z.object({ message: z.string() }), "Activity Logs Cleared"),
     500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
   },
 });

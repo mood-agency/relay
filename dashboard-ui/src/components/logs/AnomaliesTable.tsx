@@ -27,6 +27,11 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 import { AnomaliesResponse } from "./types"
@@ -73,6 +78,7 @@ export function AnomaliesTable({
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[90px]">Action</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[120px]">Message ID</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[180px]">Timestamp</TableHead>
+                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Payload</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card text-right pr-2">
                                 <Popover open={filterOpen} onOpenChange={setFilterOpen}>
                                     <PopoverTrigger asChild>
@@ -125,7 +131,7 @@ export function AnomaliesTable({
                     <TableBody>
                         {!loading && (!anomalies?.anomalies?.length) ? (
                             <TableRow className="hover:bg-transparent">
-                                <TableCell colSpan={7} className="h-[400px] p-0">
+                                <TableCell colSpan={8} className="h-[400px] p-0">
                                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                                         <CheckCircle2 className="h-12 w-12 mb-3 text-green-500 opacity-30" />
                                         <p className="font-medium">No anomalies detected</p>
@@ -156,6 +162,24 @@ export function AnomaliesTable({
                                     </TableCell>
                                     <TableCell className="text-xs font-mono text-muted-foreground">
                                         {formatTime(log.timestamp)}
+                                    </TableCell>
+                                    <TableCell className="max-w-[200px]">
+                                        {log.payload ? (
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span className="text-xs font-mono truncate block cursor-help opacity-70 hover:opacity-100 transition-opacity">
+                                                        {JSON.stringify(log.payload)}
+                                                    </span>
+                                                </TooltipTrigger>
+                                                <TooltipContent className="max-w-[500px] overflow-auto max-h-[300px]">
+                                                    <pre className="text-[10px] font-mono whitespace-pre-wrap">
+                                                        {JSON.stringify(log.payload, null, 2)}
+                                                    </pre>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        ) : (
+                                            <span className="text-muted-foreground text-xs">—</span>
+                                        )}
                                     </TableCell>
                                     <TableCell />
                                 </TableRow>

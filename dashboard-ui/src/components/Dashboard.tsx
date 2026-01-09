@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react"
+import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
     RefreshCw,
     Play,
@@ -19,7 +20,12 @@ import {
     User,
     FileText,
     AlertCircle,
-    History
+    History,
+    Inbox,
+    Pickaxe,
+    XCircle,
+    Check,
+    Archive
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -54,6 +60,12 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
+import {
+    Tabs,
+    TabsContent,
+    TabsList,
+    TabsTrigger,
+} from "@/components/ui/tabs"
 
 // Activity Logs components
 import {
@@ -71,12 +83,17 @@ import {
 // Queue components
 import {
     type DashboardView,
-    QueueView,
+    type QueueTab,
     MoveMessageDialog,
     ViewPayloadDialog,
     EditMessageDialog,
     CreateMessageDialog,
     useQueueMessages,
+    MainQueueTable,
+    ProcessingQueueTable,
+    DeadLetterTable,
+    AcknowledgedQueueTable,
+    ArchivedQueueTable,
 } from "@/components/queue"
 
 // ============================================================================
@@ -94,14 +111,46 @@ const setStoredApiKey = (key: string) => {
 }
 
 // ============================================================================
+// Route Types and Helpers
+// ============================================================================
+
+type ActivityTab = 'activity' | 'anomalies' | 'consumers'
+const ACTIVITY_TABS: ActivityTab[] = ['activity', 'anomalies', 'consumers']
+const QUEUE_TABS: QueueTab[] = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+
+const parseActivityTab = (value: string | undefined): ActivityTab => {
+    if (value && ACTIVITY_TABS.includes(value as ActivityTab)) return value as ActivityTab
+    return 'activity'
+}
+
+const parseQueueTab = (value: string | undefined): QueueTab => {
+    if (value && QUEUE_TABS.includes(value as QueueTab)) return value as QueueTab
+    return 'main'
+}
+
+// ============================================================================
 // Dashboard Component
 // ============================================================================
 
 export default function Dashboard() {
+    // Router hooks
+    const params = useParams<{ tab?: string; messageId?: string }>()
+    const navigate = useNavigate()
+    const location = useLocation()
+
+    // Derive current view from URL path
+    const isLogsView = location.pathname.startsWith('/logs')
+    const currentView: DashboardView = isLogsView ? 'activity' : 'queues'
+
+    // Parse tabs from URL params
+    const queueTab = parseQueueTab(params.tab)
+    const activityTab = parseActivityTab(params.tab)
+    // const messageIdFromUrl = params.messageId // Unused for now as we moved to dialog
+
     // API Key state
     const [apiKey, setApiKey] = useState<string>(getStoredApiKey)
     const [showApiKeyInput, setShowApiKeyInput] = useState(false)
-    
+
     // Auth fetch helper
     const authFetch = useCallback(async (url: string, options: RequestInit = {}): Promise<Response> => {
         const headers = new Headers(options.headers)
@@ -111,12 +160,23 @@ export default function Dashboard() {
         return fetch(url, { ...options, headers })
     }, [apiKey])
 
-    // Use the queue messages hook
-    const queue = useQueueMessages({ authFetch, apiKey })
+    // Use the queue messages hook with current queue tab
+    const queue = useQueueMessages({
+        authFetch,
+        apiKey,
+        queueTab,
+        navigate,
+        onEvent: (type) => {
+            // Refresh activity logs on relevant events if we are on the activity view
+            // We refresh on 'requeue' (timeout movement) and other major events
+            if (currentView === 'activity') {
+                if (activityTab === 'activity') fetchActivityLogs()
+                else if (activityTab === 'anomalies') fetchAnomalies()
+                else if (activityTab === 'consumers') fetchConsumerStats()
+            }
+        }
+    })
 
-    // View state
-    const [currentView, setCurrentView] = useState<DashboardView>('queues')
-    
     // Move dialog state
     const [moveDialog, setMoveDialog] = useState<{
         isOpen: boolean
@@ -129,7 +189,7 @@ export default function Dashboard() {
 
     // Create dialog state
     const [createDialog, setCreateDialog] = useState(false)
-    
+
     // View payload dialog state
     const [viewPayloadDialog, setViewPayloadDialog] = useState<{
         isOpen: boolean
@@ -146,7 +206,7 @@ export default function Dashboard() {
         action: '',
         message_id: '',
         has_anomaly: null,
-        limit: 50,
+        limit: 100,
         offset: 0
     })
     const [anomalies, setAnomalies] = useState<AnomaliesResponse | null>(null)
@@ -157,7 +217,17 @@ export default function Dashboard() {
     const [messageIdSearch, setMessageIdSearch] = useState('')
     const [consumerStats, setConsumerStats] = useState<ConsumerStatsResponse | null>(null)
     const [loadingConsumerStats, setLoadingConsumerStats] = useState(false)
-    const [activityTab, setActivityTab] = useState<'logs' | 'anomalies' | 'history' | 'consumers'>('logs')
+    const [historyDialog, setHistoryDialog] = useState<{ isOpen: boolean; messageId: string | null }>({
+        isOpen: false,
+        messageId: null
+    })
+
+
+
+    // Navigation helpers using react-router
+    const navigateToActivityTab = useCallback((tab: ActivityTab) => {
+        navigate(`/logs/${tab}`)
+    }, [navigate])
 
     // Activity Log fetch functions
     const fetchActivityLogs = useCallback(async () => {
@@ -169,7 +239,7 @@ export default function Dashboard() {
             if (activityFilter.has_anomaly !== null) params.append('has_anomaly', String(activityFilter.has_anomaly))
             params.append('limit', String(activityFilter.limit))
             params.append('offset', String(activityFilter.offset))
-            
+
             const response = await authFetch(`/api/queue/activity?${params.toString()}`)
             if (response.ok) {
                 const data = await response.json()
@@ -187,7 +257,7 @@ export default function Dashboard() {
         try {
             const params = new URLSearchParams()
             if (anomalySeverityFilter) params.append('severity', anomalySeverityFilter)
-            
+
             const response = await authFetch(`/api/queue/activity/anomalies?${params.toString()}`)
             if (response.ok) {
                 const data = await response.json()
@@ -237,7 +307,7 @@ export default function Dashboard() {
     // Effect to fetch activity data when view changes
     useEffect(() => {
         if (currentView === 'activity') {
-            if (activityTab === 'logs') {
+            if (activityTab === 'activity') {
                 fetchActivityLogs()
             } else if (activityTab === 'anomalies') {
                 fetchAnomalies()
@@ -291,336 +361,612 @@ export default function Dashboard() {
                 )}
 
                 {/* Header with Title and Actions */}
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                        <h1 className="text-lg font-bold tracking-tight text-foreground mr-1">Relay</h1>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    onClick={queue.handleRefresh}
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    aria-label="Refresh"
-                                >
-                                    <RefreshCw className={cn("h-3.5 w-3.5", (queue.loadingMessages || queue.loadingStatus) && "animate-spin")} />
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                <p>Refresh</p>
-                            </TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    onClick={queue.handleToggleAutoRefresh}
-                                    variant="ghost"
-                                    size="icon"
-                                    className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
-                                    aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
-                                >
-                                    {queue.autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
-                            </TooltipContent>
-                        </Tooltip>
-                        {queue.selectedIds.size > 0 && (
-                            <>
-                                <div className="w-px h-5 bg-border/50 mx-1" />
-                                <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
-                                    {queue.selectedIds.size.toLocaleString()} selected
-                                </span>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => {
-                                                const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
-                                                const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
-                                                setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
-                                            }}
-                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                        >
-                                            <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Move selected</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={queue.handleBulkDelete}
-                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Delete selected</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    onClick={() => setCurrentView(currentView === 'activity' ? 'queues' : 'activity')}
-                                    variant="ghost"
-                                    size="icon"
-                                    className={cn("h-8 w-8 relative", currentView === 'activity' && "bg-primary/10 text-primary")}
-                                    aria-label="Activity Logs"
-                                >
-                                    <Activity className="h-3.5 w-3.5" />
-                                    {anomalies && anomalies.summary.by_severity.critical > 0 && (
-                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-destructive rounded-full animate-pulse" />
-                                    )}
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                <p>{currentView === 'activity' ? 'Back to Queues' : 'Activity Logs'}</p>
-                            </TooltipContent>
-                        </Tooltip>
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className={cn("h-8 w-8 relative", queue.isFilterActive && "bg-primary/10 text-primary")}
-                                    aria-label="Filters"
-                                >
-                                    <Filter className="h-3.5 w-3.5" />
-                                    {queue.isFilterActive && (
-                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
-                                    )}
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-72 p-4" align="end">
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="font-medium text-sm">Filters</h4>
-                                        {queue.isFilterActive && (
+                <Tabs
+                    value={currentView}
+                    onValueChange={(v) => {
+                        if (v === 'queues') {
+                            navigate(`/queue/${queueTab}`)
+                        } else {
+                            navigate('/logs/activity')
+                        }
+                    }}
+                    className="flex flex-col flex-1 min-h-0 gap-4"
+                >
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-1 w-[300px]">
+                            <h1 className="text-lg font-bold tracking-tight text-foreground mr-1">Relay</h1>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={() => {
+                                            queue.handleRefresh()
+                                            if (currentView === 'activity') {
+                                                if (activityTab === 'activity') fetchActivityLogs()
+                                                else if (activityTab === 'anomalies') fetchAnomalies()
+                                                else if (activityTab === 'consumers') fetchConsumerStats()
+                                            }
+                                        }}
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="Refresh"
+                                    >
+                                        <RefreshCw className={cn("h-3.5 w-3.5", (queue.loadingMessages || queue.loadingStatus || loadingActivity || loadingAnomalies || loadingConsumerStats) && "animate-spin")} />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Refresh</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        onClick={queue.handleToggleAutoRefresh}
+                                        variant="ghost"
+                                        size="icon"
+                                        className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
+                                        aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
+                                    >
+                                        {queue.autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            {queue.selectedIds.size > 0 && (
+                                <>
+                                    <div className="w-px h-5 bg-border/50 mx-1" />
+                                    <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
+                                        {queue.selectedIds.size.toLocaleString()} selected
+                                    </span>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
                                             <Button
                                                 variant="ghost"
-                                                size="sm"
+                                                size="icon"
                                                 onClick={() => {
-                                                    queue.setSearch("")
-                                                    queue.setFilterType("all")
-                                                    queue.setFilterPriority("")
-                                                    queue.setFilterAttempts("")
-                                                    queue.setStartDate(undefined)
-                                                    queue.setEndDate(undefined)
+                                                    const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                                    const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                                    setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
                                                 }}
-                                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
                                             >
-                                                Clear all
+                                                <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
                                             </Button>
-                                        )}
-                                    </div>
-                                    
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-medium text-foreground/80">Search</label>
-                                        <div className="relative">
-                                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                            <input
-                                                placeholder="Search ID, payload..."
-                                                value={queue.search}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => queue.setSearch(e.target.value)}
-                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                            />
-                                        </div>
-                                    </div>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Move selected</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={queue.handleBulkDelete}
+                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Delete selected</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </>
+                            )}
+                        </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-medium text-foreground/80">Message Type</label>
-                                        <MultipleSelector
-                                            defaultOptions={queue.availableTypes.map(t => ({ label: t, value: t }))}
-                                            value={
-                                                queue.filterType === "all" || !queue.filterType
-                                                    ? []
-                                                    : queue.filterType.split(",").map(t => ({ label: t, value: t }))
-                                            }
-                                            onChange={(selected: Option[]) => {
-                                                if (selected.length === 0) {
-                                                    queue.setFilterType("all")
-                                                } else {
-                                                    queue.setFilterType(selected.map(s => s.value).join(","))
-                                                }
-                                            }}
-                                            hideClearAllButton
-                                            badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
-                                            emptyIndicator={
-                                                <p className="text-center text-sm text-muted-foreground">No types found</p>
-                                            }
-                                        />
-                                    </div>
+                        {/* Center Tabs */}
+                        <div className="flex-1 flex justify-center">
+                            <TabsList className="grid w-[400px] grid-cols-2">
+                                <TabsTrigger value="queues">
+                                    Messages
+                                </TabsTrigger>
+                                <TabsTrigger value="activity" className="flex items-center gap-2">
+                                    Activity
+                                    {anomalies && anomalies.summary.by_severity.critical > 0 && (
+                                        <span className="h-2 w-2 bg-destructive rounded-full animate-pulse" />
+                                    )}
+                                </TabsTrigger>
+                            </TabsList>
+                        </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-medium text-foreground/80">Priority</label>
-                                        <Select value={queue.filterPriority || "any"} onValueChange={(val: string) => queue.setFilterPriority(val === "any" ? "" : val)}>
-                                            <SelectTrigger className="w-full">
-                                                <SelectValue placeholder="Any" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="any">Any</SelectItem>
-                                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
-                                                    <SelectItem key={p} value={String(p)}>{p}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
+                        <div className="flex items-center justify-end gap-1 w-[300px]">
+                            {/* Messages Filter - only show when viewing queues */}
+                            {currentView === 'queues' && (
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn("h-8 w-8 relative", queue.isFilterActive && "bg-primary/10 text-primary")}
+                                            aria-label="Message Filters"
+                                        >
+                                            <Filter className="h-3.5 w-3.5" />
+                                            {queue.isFilterActive && (
+                                                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                            )}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-72 p-4" align="end">
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <h4 className="font-medium text-sm">Message Filters</h4>
+                                                {queue.isFilterActive && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            queue.setSearch("")
+                                                            queue.setFilterType("all")
+                                                            queue.setFilterPriority("")
+                                                            queue.setFilterAttempts("")
+                                                            queue.setStartDate(undefined)
+                                                            queue.setEndDate(undefined)
+                                                        }}
+                                                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                    >
+                                                        Clear all
+                                                    </Button>
+                                                )}
+                                            </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="1"
-                                            placeholder="Any"
-                                            value={queue.filterAttempts}
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                const val = e.target.value
-                                                if (val === "" || /^\d+$/.test(val)) {
-                                                    queue.setFilterAttempts(val)
-                                                }
-                                            }}
-                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                        />
-                                    </div>
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Search</label>
+                                                <div className="relative">
+                                                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                    <input
+                                                        placeholder="Search ID, payload..."
+                                                        value={queue.search}
+                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => queue.setSearch(e.target.value)}
+                                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                    />
+                                                </div>
+                                            </div>
 
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-medium text-foreground/80">Date Range</label>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <div className="space-y-1">
-                                                <label className="text-[10px] text-muted-foreground">Start</label>
-                                                <DateTimePicker
-                                                    date={queue.startDate}
-                                                    setDate={queue.setStartDate}
-                                                    placeholder="Start"
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Message Type</label>
+                                                <MultipleSelector
+                                                    defaultOptions={queue.availableTypes.map(t => ({ label: t, value: t }))}
+                                                    value={
+                                                        queue.filterType === "all" || !queue.filterType
+                                                            ? []
+                                                            : queue.filterType.split(",").map(t => ({ label: t, value: t }))
+                                                    }
+                                                    onChange={(selected: Option[]) => {
+                                                        if (selected.length === 0) {
+                                                            queue.setFilterType("all")
+                                                        } else {
+                                                            queue.setFilterType(selected.map(s => s.value).join(","))
+                                                        }
+                                                    }}
+                                                    hideClearAllButton
+                                                    badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
+                                                    emptyIndicator={
+                                                        <p className="text-center text-sm text-muted-foreground">No types found</p>
+                                                    }
                                                 />
                                             </div>
-                                            <div className="space-y-1">
-                                                <label className="text-[10px] text-muted-foreground">End</label>
-                                                <DateTimePicker
-                                                    date={queue.endDate}
-                                                    setDate={queue.setEndDate}
-                                                    placeholder="End"
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Priority</label>
+                                                <Select value={queue.filterPriority || "any"} onValueChange={(val: string) => queue.setFilterPriority(val === "any" ? "" : val)}>
+                                                    <SelectTrigger className="w-full">
+                                                        <SelectValue placeholder="Any" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="any">Any</SelectItem>
+                                                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                                                            <SelectItem key={p} value={String(p)}>{p}</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="1"
+                                                    placeholder="Any"
+                                                    value={queue.filterAttempts}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                                        const val = e.target.value
+                                                        if (val === "" || /^\d+$/.test(val)) {
+                                                            queue.setFilterAttempts(val)
+                                                        }
+                                                    }}
+                                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                                 />
                                             </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Date Range</label>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[10px] text-muted-foreground">Start</label>
+                                                        <DateTimePicker
+                                                            date={queue.startDate}
+                                                            setDate={queue.setStartDate}
+                                                            placeholder="Start"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <label className="text-[10px] text-muted-foreground">End</label>
+                                                        <DateTimePicker
+                                                            date={queue.endDate}
+                                                            setDate={queue.setEndDate}
+                                                            placeholder="End"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
-                                </div>
-                            </PopoverContent>
-                        </Popover>
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8"
-                                    aria-label="More actions"
-                                >
-                                    <MoreVertical className="h-3.5 w-3.5" />
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-48 p-1" align="end">
-                                <Button
-                                    onClick={() => setCreateDialog(true)}
-                                    variant="ghost"
-                                    className="w-full justify-start gap-2 h-9 px-2"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Create Message
-                                </Button>
-                                <Button
-                                    onClick={() => queue.fileInputRef.current?.click()}
-                                    variant="ghost"
-                                    className="w-full justify-start gap-2 h-9 px-2"
-                                >
-                                    <Upload className="h-4 w-4" />
-                                    Import Messages
-                                </Button>
-                                <Button
-                                    onClick={queue.handleExport}
-                                    variant="ghost"
-                                    className="w-full justify-start gap-2 h-9 px-2"
-                                >
-                                    <Download className="h-4 w-4" />
-                                    Export Messages
-                                </Button>
-                                <Button
-                                    onClick={() => setShowApiKeyInput(true)}
-                                    variant="ghost"
-                                    className="w-full justify-start gap-2 h-9 px-2"
-                                >
-                                    {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
-                                    {apiKey ? "API Key Configured" : "Configure API Key"}
-                                </Button>
-                                <Button
-                                    onClick={queue.handleClearAll}
-                                    variant="ghost"
-                                    className="w-full justify-start gap-2 h-9 px-2"
-                                >
-                                    <Trash2 className="h-4 w-4" />
-                                    Clear All Queues
-                                </Button>
-                            </PopoverContent>
-                        </Popover>
+                                    </PopoverContent>
+                                </Popover>
+                            )}
+
+                            {/* History Filter - only show when viewing activity logs */}
+                            {currentView === 'activity' && (
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn(
+                                                "h-8 w-8 relative",
+                                                (activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && "bg-primary/10 text-primary"
+                                            )}
+                                            aria-label="History Filters"
+                                        >
+                                            <Filter className="h-3.5 w-3.5" />
+                                            {(activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && (
+                                                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                            )}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-72 p-4" align="end">
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <h4 className="font-medium text-sm">History Filters</h4>
+                                                {(activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            setActivityFilter(prev => ({
+                                                                ...prev,
+                                                                action: '',
+                                                                message_id: '',
+                                                                has_anomaly: null,
+                                                                offset: 0
+                                                            }))
+                                                        }}
+                                                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                    >
+                                                        Clear all
+                                                    </Button>
+                                                )}
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Message ID</label>
+                                                <div className="relative">
+                                                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                    <input
+                                                        placeholder="Search by message ID..."
+                                                        value={activityFilter.message_id}
+                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setActivityFilter(prev => ({ ...prev, message_id: e.target.value, offset: 0 }))}
+                                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Action</label>
+                                                <Select value={activityFilter.action || "any"} onValueChange={(val: string) => setActivityFilter(prev => ({ ...prev, action: val === "any" ? "" : val, offset: 0 }))}>
+                                                    <SelectTrigger className="w-full">
+                                                        <SelectValue placeholder="Any" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="any">Any</SelectItem>
+                                                        <SelectItem value="enqueue">Enqueue</SelectItem>
+                                                        <SelectItem value="dequeue">Dequeue</SelectItem>
+                                                        <SelectItem value="ack">Acknowledge</SelectItem>
+                                                        <SelectItem value="nack">Nack</SelectItem>
+                                                        <SelectItem value="requeue">Requeue</SelectItem>
+                                                        <SelectItem value="timeout">Timeout</SelectItem>
+                                                        <SelectItem value="touch">Touch</SelectItem>
+                                                        <SelectItem value="move">Move</SelectItem>
+                                                        <SelectItem value="dlq">Dead Letter</SelectItem>
+                                                        <SelectItem value="delete">Delete</SelectItem>
+                                                        <SelectItem value="clear">Clear</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Anomaly Status</label>
+                                                <Select
+                                                    value={activityFilter.has_anomaly === null ? "any" : activityFilter.has_anomaly ? "yes" : "no"}
+                                                    onValueChange={(val: string) => setActivityFilter(prev => ({
+                                                        ...prev,
+                                                        has_anomaly: val === "any" ? null : val === "yes",
+                                                        offset: 0
+                                                    }))}
+                                                >
+                                                    <SelectTrigger className="w-full">
+                                                        <SelectValue placeholder="Any" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="any">Any</SelectItem>
+                                                        <SelectItem value="yes">Has Anomaly</SelectItem>
+                                                        <SelectItem value="no">No Anomaly</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
+                            )}
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        aria-label="More actions"
+                                    >
+                                        <MoreVertical className="h-3.5 w-3.5" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-48 p-1" align="end">
+                                    <Button
+                                        onClick={() => setCreateDialog(true)}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        Create Message
+                                    </Button>
+                                    <Button
+                                        onClick={() => queue.fileInputRef.current?.click()}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Upload className="h-4 w-4" />
+                                        Import Messages
+                                    </Button>
+                                    <Button
+                                        onClick={queue.handleExport}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Download className="h-4 w-4" />
+                                        Export Messages
+                                    </Button>
+                                    <Button
+                                        onClick={() => setShowApiKeyInput(true)}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
+                                        {apiKey ? "API Key Configured" : "Configure API Key"}
+                                    </Button>
+                                    <Button
+                                        onClick={queue.handleClearAll}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        Clear All Queues
+                                    </Button>
+                                    <Button
+                                        onClick={queue.handleClearActivityLogs}
+                                        variant="ghost"
+                                        className="w-full justify-start gap-2 h-9 px-2"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        Clear Logs
+                                    </Button>
+                                </PopoverContent>
+                            </Popover>
+                        </div>
                     </div>
-                </div>
-
-                {currentView === 'queues' ? (
-                    <QueueView
-                        activeTab={queue.activeTab}
-                        onNavigateToTab={queue.navigateToTab}
-                        queueCounts={{
-                            main: queue.statusData?.mainQueue?.length || 0,
-                            processing: queue.statusData?.processingQueue?.length || 0,
-                            dead: queue.statusData?.deadLetterQueue?.length || 0,
-                            acknowledged: queue.statusData?.acknowledgedQueue?.length || 0,
-                            archived: queue.statusData?.archivedQueue?.length || 0,
-                        }}
-                        messages={queue.effectiveMessagesData?.messages || []}
-                        config={queue.config}
-                        isLoading={queue.showMessagesLoading}
-                        pageSize={queue.pageSize}
-                        setPageSize={queue.setPageSize}
-                        currentPage={queue.currentPage}
-                        setCurrentPage={queue.setCurrentPage}
-                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                        sortBy={queue.sortBy}
-                        sortOrder={queue.sortOrder}
-                        onSort={queue.handleSort}
-                        selectedIds={queue.selectedIds}
-                        onToggleSelect={queue.handleToggleSelect}
-                        onToggleSelectAll={queue.handleSelectAll}
-                        onDelete={queue.handleTableDelete}
-                        onEdit={queue.openEditDialog}
-                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                        formatTime={queue.formatTimestamp}
-                        scrollResetKey={queue.scrollResetKey}
-                        highlightedIds={queue.highlightedIds}
-                        isFilterActive={queue.isFilterActive}
-                        activeFiltersDescription={queue.activeFiltersDescription}
-                    />
-                ) : (
-                    /* Activity Logs View */
-                    <div className="relative flex flex-col flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
-                        {/* Activity Tabs */}
-                        <div className="flex items-center border-b bg-muted/30">
+                    <TabsContent value="queues" className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col mt-0 data-[state=inactive]:hidden">
+                        <div className="flex items-center border-b bg-muted/20">
                             {[
-                                { id: 'logs' as const, icon: FileText, label: 'All Logs' },
+                                { id: 'main' as const, icon: Inbox, label: 'Main', count: queue.statusData?.mainQueue?.length || 0 },
+                                { id: 'processing' as const, icon: Pickaxe, label: 'Processing', count: queue.statusData?.processingQueue?.length || 0 },
+                                { id: 'dead' as const, icon: XCircle, label: 'Dead Letter', count: queue.statusData?.deadLetterQueue?.length || 0, badgeVariant: 'destructive' as const },
+                                { id: 'acknowledged' as const, icon: Check, label: 'Acknowledged', count: queue.statusData?.acknowledgedQueue?.length || 0, badgeVariant: 'success' as const },
+                                { id: 'archived' as const, icon: Archive, label: 'Archived', count: queue.statusData?.archivedQueue?.length || 0 },
+                            ].map((tab) => {
+                                const Icon = tab.icon
+                                const isActive = queue.activeTab === tab.id
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => queue.navigateToTab(tab.id)}
+                                        className={cn(
+                                            "flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative",
+                                            "hover:text-foreground hover:bg-muted/50",
+                                            isActive
+                                                ? "text-foreground"
+                                                : "text-muted-foreground"
+                                        )}
+                                    >
+                                        <Icon className={cn(
+                                            "h-3.5 w-3.5",
+                                            tab.badgeVariant === 'success' && tab.count > 0 && "text-green-500",
+                                            tab.badgeVariant === 'destructive' && tab.count > 0 && "text-destructive"
+                                        )} />
+                                        {tab.label}
+                                        <span className={cn(
+                                            "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
+                                            tab.badgeVariant === 'success' && tab.count > 0
+                                                ? "bg-green-500/10 text-green-500"
+                                                : tab.badgeVariant === 'destructive' && tab.count > 0
+                                                    ? "bg-destructive/10 text-destructive"
+                                                    : "bg-muted text-muted-foreground"
+                                        )}>
+                                            {tab.count.toLocaleString()}
+                                        </span>
+                                        {isActive && (
+                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary/50" />
+                                        )}
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        {/* Queue Table Content */}
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                            {queue.activeTab === 'main' && (
+                                <MainQueueTable
+                                    messages={queue.effectiveMessagesData?.messages || []}
+                                    config={queue.config}
+                                    onDelete={queue.handleTableDelete}
+                                    onEdit={queue.openEditDialog}
+                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                    formatTime={queue.formatTimestamp}
+                                    pageSize={queue.pageSize}
+                                    setPageSize={queue.setPageSize}
+                                    selectedIds={queue.selectedIds}
+                                    onToggleSelect={queue.handleToggleSelect}
+                                    onToggleSelectAll={queue.handleSelectAll}
+                                    currentPage={queue.currentPage}
+                                    setCurrentPage={queue.setCurrentPage}
+                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                    sortBy={queue.sortBy}
+                                    sortOrder={queue.sortOrder}
+                                    onSort={queue.handleSort}
+                                    scrollResetKey={queue.scrollResetKey}
+                                    highlightedIds={queue.highlightedIds}
+                                    isFilterActive={queue.isFilterActive}
+                                    activeFiltersDescription={queue.activeFiltersDescription}
+                                    isLoading={queue.showMessagesLoading}
+                                />
+                            )}
+                            {queue.activeTab === 'processing' && (
+                                <ProcessingQueueTable
+                                    messages={queue.effectiveMessagesData?.messages || []}
+                                    config={queue.config}
+                                    onDelete={queue.handleTableDelete}
+                                    onEdit={queue.openEditDialog}
+                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                    formatTime={queue.formatTimestamp}
+                                    pageSize={queue.pageSize}
+                                    setPageSize={queue.setPageSize}
+                                    selectedIds={queue.selectedIds}
+                                    onToggleSelect={queue.handleToggleSelect}
+                                    onToggleSelectAll={queue.handleSelectAll}
+                                    currentPage={queue.currentPage}
+                                    setCurrentPage={queue.setCurrentPage}
+                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                    sortBy={queue.sortBy}
+                                    sortOrder={queue.sortOrder}
+                                    onSort={queue.handleSort}
+                                    scrollResetKey={queue.scrollResetKey}
+                                    highlightedIds={queue.highlightedIds}
+                                    isFilterActive={queue.isFilterActive}
+                                    activeFiltersDescription={queue.activeFiltersDescription}
+                                    isLoading={queue.showMessagesLoading}
+                                />
+                            )}
+                            {queue.activeTab === 'dead' && (
+                                <DeadLetterTable
+                                    messages={queue.effectiveMessagesData?.messages || []}
+                                    config={queue.config}
+                                    onDelete={queue.handleTableDelete}
+                                    onEdit={queue.openEditDialog}
+                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                    formatTime={queue.formatTimestamp}
+                                    pageSize={queue.pageSize}
+                                    setPageSize={queue.setPageSize}
+                                    selectedIds={queue.selectedIds}
+                                    onToggleSelect={queue.handleToggleSelect}
+                                    onToggleSelectAll={queue.handleSelectAll}
+                                    currentPage={queue.currentPage}
+                                    setCurrentPage={queue.setCurrentPage}
+                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                    sortBy={queue.sortBy}
+                                    sortOrder={queue.sortOrder}
+                                    onSort={queue.handleSort}
+                                    scrollResetKey={queue.scrollResetKey}
+                                    highlightedIds={queue.highlightedIds}
+                                    isFilterActive={queue.isFilterActive}
+                                    activeFiltersDescription={queue.activeFiltersDescription}
+                                    isLoading={queue.showMessagesLoading}
+                                />
+                            )}
+                            {queue.activeTab === 'acknowledged' && (
+                                <AcknowledgedQueueTable
+                                    messages={queue.effectiveMessagesData?.messages || []}
+                                    config={queue.config}
+                                    onDelete={queue.handleTableDelete}
+                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                    formatTime={queue.formatTimestamp}
+                                    pageSize={queue.pageSize}
+                                    setPageSize={queue.setPageSize}
+                                    selectedIds={queue.selectedIds}
+                                    onToggleSelect={queue.handleToggleSelect}
+                                    onToggleSelectAll={queue.handleSelectAll}
+                                    currentPage={queue.currentPage}
+                                    setCurrentPage={queue.setCurrentPage}
+                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                    sortBy={queue.sortBy}
+                                    sortOrder={queue.sortOrder}
+                                    onSort={queue.handleSort}
+                                    scrollResetKey={queue.scrollResetKey}
+                                    highlightedIds={queue.highlightedIds}
+                                    isFilterActive={queue.isFilterActive}
+                                    activeFiltersDescription={queue.activeFiltersDescription}
+                                    isLoading={queue.showMessagesLoading}
+                                />
+                            )}
+                            {queue.activeTab === 'archived' && (
+                                <ArchivedQueueTable
+                                    messages={queue.effectiveMessagesData?.messages || []}
+                                    config={queue.config}
+                                    onDelete={queue.handleTableDelete}
+                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                    formatTime={queue.formatTimestamp}
+                                    pageSize={queue.pageSize}
+                                    setPageSize={queue.setPageSize}
+                                    selectedIds={queue.selectedIds}
+                                    onToggleSelect={queue.handleToggleSelect}
+                                    onToggleSelectAll={queue.handleSelectAll}
+                                    currentPage={queue.currentPage}
+                                    setCurrentPage={queue.setCurrentPage}
+                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                    sortBy={queue.sortBy}
+                                    sortOrder={queue.sortOrder}
+                                    onSort={queue.handleSort}
+                                    scrollResetKey={queue.scrollResetKey}
+                                    highlightedIds={queue.highlightedIds}
+                                    isFilterActive={queue.isFilterActive}
+                                    activeFiltersDescription={queue.activeFiltersDescription}
+                                    isLoading={queue.showMessagesLoading}
+                                />
+                            )}
+                        </div>
+                    </TabsContent >
+
+                    <TabsContent value="activity" className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col mt-0 data-[state=inactive]:hidden">
+                        {/* Activity Sub-tabs */}
+                        <div className="flex items-center border-b bg-muted/20">
+                            {[
+                                { id: 'activity' as const, icon: FileText, label: 'All Logs' },
                                 { id: 'anomalies' as const, icon: AlertCircle, label: 'Anomalies', count: anomalies?.summary.total },
-                                { id: 'history' as const, icon: History, label: 'Message History' },
                                 { id: 'consumers' as const, icon: User, label: 'Consumers' },
                             ].map((tab) => {
                                 const Icon = tab.icon
@@ -628,17 +974,17 @@ export default function Dashboard() {
                                 return (
                                     <button
                                         key={tab.id}
-                                        onClick={() => setActivityTab(tab.id)}
+                                        onClick={() => navigateToActivityTab(tab.id)}
                                         className={cn(
-                                            "flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors relative",
+                                            "flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative",
                                             "hover:text-foreground hover:bg-muted/50",
-                                            isActive 
-                                                ? "text-foreground bg-background" 
+                                            isActive
+                                                ? "text-foreground"
                                                 : "text-muted-foreground"
                                         )}
                                     >
                                         <Icon className={cn(
-                                            "h-4 w-4",
+                                            "h-3.5 w-3.5",
                                             tab.id === 'anomalies' && anomalies && anomalies.summary.by_severity.critical > 0 && "text-destructive"
                                         )} />
                                         {tab.label}
@@ -653,7 +999,7 @@ export default function Dashboard() {
                                             </span>
                                         )}
                                         {isActive && (
-                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary/50" />
                                         )}
                                     </button>
                                 )
@@ -661,19 +1007,23 @@ export default function Dashboard() {
                         </div>
 
                         {/* Activity Content */}
-                        <div className="flex-1 min-h-0 overflow-hidden">
-                            {activityTab === 'logs' && (
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                            {activityTab === 'activity' && (
                                 <ActivityLogsTable
-                                    logs={activityLogs}
+                                    logs={activityLogs?.logs ?? []}
                                     loading={loadingActivity}
-                                    filter={activityFilter}
-                                    setFilter={setActivityFilter}
-                                    onRefresh={fetchActivityLogs}
                                     formatTime={queue.formatTimestamp}
+                                    pageSize={String(activityFilter.limit)}
+                                    setPageSize={(size) => setActivityFilter(prev => ({ ...prev, limit: Number(size), offset: 0 }))}
+                                    currentPage={Math.floor(activityFilter.offset / activityFilter.limit) + 1}
+                                    setCurrentPage={(page) => setActivityFilter(prev => ({ ...prev, offset: (page - 1) * prev.limit }))}
+                                    totalPages={activityLogs ? Math.ceil(activityLogs.pagination.total / activityFilter.limit) : 0}
+                                    totalItems={activityLogs?.pagination.total ?? 0}
+                                    isFilterActive={activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null}
                                     onViewMessageHistory={(msgId) => {
                                         setMessageIdSearch(msgId)
                                         fetchMessageHistory(msgId)
-                                        setActivityTab('history')
+                                        setHistoryDialog({ isOpen: true, messageId: msgId })
                                     }}
                                 />
                             )}
@@ -687,16 +1037,6 @@ export default function Dashboard() {
                                     formatTime={queue.formatTimestamp}
                                 />
                             )}
-                            {activityTab === 'history' && (
-                                <MessageHistoryTable
-                                    history={messageHistory}
-                                    loading={loadingHistory}
-                                    messageId={messageIdSearch}
-                                    setMessageId={setMessageIdSearch}
-                                    onSearch={fetchMessageHistory}
-                                    formatTime={queue.formatTimestamp}
-                                />
-                            )}
                             {activityTab === 'consumers' && (
                                 <ConsumerStatsTable
                                     stats={consumerStats}
@@ -706,9 +1046,9 @@ export default function Dashboard() {
                                 />
                             )}
                         </div>
-                    </div>
-                )}
-            </div>
+                    </TabsContent>
+                </Tabs >
+            </div >
 
             {/* API Key Configuration Dialog */}
             <Dialog open={showApiKeyInput} onOpenChange={setShowApiKeyInput}>
@@ -716,7 +1056,7 @@ export default function Dashboard() {
                     <DialogHeader>
                         <DialogTitle>API Key Configuration</DialogTitle>
                         <DialogDescription>
-                            Enter your API key to authenticate with the queue API. 
+                            Enter your API key to authenticate with the queue API.
                             This key is stored locally in your browser.
                         </DialogDescription>
                     </DialogHeader>
@@ -745,7 +1085,7 @@ export default function Dashboard() {
                         }}>Save</Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog>
+            </Dialog >
 
             {/* Confirmation Dialog */}
             <Dialog open={queue.confirmDialog.isOpen} onOpenChange={(open: boolean) => queue.setConfirmDialog(prev => ({ ...prev, isOpen: open }))}>
@@ -764,7 +1104,7 @@ export default function Dashboard() {
                         }}>Confirm</Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog>
+            </Dialog >
 
             <CreateMessageDialog
                 isOpen={createDialog}
@@ -805,6 +1145,24 @@ export default function Dashboard() {
                 currentQueue={queue.activeTab}
             />
 
+            <Dialog open={historyDialog.isOpen} onOpenChange={(open) => setHistoryDialog(prev => ({ ...prev, isOpen: open }))}>
+                <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Message History from {historyDialog.messageId}</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col -mx-6 px-6">
+                        <MessageHistoryTable
+                            history={messageHistory}
+                            loading={loadingHistory}
+                            messageId={messageIdSearch}
+                            setMessageId={setMessageIdSearch}
+                            onSearch={fetchMessageHistory}
+                            formatTime={queue.formatTimestamp}
+                        />
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             <input
                 type="file"
                 ref={queue.fileInputRef}
@@ -812,6 +1170,6 @@ export default function Dashboard() {
                 accept=".json"
                 onChange={queue.handleImport}
             />
-        </div>
+        </div >
     )
 }

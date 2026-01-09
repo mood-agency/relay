@@ -243,6 +243,7 @@ export interface ActivityLogEntry {
   batch_size: number | null;
   prev_action: string | null;
   prev_timestamp: number | null;
+  payload: any;
   anomaly: Anomaly | null;
 }
 

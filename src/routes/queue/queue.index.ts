@@ -27,6 +27,7 @@ const router = createRouter()
   .openapi(routes.exportMessages, handlers.exportMessages)
   .openapi(routes.importMessages, handlers.importMessages)
   .openapi(routes.moveMessages, handlers.moveMessages)
+  .openapi(routes.clearActivityLogs, handlers.clearActivityLogs)
   .openapi(routes.clearQueue, handlers.clearQueue)
   .openapi(routes.clearAllQueues, handlers.clearAllQueues)
   .openapi(routes.getConfig, handlers.getConfig)
@@ -34,6 +35,7 @@ const router = createRouter()
   // Activity Log Routes
   .openapi(routes.getActivityLogs, handlers.getActivityLogs)
   .openapi(routes.getMessageHistory, handlers.getMessageHistory)
+  .openapi(routes.getAnomalies, handlers.getAnomalies)
   .openapi(routes.getAnomalies, handlers.getAnomalies)
   .openapi(routes.getConsumerStats, handlers.getConsumerStats);
 

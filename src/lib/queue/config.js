@@ -47,7 +47,7 @@ export class QueueConfig {
     
     // Stream-specific configuration
     this.consumer_group_name = config.consumer_group_name || "queue_group";
-    this.consumer_name = config.consumer_name || `relay-${generateId()}`;
+    this.consumer_name = config.consumer_name || `relay`;
 
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);

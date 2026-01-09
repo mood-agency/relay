@@ -1,6 +1,5 @@
 import React from "react"
 import {
-    Loader2,
     Inbox,
     Pickaxe,
     XCircle,
@@ -8,7 +7,10 @@ import {
     Archive
 } from "lucide-react"
 
-import { cn } from "@/lib/utils"
+import {
+    TabbedTableContainer,
+    type TabTableConfig
+} from "@/components/ui/tabbed-table"
 
 import {
     type Message,
@@ -112,197 +114,102 @@ export function QueueView({
     isFilterActive,
     activeFiltersDescription
 }: QueueViewProps) {
-    const tabs = [
-        { id: 'main' as const, icon: Inbox, count: queueCounts.main },
-        { id: 'processing' as const, icon: Pickaxe, count: queueCounts.processing },
-        { id: 'dead' as const, icon: XCircle, count: queueCounts.dead, variant: 'destructive' as const },
-        { id: 'acknowledged' as const, icon: Check, count: queueCounts.acknowledged, variant: 'success' as const },
-        { id: 'archived' as const, icon: Archive, count: queueCounts.archived },
+    // Common table props shared across all tables
+    const commonTableProps = {
+        messages,
+        config,
+        onDelete,
+        onViewPayload,
+        formatTime,
+        pageSize,
+        setPageSize,
+        selectedIds,
+        onToggleSelect,
+        onToggleSelectAll,
+        currentPage,
+        setCurrentPage,
+        totalPages,
+        totalItems,
+        sortBy,
+        sortOrder,
+        onSort,
+        scrollResetKey,
+        highlightedIds,
+        isFilterActive,
+        activeFiltersDescription,
+        isLoading
+    }
+
+    // Define tabs with their configurations
+    const tabs: TabTableConfig[] = [
+        {
+            id: 'main',
+            label: QUEUE_TAB_NAMES.main,
+            icon: Inbox,
+            count: queueCounts.main,
+            render: () => (
+                <MainQueueTable
+                    {...commonTableProps}
+                    onEdit={onEdit}
+                />
+            )
+        },
+        {
+            id: 'processing',
+            label: QUEUE_TAB_NAMES.processing,
+            icon: Pickaxe,
+            count: queueCounts.processing,
+            render: () => (
+                <ProcessingQueueTable
+                    {...commonTableProps}
+                    onEdit={onEdit}
+                />
+            )
+        },
+        {
+            id: 'dead',
+            label: QUEUE_TAB_NAMES.dead,
+            icon: XCircle,
+            count: queueCounts.dead,
+            badgeVariant: 'destructive',
+            render: () => (
+                <DeadLetterTable
+                    {...commonTableProps}
+                    onEdit={onEdit}
+                />
+            )
+        },
+        {
+            id: 'acknowledged',
+            label: QUEUE_TAB_NAMES.acknowledged,
+            icon: Check,
+            count: queueCounts.acknowledged,
+            badgeVariant: 'success',
+            render: () => (
+                <AcknowledgedQueueTable
+                    {...commonTableProps}
+                />
+            )
+        },
+        {
+            id: 'archived',
+            label: QUEUE_TAB_NAMES.archived,
+            icon: Archive,
+            count: queueCounts.archived,
+            render: () => (
+                <ArchivedQueueTable
+                    {...commonTableProps}
+                />
+            )
+        }
     ]
 
     return (
-        <div className="relative flex flex-col flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden">
-            {/* Queue Tabs */}
-            <div className="flex items-center border-b bg-muted/30">
-                {tabs.map((tab) => {
-                    const Icon = tab.icon
-                    const isActive = activeTab === tab.id
-                    return (
-                        <button
-                            key={tab.id}
-                            onClick={() => onNavigateToTab(tab.id)}
-                            className={cn(
-                                "flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors relative",
-                                "hover:text-foreground hover:bg-muted/50",
-                                isActive 
-                                    ? "text-foreground bg-background" 
-                                    : "text-muted-foreground"
-                            )}
-                        >
-                            <Icon className={cn(
-                                "h-4 w-4",
-                                tab.variant === 'success' && tab.count && tab.count > 0 && "text-green-500"
-                            )} />
-                            {QUEUE_TAB_NAMES[tab.id]}
-                            {typeof tab.count === 'number' && (
-                                <span className={cn(
-                                    "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
-                                    tab.variant === 'success' && tab.count > 0
-                                        ? "bg-green-500/10 text-green-500"
-                                        : "bg-muted text-muted-foreground"
-                                )}>
-                                    {tab.count.toLocaleString()}
-                                </span>
-                            )}
-                            {isActive && (
-                                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                            )}
-                        </button>
-                    )
-                })}
-            </div>
-
-            {/* Loading Overlay */}
-            {isLoading && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
-            )}
-
-            {/* Table Content */}
-            {activeTab === 'main' && (
-                <MainQueueTable
-                    messages={messages}
-                    config={config}
-                    onDelete={onDelete}
-                    onEdit={onEdit}
-                    onViewPayload={onViewPayload}
-                    formatTime={formatTime}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    selectedIds={selectedIds}
-                    onToggleSelect={onToggleSelect}
-                    onToggleSelectAll={onToggleSelectAll}
-                    currentPage={currentPage}
-                    setCurrentPage={setCurrentPage}
-                    totalPages={totalPages}
-                    totalItems={totalItems}
-                    sortBy={sortBy}
-                    sortOrder={sortOrder}
-                    onSort={onSort}
-                    scrollResetKey={scrollResetKey}
-                    highlightedIds={highlightedIds}
-                    isFilterActive={isFilterActive}
-                    activeFiltersDescription={activeFiltersDescription}
-                    isLoading={isLoading}
-                />
-            )}
-            {activeTab === 'processing' && (
-                <ProcessingQueueTable
-                    messages={messages}
-                    config={config}
-                    onDelete={onDelete}
-                    onEdit={onEdit}
-                    onViewPayload={onViewPayload}
-                    formatTime={formatTime}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    selectedIds={selectedIds}
-                    onToggleSelect={onToggleSelect}
-                    onToggleSelectAll={onToggleSelectAll}
-                    currentPage={currentPage}
-                    setCurrentPage={setCurrentPage}
-                    totalPages={totalPages}
-                    totalItems={totalItems}
-                    sortBy={sortBy}
-                    sortOrder={sortOrder}
-                    onSort={onSort}
-                    scrollResetKey={scrollResetKey}
-                    highlightedIds={highlightedIds}
-                    isFilterActive={isFilterActive}
-                    activeFiltersDescription={activeFiltersDescription}
-                    isLoading={isLoading}
-                />
-            )}
-            {activeTab === 'acknowledged' && (
-                <AcknowledgedQueueTable
-                    messages={messages}
-                    config={config}
-                    onDelete={onDelete}
-                    onViewPayload={onViewPayload}
-                    formatTime={formatTime}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    selectedIds={selectedIds}
-                    onToggleSelect={onToggleSelect}
-                    onToggleSelectAll={onToggleSelectAll}
-                    currentPage={currentPage}
-                    setCurrentPage={setCurrentPage}
-                    totalPages={totalPages}
-                    totalItems={totalItems}
-                    sortBy={sortBy}
-                    sortOrder={sortOrder}
-                    onSort={onSort}
-                    scrollResetKey={scrollResetKey}
-                    highlightedIds={highlightedIds}
-                    isFilterActive={isFilterActive}
-                    activeFiltersDescription={activeFiltersDescription}
-                    isLoading={isLoading}
-                />
-            )}
-            {activeTab === 'archived' && (
-                <ArchivedQueueTable
-                    messages={messages}
-                    config={config}
-                    onDelete={onDelete}
-                    onViewPayload={onViewPayload}
-                    formatTime={formatTime}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    selectedIds={selectedIds}
-                    onToggleSelect={onToggleSelect}
-                    onToggleSelectAll={onToggleSelectAll}
-                    currentPage={currentPage}
-                    setCurrentPage={setCurrentPage}
-                    totalPages={totalPages}
-                    totalItems={totalItems}
-                    sortBy={sortBy}
-                    sortOrder={sortOrder}
-                    onSort={onSort}
-                    scrollResetKey={scrollResetKey}
-                    highlightedIds={highlightedIds}
-                    isFilterActive={isFilterActive}
-                    activeFiltersDescription={activeFiltersDescription}
-                    isLoading={isLoading}
-                />
-            )}
-            {activeTab === 'dead' && (
-                <DeadLetterTable
-                    messages={messages}
-                    config={config}
-                    onDelete={onDelete}
-                    onEdit={onEdit}
-                    onViewPayload={onViewPayload}
-                    formatTime={formatTime}
-                    pageSize={pageSize}
-                    setPageSize={setPageSize}
-                    selectedIds={selectedIds}
-                    onToggleSelect={onToggleSelect}
-                    onToggleSelectAll={onToggleSelectAll}
-                    currentPage={currentPage}
-                    setCurrentPage={setCurrentPage}
-                    totalPages={totalPages}
-                    totalItems={totalItems}
-                    sortBy={sortBy}
-                    sortOrder={sortOrder}
-                    onSort={onSort}
-                    scrollResetKey={scrollResetKey}
-                    highlightedIds={highlightedIds}
-                    isFilterActive={isFilterActive}
-                    activeFiltersDescription={activeFiltersDescription}
-                    isLoading={isLoading}
-                />
-            )}
-        </div>
+        <TabbedTableContainer
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={(tabId) => onNavigateToTab(tabId as QueueTab)}
+            isLoading={isLoading}
+        />
     )
 }

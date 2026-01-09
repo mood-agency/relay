@@ -139,7 +139,7 @@ return nil
       };
 
       let readResult = await findAndMoveByType();
-      
+
       let sleepMs = baseSleepMs;
       while (!readResult && Date.now() < deadlineMs) {
         await new Promise((resolve) => setTimeout(resolve, sleepMs));
@@ -282,7 +282,7 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
     metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
   } else {
     metadata = new MessageMetadata(
-      0,
+      messageData.attempt_count || 0,
       null,
       messageData.created_at || currentTime
     );
@@ -291,10 +291,10 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
   metadata.dequeued_at = currentTime;
   metadata.attempt_count += 1;
   metadata.consumer_id = consumerId || null;
-  
+
   // Generate a unique lock_token for this dequeue (fencing token for split-brain prevention)
   metadata.lock_token = generateId();
-  
+
   if (ackTimeout) {
     metadata.custom_ack_timeout = ackTimeout;
   } else if (messageData.custom_ack_timeout) {
@@ -322,7 +322,7 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
       signature: messageData.signature,
     }
   };
-  
+
   await this.redisManager.redis.hset(
     this.config.metadata_hash_name,
     metadataKey,
@@ -339,12 +339,12 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
         .hdel(locKey, messageId)
         .exec();
     }
-  } catch {}
+  } catch { }
 
   if (this._stats && typeof this._stats.dequeued === 'number') {
     this._stats.dequeued++;
   }
-  
+
   logger.info(
     `Message dequeued: ${messageId} (attempt: ${metadata.attempt_count}, lock: ${metadata.lock_token}) from ${streamName}`
   );
@@ -362,6 +362,8 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
   // Log activity
   await this.logActivity("dequeue", messageData, {
     queue: "processing",
+    source_queue: streamName,
+    dest_queue: "processing",
     consumer_id: metadata.consumer_id,
     lock_token: metadata.lock_token,
     attempt_count: metadata.attempt_count,
@@ -370,7 +372,7 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
     payload_size_bytes: payloadSizeBytes,
     triggered_by: "consumer",
   });
-  
+
   // Return message with updated metadata
   return {
     ...messageData,
@@ -407,7 +409,7 @@ export async function acknowledgeMessage(ackPayload) {
         this.config.metadata_hash_name,
         messageId
       );
-      
+
       if (metadataJson) {
         const metadata = JSON.parse(metadataJson);
         if (metadata.lock_token !== ackPayload.lock_token) {
@@ -421,7 +423,7 @@ export async function acknowledgeMessage(ackPayload) {
 
     // Fetch the full message data - try metadata first, then stream as fallback
     let fullMessageData = { ...ackPayload };
-    
+
     // If the payload is missing type or payload, try to recover it
     if (!ackPayload.type || !ackPayload.payload) {
       // First, try to get from metadata (stored during dequeue)
@@ -430,7 +432,7 @@ export async function acknowledgeMessage(ackPayload) {
           this.config.metadata_hash_name,
           messageId
         );
-        
+
         if (metadataJson) {
           const metadata = JSON.parse(metadataJson);
           if (metadata._original_message) {
@@ -445,7 +447,7 @@ export async function acknowledgeMessage(ackPayload) {
       } catch (metaError) {
         logger.warn(`Could not fetch message from metadata for ${messageId}: ${metaError.message}`);
       }
-      
+
       // If still missing, try XRANGE as fallback
       if (!fullMessageData.type || !fullMessageData.payload) {
         try {
@@ -492,7 +494,7 @@ export async function acknowledgeMessage(ackPayload) {
       // Clean up internal fields before archiving
       delete ackMsgData._stream_id;
       delete ackMsgData._stream_name;
-      
+
       const ackMsgJson = this._serializeMessage(ackMsgData);
       pipeline.xadd(this.config.acknowledged_queue_name, "*", "data", ackMsgJson);
       pipeline.xtrim(this.config.acknowledged_queue_name, "MAXLEN", "~", this.config.max_acknowledged_history);
@@ -507,12 +509,12 @@ export async function acknowledgeMessage(ackPayload) {
     pipeline.hdel(this.config.metadata_hash_name, `${messageId}:original_json_string`);
 
     const results = await pipeline.exec();
-    
+
     // Check XACK result (first command)
     const xackResult = results[0];
     if (xackResult[0]) {
-       logger.error(`Error in XACK for ${messageId}: ${xackResult[0]}`);
-       return false;
+      logger.error(`Error in XACK for ${messageId}: ${xackResult[0]}`);
+      return false;
     }
 
     if (this._stats && typeof this._stats.acknowledged === 'number') {
@@ -529,6 +531,8 @@ export async function acknowledgeMessage(ackPayload) {
     // Log activity
     await this.logActivity("ack", fullMessageData, {
       queue: "acknowledged",
+      source_queue: "processing",
+      dest_queue: "acknowledged",
       consumer_id: ackPayload.consumer_id || null,
       lock_token: ackPayload.lock_token,
       attempt_count: ackPayload.attempt_count,
@@ -624,7 +628,7 @@ export async function requeueFailedMessages() {
               if (metadataJsons[index]) {
                 try {
                   metadataMap.set(msgId, JSON.parse(metadataJsons[index]));
-                } catch {}
+                } catch { }
               }
             });
           }
@@ -660,7 +664,7 @@ export async function requeueFailedMessages() {
             }
           } else {
             metadata = {
-              attempt_count: 0,
+              attempt_count: messageData.attempt_count || 0,
               created_at: messageData.created_at,
               custom_max_attempts: messageData.custom_max_attempts,
             };
@@ -718,11 +722,12 @@ export async function requeueFailedMessages() {
             pipelineCmdIndex++;
             processingPipeline.hdel(this.config.metadata_hash_name, messageData.id);
             pipelineCmdIndex++;
-            
+
             movedToDlqCount++;
             operationsInPipeline++;
 
             // Log activity for timeout -> DLQ
+            logger.info(`Message ${messageData.id} timed out and reached max attempts. Moving to DLQ.`);
             await this.logActivity("dlq", messageData, {
               queue: "dead",
               source_queue: "processing",
@@ -736,7 +741,7 @@ export async function requeueFailedMessages() {
             });
           } else {
             const messageJson = this._serializeMessage(messageData);
-            
+
             const xaddCmdIndex = pipelineCmdIndex;
             processingPipeline.xadd(queueName, "*", "data", messageJson);
             pipelineCmdIndex++;
@@ -745,11 +750,12 @@ export async function requeueFailedMessages() {
             pipelineCmdIndex++;
             processingPipeline.xdel(queueName, msgId);
             pipelineCmdIndex++;
-            
+
             requeuedCount++;
             operationsInPipeline++;
 
             // Log activity for timeout -> requeue
+            logger.info(`Message ${messageData.id} timed out in ${queueName}. Requeueing to main.`);
             await this.logActivity("timeout", messageData, {
               queue: "processing",
               consumer_id: metadata.consumer_id || null,
@@ -763,6 +769,7 @@ export async function requeueFailedMessages() {
             await this.logActivity("requeue", messageData, {
               queue: "main",
               source_queue: "processing",
+              dest_queue: "main",
               consumer_id: metadata.consumer_id || null,
               attempt_count: metadata.attempt_count,
               max_attempts: effectiveMaxAttempts,
@@ -770,31 +777,39 @@ export async function requeueFailedMessages() {
             });
           }
         }
-        
+
+        if (requeuedCount > 0 || movedToDlqCount > 0) {
+          await this.publishEvent("requeue", {
+            count: requeuedCount,
+            dlq_count: movedToDlqCount,
+            triggered_by: "scheduler"
+          });
+        }
+
         if (operationsInPipeline > 0) {
-           const execResults = await processingPipeline.exec();
-           if (execResults && requeueIndexEntries.length > 0) {
-             const typesKey = this._getTypeIndexTypesKey();
-             const locKey = this._getMessageLocationHashKey();
-             const indexPipeline = redis.pipeline();
-             let hasIndexOps = false;
+          const execResults = await processingPipeline.exec();
+          if (execResults && requeueIndexEntries.length > 0) {
+            const typesKey = this._getTypeIndexTypesKey();
+            const locKey = this._getMessageLocationHashKey();
+            const indexPipeline = redis.pipeline();
+            let hasIndexOps = false;
 
-             for (const entry of requeueIndexEntries) {
-               const streamId = execResults[entry.xaddCmdIndex]?.[1];
-               const msg = entry.messageData;
-               if (!streamId || !msg?.id || !msg?.type) continue;
-               const indexKey = this._getTypeIndexKey(msg.type);
-               const score = Math.floor((msg.created_at || Date.now() / 1000) * 1000);
-               indexPipeline.sadd(typesKey, msg.type);
-               indexPipeline.zadd(indexKey, score, msg.id);
-               indexPipeline.hset(locKey, msg.id, `${entry.queueName}|${streamId}`);
-               hasIndexOps = true;
-             }
+            for (const entry of requeueIndexEntries) {
+              const streamId = execResults[entry.xaddCmdIndex]?.[1];
+              const msg = entry.messageData;
+              if (!streamId || !msg?.id || !msg?.type) continue;
+              const indexKey = this._getTypeIndexKey(msg.type);
+              const score = Math.floor((msg.created_at || Date.now() / 1000) * 1000);
+              indexPipeline.sadd(typesKey, msg.type);
+              indexPipeline.zadd(indexKey, score, msg.id);
+              indexPipeline.hset(locKey, msg.id, `${entry.queueName}|${streamId}`);
+              hasIndexOps = true;
+            }
 
-             if (hasIndexOps) {
-               await indexPipeline.exec();
-             }
-           }
+            if (hasIndexOps) {
+              await indexPipeline.exec();
+            }
+          }
         }
       } catch (e) {
         logger.error(`Error processing pending messages for ${queueName}: ${e}`);
@@ -817,7 +832,7 @@ export async function requeueFailedMessages() {
         lockKey,
         lockToken
       );
-    } catch {}
+    } catch { }
   }
 }
 
@@ -852,7 +867,7 @@ export async function nackMessage(messageId, errorReason) {
     metadata = MessageMetadata.fromObject(JSON.parse(existingMetadataJson));
   } else {
     // Fallback if metadata missing
-    metadata = new MessageMetadata(0, null, foundMsg.created_at);
+    metadata = new MessageMetadata(foundMsg.attempt_count || 0, null, foundMsg.created_at);
   }
 
   // Check constraints
@@ -944,6 +959,7 @@ export async function nackMessage(messageId, errorReason) {
     await this.logActivity("nack", foundMsg, {
       queue: "main",
       source_queue: "processing",
+      dest_queue: "main",
       consumer_id: metadata.consumer_id || null,
       attempt_count: metadata.attempt_count,
       max_attempts: maxAttempts,

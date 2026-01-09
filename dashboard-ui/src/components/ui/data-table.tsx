@@ -160,7 +160,7 @@ export function PaginationFooter({
     totalPages,
     setCurrentPage,
     totalItems,
-    pageSizeOptions = [25, 50, 100, 250, 500, 1000]
+    pageSizeOptions = [100, 250, 500, 1000]
 }: {
     pageSize: string
     setPageSize: (size: string) => void
@@ -235,19 +235,21 @@ export function PaginationFooter({
     )
 }
 
+export interface EmptyStateProps {
+    icon?: React.ComponentType<{ className?: string }>
+    title?: string
+    description?: string
+    isFilterActive?: boolean
+    activeFiltersDescription?: string
+}
+
 export function EmptyState({
     icon: Icon = Inbox,
     title = "No items found",
     description,
     isFilterActive,
     activeFiltersDescription
-}: {
-    icon?: React.ComponentType<{ className?: string }>
-    title?: string
-    description?: string
-    isFilterActive?: boolean
-    activeFiltersDescription?: string
-}) {
+}: EmptyStateProps) {
     return (
         <div className="flex flex-col items-center justify-center py-20 px-4 text-center animate-in fade-in zoom-in duration-300">
             <div className="bg-muted/30 p-6 rounded-full mb-6 ring-8 ring-muted/10">
@@ -334,16 +336,21 @@ export function useVirtualization<T>({
 
         const viewportPx = Math.max(viewportHeight, 320)
         const total = items.length
+        const totalHeight = total * rowHeight
 
         const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan)
         const endIndex = Math.min(total, Math.ceil((scrollTop + viewportPx) / rowHeight) + overscan)
 
+        const topSpacerHeight = startIndex * rowHeight
+        const bottomSpacerHeight = Math.max(0, (total - endIndex) * rowHeight)
+
         return {
             rowHeight,
+            totalHeight,
             startIndex,
             endIndex,
-            topSpacerHeight: startIndex * rowHeight,
-            bottomSpacerHeight: (total - endIndex) * rowHeight,
+            topSpacerHeight,
+            bottomSpacerHeight,
             visibleItems: items.slice(startIndex, endIndex),
         }
     }, [items, scrollTop, enabled, viewportHeight, rowHeight, overscan])
@@ -463,17 +470,13 @@ export function DataTable<T extends Record<string, any>>({
                             )
                         ) : shouldVirtualize && virtual ? (
                             <>
-                                {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.topSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                                 {virtual.visibleItems.map((item, index) => renderRow(item, virtual.startIndex + index))}
-                                {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
-                                    </TableRow>
-                                )}
+                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                    <TableCell colSpan={colSpan} className="p-0" />
+                                </TableRow>
                             </>
                         ) : (
                             data.map((item, index) => renderRow(item, index))

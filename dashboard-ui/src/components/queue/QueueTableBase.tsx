@@ -137,12 +137,12 @@ export const PayloadCell = React.memo(({ payload }: { payload: any }) => {
     )
 })
 
-export const ActionsCell = React.memo(({ 
-    msg, 
-    onEdit 
-}: { 
-    msg: Message, 
-    onEdit?: (message: Message) => void 
+export const ActionsCell = React.memo(({
+    msg,
+    onEdit
+}: {
+    msg: Message,
+    onEdit?: (message: Message) => void
 }) => (
     <TableCell className="text-right pr-6">
         <div className="flex justify-end gap-1">
@@ -165,14 +165,14 @@ export const ActionsCell = React.memo(({
     </TableCell>
 ))
 
-export const SelectCell = React.memo(({ 
-    id, 
-    isSelected, 
-    onToggleSelect 
-}: { 
-    id: string, 
-    isSelected: boolean, 
-    onToggleSelect: (id: string, shiftKey?: boolean) => void 
+export const SelectCell = React.memo(({
+    id,
+    isSelected,
+    onToggleSelect
+}: {
+    id: string,
+    isSelected: boolean,
+    onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
     <TableCell>
         <input
@@ -187,11 +187,32 @@ export const SelectCell = React.memo(({
     </TableCell>
 ))
 
-export const IdCell = React.memo(({ id }: { id: string }) => (
+export const IdCell = React.memo(({
+    id,
+    msg,
+    onEdit
+}: {
+    id: string,
+    msg?: Message,
+    onEdit?: (message: Message) => void
+}) => (
     <TableCell>
-        <span className="text-xs text-foreground font-mono" title={id}>
-            {id}
-        </span>
+        {onEdit && msg ? (
+            <button
+                onClick={(e) => {
+                    e.stopPropagation()
+                    onEdit(msg)
+                }}
+                className="text-xs text-foreground font-mono hover:underline hover:text-primary focus:outline-none text-left"
+                title={`Edit ${id}`}
+            >
+                {id}
+            </button>
+        ) : (
+            <span className="text-xs text-foreground font-mono" title={id}>
+                {id}
+            </span>
+        )}
     </TableCell>
 ))
 
@@ -205,12 +226,12 @@ export const PriorityCell = React.memo(({ priority }: { priority: number }) => (
     <TableCell className="text-left">{getPriorityBadge(priority)}</TableCell>
 ))
 
-export const AttemptsCell = React.memo(({ 
-    attemptCount, 
+export const AttemptsCell = React.memo(({
+    attemptCount,
     maxAttempts,
     defaultAttempts = 1
-}: { 
-    attemptCount?: number, 
+}: {
+    attemptCount?: number,
     maxAttempts?: number,
     defaultAttempts?: number
 }) => (
@@ -224,24 +245,24 @@ export const AttemptsCell = React.memo(({
     </TableCell>
 ))
 
-export const AckTimeoutCell = React.memo(({ 
-    customTimeout, 
-    configTimeout 
-}: { 
-    customTimeout?: number, 
-    configTimeout?: number 
+export const AckTimeoutCell = React.memo(({
+    customTimeout,
+    configTimeout
+}: {
+    customTimeout?: number,
+    configTimeout?: number
 }) => (
     <TableCell className="text-xs text-foreground whitespace-nowrap">
         {customTimeout ?? configTimeout ?? 60}s
     </TableCell>
 ))
 
-export const TimeCell = React.memo(({ 
-    timestamp, 
-    formatTime 
-}: { 
-    timestamp?: number, 
-    formatTime: (ts?: number) => string 
+export const TimeCell = React.memo(({
+    timestamp,
+    formatTime
+}: {
+    timestamp?: number,
+    formatTime: (ts?: number) => string
 }) => (
     <TableCell className="text-xs text-foreground whitespace-nowrap">
         {formatTime(timestamp)}
@@ -260,7 +281,7 @@ interface TableWrapperProps {
     isFilterActive?: boolean
     activeFiltersDescription?: string
     shouldVirtualize: boolean
-    scrollContainerRef: React.RefObject<HTMLDivElement | null>
+    scrollContainerRef: React.Ref<HTMLDivElement>
     setScrollTop: (top: number) => void
 }
 

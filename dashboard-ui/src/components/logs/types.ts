@@ -46,6 +46,7 @@ export interface ActivityLogEntry {
     batch_size: number | null
     prev_action: string | null
     prev_timestamp: number | null
+    payload?: any
     anomaly: ActivityAnomaly | null
 }
 
@@ -96,7 +97,7 @@ export interface ConsumerStatsResponse {
 // Constants
 // ============================================================================
 
-export const ACTION_OPTIONS = ['enqueue', 'dequeue', 'ack', 'nack', 'move', 'delete', 'clear', 'touch', 'timeout', 'requeue'] as const
+export const ACTION_OPTIONS = ['enqueue', 'dequeue', 'ack', 'nack', 'move', 'delete', 'clear', 'touch', 'timeout', 'requeue', 'dlq'] as const
 
 export const ACTION_COLORS: Record<string, string> = {
     enqueue: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -109,4 +110,5 @@ export const ACTION_COLORS: Record<string, string> = {
     touch: 'bg-sky-500/10 text-sky-500 border-sky-500/20',
     timeout: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
     requeue: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20',
+    dlq: 'bg-red-500/10 text-red-500 border-red-500/20',
 }

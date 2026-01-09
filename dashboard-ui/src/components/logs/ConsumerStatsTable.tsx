@@ -2,7 +2,8 @@ import React from "react"
 import {
     Loader2,
     User,
-    RefreshCw
+    RefreshCw,
+    Users
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,7 @@ import {
     TableRow
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
 import { ConsumerStatsResponse } from "./types"
@@ -41,6 +43,23 @@ export function ConsumerStatsTable({
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
+            {/* Tab Header */}
+            <div className="shrink-0 px-4 pt-3 pb-2 border-b border-border/50">
+                <Tabs defaultValue="stats" className="w-full">
+                    <TabsList className="h-9">
+                        <TabsTrigger value="stats" className="gap-2 text-xs">
+                            <Users className="h-3.5 w-3.5" />
+                            Consumer Stats
+                            {consumerEntries.length > 0 && (
+                                <span className="ml-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-primary/10 text-primary">
+                                    {consumerEntries.length}
+                                </span>
+                            )}
+                        </TabsTrigger>
+                    </TabsList>
+                </Tabs>
+            </div>
+
             <ScrollArea className="relative flex-1 min-h-0" scrollBarClassName="mt-12 h-[calc(100%-3rem)]">
                 {loading && (
                     <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
