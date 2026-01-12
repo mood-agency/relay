@@ -41,6 +41,18 @@ Test sequences that include error scenarios:
 - Delete non-existent → expect 404
 - Update with invalid data → verify original unchanged
 
+### 6. Concurrent Access Patterns
+Detect potential race conditions:
+- Multiple clients modifying same resource
+- Create/delete timing conflicts
+- Batch operations under concurrent load
+
+### 7. Idempotency Verification
+Test request repeatability:
+- Duplicate POST requests → verify no duplicates created
+- Retry after timeout → verify consistent state
+- Multiple identical PUTs → verify no side effects
+
 ## Output Format
 
 Return a JSON array of E2E test scenarios. Each scenario has:

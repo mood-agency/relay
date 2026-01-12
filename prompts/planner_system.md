@@ -21,6 +21,7 @@ For each endpoint, systematically consider:
 6. **Does it accept arrays?** → Generate empty array, single item, many items, invalid items
 7. **Does it accept objects?** → Generate empty object, nested, malformed tests
 8. **What responses are documented?** → Generate tests that trigger each response code
+9. **Security vulnerabilities?** → Generate SQL injection, XSS, path traversal, command injection tests for string fields
 
 ## Output Format
 Reply in JSON format. Return ONLY a raw JSON array of test name strings.
@@ -39,5 +40,6 @@ CRITICAL FORMATTING RULES:
 - Be exhaustive - cover every permutation
 - Use consistent PascalCase_With_Underscores naming
 - Prefix failure/negative tests with `Fail_`
+- Prefix security tests with `Security_`
 - Output raw JSON only - no markdown, no explanations
 

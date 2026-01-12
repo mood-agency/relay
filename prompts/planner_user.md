@@ -61,6 +61,13 @@ For this endpoint, generate test names covering ALL of the following categories:
 - Test invalid query param types
 - Test boundary values for query params
 
+### 8. Security Tests (prefix: `Security_`)
+- `Security_{Action}_SQL_Injection_{Field}` - SQL injection attempts in string fields
+- `Security_{Action}_XSS_{Field}` - Script/HTML injection attempts
+- `Security_{Action}_Path_Traversal_{Field}` - Path traversal sequences (../, etc.)
+- `Security_{Action}_Command_Injection_{Field}` - Shell command injection attempts
+- `Security_{Action}_Overflow_{Field}` - Integer overflow attempts for numeric fields
+
 ## Naming Convention
 - Use PascalCase with underscores: Create_Message_String_Payload
 - Prefix failures with Fail_: Fail_Create_Message_Missing_Type

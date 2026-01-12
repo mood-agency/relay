@@ -36,6 +36,18 @@ Examine ALL endpoints in this API and identify multi-step workflows. For each wo
 - Create multiple items, verify list returns correct count
 - Delete items, verify they're removed from lists
 
+### 6. Concurrent Access Patterns
+- Two clients updating the same resource simultaneously
+- Create while another client deletes the same resource
+- Race conditions in batch operations
+- Verify data consistency under concurrent modifications
+
+### 7. Idempotency Verification
+- Send the same POST request twice - verify no duplicate created (if idempotency supported)
+- Retry request after timeout - verify consistent state
+- PUT same data multiple times - verify resource unchanged after first call
+- DELETE same resource twice - verify second call returns 404
+
 ## Required Scenarios
 
 At minimum, generate scenarios for:
@@ -43,6 +55,8 @@ At minimum, generate scenarios for:
 2. **Deletion Verification** - Create, delete, verify 404 on re-fetch
 3. **Update Persistence** - Create, update, re-read to verify changes saved
 4. **List Consistency** - Create items, verify list endpoint, delete items, verify removed
+5. **Idempotency Check** - Repeat same request, verify no duplicates or side effects
+6. **Concurrent Modification** - Simulate concurrent access to same resource
 
 ## Output Format
 

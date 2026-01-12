@@ -8,14 +8,92 @@ Rohan is a CLI tool that automatically generates [k6](https://k6.io) test script
 
 - **Automatic Test Generation** - LLM analyzes your OpenAPI spec and generates intelligent test scenarios
 - **k6 Compatible** - Outputs standard k6 JavaScript tests that work with k6's battle-tested runtime
-- **Multiple LLM Providers** - Works with Groq, OpenAI, Anthropic, Together, and more
-- **Two-Step Workflow** - Generate test plan first, review/edit, then build scripts
+- **Multiple LLM Providers** - Works with Groq, OpenAI, Anthropic, Together, Fireworks, and Ollama
+- **Batching** - Efficient batch processing to reduce API calls and costs
+- **E2E Workflows** - Generate multi-step end-to-end test scenarios
+
+## Test Scenario Coverage
+
+Rohan generates comprehensive test cases covering multiple scenario categories:
+
+### Simple/Unit Test Scenarios
+
+| Category | Description | Example Tests |
+|----------|-------------|---------------|
+| **Happy Path** | Valid requests with expected inputs | `Get_Users_Basic`, `Create_User_With_All_Fields` |
+| **Boundary** | Edge values (min, max, zero, negative) | `Create_Message_Zero_Priority`, `Get_Message_Max_Timeout` |
+| **Negative/Validation** | Invalid inputs that should fail | `Fail_Create_User_Missing_Email`, `Fail_Update_Invalid_JSON` |
+| **Data Type Variations** | Different types for flexible fields | `Create_Message_String_Payload`, `Create_Message_Array_Payload` |
+| **Edge Cases** | Unusual but valid inputs | `Create_User_Unicode_Name`, `Update_Message_Empty_String` |
+| **Batch Operations** | Collection/array operations | `Create_Batch_Five_Messages`, `Fail_Batch_Not_An_Array` |
+| **Security** | Injection and attack vectors | `Security_Create_SQL_Injection_Name`, `Security_Update_XSS_Field` |
+
+### Integration/E2E Test Scenarios
+
+| Category | Description | Example Tests |
+|----------|-------------|---------------|
+| **CRUD Lifecycle** | Full create → read → update → delete | `CRUD_User_Full_Lifecycle` |
+| **State Verification** | Verify changes persist correctly | `Update_And_Verify_Persistence` |
+| **Deletion Verification** | Verify 404 after delete | `Delete_Then_Verify_Not_Found` |
+| **List Consistency** | Verify list reflects mutations | `Batch_Create_Then_List_Verify` |
+| **Concurrent Access** | Race conditions and parallel access | `Concurrent_Update_Same_Resource` |
+| **Idempotency** | Duplicate request handling | `Idempotency_Duplicate_POST_No_Duplicate` |
+
+### Scenario Details
+
+<details>
+<summary><strong>Boundary & Edge Cases</strong></summary>
+
+- Zero values (`priority: 0`, `timeout: 0`)
+- Negative numbers (`maxAttempts: -1`)
+- Maximum values (`timeout: 2147483647`)
+- Minimum values (`retries: 1`)
+- Decimal values for integer fields (`count: 1.5`)
+- Empty strings, arrays, objects
+- Very long strings (1000+ chars)
+- Special characters and Unicode/Emoji
+
+</details>
+
+<details>
+<summary><strong>Negative/Validation Tests</strong></summary>
+
+- Missing required fields
+- Wrong data types (`"priority": "high"` instead of number)
+- Malformed JSON body
+- Empty request body
+- Out of range values
+- Invalid enum values
+
+</details>
+
+<details>
+<summary><strong>Security Tests</strong></summary>
+
+- **SQL Injection**: `'; DROP TABLE users; --`
+- **XSS**: `<script>alert('xss')</script>`
+- **Path Traversal**: `../../etc/passwd`
+- **Command Injection**: `; rm -rf /`
+- **Integer Overflow**: Values exceeding max int
+
+</details>
+
+<details>
+<summary><strong>E2E Workflow Tests</strong></summary>
+
+- Create resource → Read → Verify data matches
+- Update resource → Read → Verify changes saved
+- Delete resource → Read → Verify 404 returned
+- Batch create → List → Verify count matches
+- Concurrent modifications → Verify consistency
+
+</details>
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Rust 1.70+** (for building from source)
+- **Node.js 20+** (for running Rohan)
 - **k6** (for running generated tests)
 - **An LLM API key** (Groq, OpenAI, Anthropic, etc.)
 
@@ -47,10 +125,14 @@ See [k6 installation docs](https://k6.io/docs/get-started/installation/) for mor
 git clone https://github.com/yourusername/rohan.git
 cd rohan
 
-# Build in release mode
-cargo build --release
+# Install dependencies
+npm install
 
-# The binary will be at ./target/release/rohan
+# Build
+npm run build
+
+# Run (from project directory)
+npm run rohan -- --help
 ```
 
 ### Usage
@@ -72,10 +154,10 @@ Generate tests and run them:
 
 ```bash
 # Step 1: Generate test plan from OpenAPI spec
-rohan plan api-spec.json -o test-plan.json -w 1 --rps 3
+npm run rohan -- plan api-spec.json -o test-plan.json -w 5 --batch-size 5
 
 # Step 2: Build k6 scripts from the plan
-rohan build test-plan.json -o tests/ -w 1 --rps 5
+npm run rohan -- build test-plan.json -o tests/ -w 5 --batch-size 5
 
 # Step 3: Run tests with k6
 k6 run --env BASE_URL=http://localhost:8080 tests/test_get_users_basic.js
@@ -89,7 +171,7 @@ for f in tests/*.js; do k6 run --env BASE_URL=http://localhost:8080 "$f"; done
 ### Step 1: Generate Test Plan
 
 ```bash
-rohan plan api-spec.json -o test-plan.json -w 5
+npm run rohan -- plan api-spec.json -o test-plan.json -w 5
 ```
 
 Creates a `test-plan.json` file containing test entries:
@@ -119,7 +201,7 @@ Creates a `test-plan.json` file containing test entries:
 ### Step 2: Build k6 Scripts
 
 ```bash
-rohan build test-plan.json -o tests/ -w 5
+npm run rohan -- build test-plan.json -o tests/ -w 5
 ```
 
 Generates k6-compatible JavaScript tests with descriptive filenames:
@@ -135,7 +217,7 @@ tests/
 By default, existing test files are **not overwritten**. Use `--overwrite` to replace them:
 
 ```bash
-rohan build test-plan.json -o tests/ --overwrite
+npm run rohan -- build test-plan.json -o tests/ --overwrite
 ```
 
 Each test file is a complete k6 script:
@@ -187,38 +269,46 @@ k6 run --env BASE_URL=http://localhost:8080 --vus 10 --duration 30s tests/test_g
 ### `plan` Command
 
 ```bash
-rohan plan <spec-path> [options]
+npm run rohan -- plan <spec-path> [options]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-o`, `--output` | path | `test-plan.json` | Output file for the test plan |
 | `-w`, `--workers` | int | 5 | Number of parallel LLM workers |
-| `--model` | string | `llama3-70b-8192` | LLM model identifier |
+| `--model` | string | `llama-3.3-70b-versatile` | LLM model identifier |
+| `--provider` | string | auto-detect | LLM provider (groq, openai, anthropic, together, fireworks, ollama) |
 | `--api-base` | URL | auto-detected | Custom LLM API endpoint |
-| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
 | `--batch-size` | int | 5 | Number of endpoints to batch per LLM request |
+| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
+| `--e2e` | bool | false | Generate E2E workflow tests |
+| `--verbose` | bool | false | Enable detailed logging |
+| `--prompt-dir` | path | - | Custom prompt directory |
 
 ### `build` Command
 
 ```bash
-rohan build <plan-path> [options]
+npm run rohan -- build <plan-path> [options]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-o`, `--output` | path | `tests/` | Output directory for test scripts |
-| `--overwrite` | bool | `false` | Overwrite existing test files (skips by default) |
+| `--overwrite` | bool | `false` | Overwrite existing test files |
 | `-w`, `--workers` | int | 5 | Number of parallel LLM workers |
-| `--model` | string | `llama3-70b-8192` | LLM model identifier |
+| `--model` | string | `llama-3.3-70b-versatile` | LLM model identifier |
+| `--provider` | string | auto-detect | LLM provider |
 | `--api-base` | URL | auto-detected | Custom LLM API endpoint |
-| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
 | `--batch-size` | int | 5 | Number of tests to batch per LLM request |
+| `--rpm` | int | 0 | Max requests per minute (0 = unlimited) |
+| `--e2e` | bool | false | Build E2E workflow tests |
+| `--verbose` | bool | false | Enable detailed logging |
+| `--prompt-dir` | path | - | Custom prompt directory |
 
 ### `exec` Command
 
 ```bash
-rohan exec <tests-dir> [--target URL]
+npm run rohan -- exec <tests-dir> [--target URL]
 ```
 
 Shows instructions for running the generated tests with k6.
@@ -227,77 +317,112 @@ Shows instructions for running the generated tests with k6.
 |------|------|---------|-------------|
 | `--target` | URL | `http://localhost:8080` | Base URL for example commands |
 
-## Test Naming Convention
+### `validate` Command
 
-The test names in the plan guide the LLM to generate appropriate test code:
+```bash
+npm run rohan -- validate <spec-path>
+```
 
-| Pattern | Meaning |
-|---------|---------|
-| `Create_*` / `Post_*` | POST request, expect 201 |
-| `Get_*` | GET request, expect 200 |
-| `Update_*` | PUT/PATCH request, expect 200 |
-| `Delete_*` | DELETE request, expect 200/204 |
-| `Fail_*` | Expects an error response (4xx) |
-| `*_String_Payload` | Use string value in payload |
-| `*_Missing_*` | Omit a required field |
-| `*_Zero_*` | Use 0 for a numeric field |
-| `*_Empty_*` | Use empty string/array/object |
+Validates an OpenAPI specification file and shows basic info.
 
-## Environment Variables
+## LLM Providers
 
-### LLM Provider Keys
+Rohan supports multiple LLM providers:
 
-| Variable | Provider |
-|----------|----------|
-| `GROQ_API_KEY` | Groq (default) |
-| `OPENAI_API_KEY` | OpenAI |
-| `ANTHROPIC_API_KEY` | Anthropic |
-| `TOGETHER_API_KEY` | Together AI |
+| Provider | Package | Env Variable | Example Models |
+|----------|---------|--------------|----------------|
+| Groq | `@ai-sdk/groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| OpenAI | `@ai-sdk/openai` | `OPENAI_API_KEY` | `gpt-4o`, `gpt-4o-mini` |
+| Anthropic | `@ai-sdk/anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| Together | via OpenAI compat | `TOGETHER_API_KEY` | `meta-llama/Llama-3-70b-chat-hf` |
+| Fireworks | via OpenAI compat | `FIREWORKS_API_KEY` | `llama-v3-70b-instruct` |
+| Ollama | via OpenAI compat | - | `llama3`, `mistral` |
 
-### Configuration
+### Provider Examples
 
-| Variable | Description |
-|----------|-------------|
-| `ROHAN_MODEL` | Default LLM model |
-| `ROHAN_API_BASE` | Custom API endpoint |
-| `ROHAN_RPM` | Default max requests per minute |
-| `ROHAN_BATCH_SIZE` | Default batch size for LLM requests |
-| `ROHAN_PROMPT_DIR` | Custom prompt directory |
+```bash
+# Groq (default)
+export GROQ_API_KEY="gsk_..."
+npm run rohan -- plan api-spec.json --model llama-3.3-70b-versatile
+
+# OpenAI
+export OPENAI_API_KEY="sk-..."
+npm run rohan -- plan api-spec.json --provider openai --model gpt-4o
+
+# Anthropic
+export ANTHROPIC_API_KEY="sk-ant-..."
+npm run rohan -- plan api-spec.json --provider anthropic --model claude-sonnet-4-20250514
+
+# Local Ollama
+npm run rohan -- plan api-spec.json --provider ollama --model llama3
+```
 
 ## Batching for Efficiency
 
 Rohan supports batching multiple endpoints/tests per LLM request, which significantly reduces:
 
-- **Token consumption**: System prompts are only sent once per batch instead of once per item
 - **API calls**: 50 endpoints with batch size 5 = 10 requests instead of 50
+- **Token consumption**: System prompts sent once per batch instead of once per item
 - **Rate limit pressure**: Fewer requests means less chance of hitting rate limits
-
-### Batching Examples
 
 ```bash
 # Batch 10 endpoints per request during planning
-rohan plan api-spec.json --batch-size 10
+npm run rohan -- plan api-spec.json --batch-size 10
 
 # Batch 5 tests per request during building (default)
-rohan build test-plan.json --batch-size 5
+npm run rohan -- build test-plan.json --batch-size 5
 
 # Disable batching (one item per request)
-rohan plan api-spec.json --batch-size 1
+npm run rohan -- plan api-spec.json --batch-size 1
 ```
 
-### How Batching Works
+## Prompt Customization
 
-**Planning phase**: Multiple endpoints are sent to the LLM together. The LLM returns a JSON object mapping each endpoint ID to its test names.
+Prompts are stored in the `prompts/` directory. Override them with `--prompt-dir`:
 
-**Building phase**: Multiple tests are sent to the LLM together. The LLM returns a JSON object mapping each test name to its JavaScript code.
+```bash
+npm run rohan -- plan api-spec.json --prompt-dir ./my-prompts/
+```
 
-If a batch fails to parse, the entire batch is reported as failed. For maximum reliability with smaller models, use `--batch-size 1`.
+| File | Purpose |
+|------|---------|
+| `planner_system.md` | System prompt for test scenario planning |
+| `planner_user.md` | User prompt template for planning |
+| `builder_system.md` | System prompt for JavaScript code generation |
+| `builder_user.md` | User prompt template for code gen |
+| `planner_batch_system.md` | System prompt for batched planning |
+| `planner_batch_user.md` | User prompt for batched planning |
+| `builder_batch_system.md` | System prompt for batched building |
+| `builder_batch_user.md` | User prompt for batched building |
+| `e2e_planner_system.md` | System prompt for E2E workflow planning |
+| `e2e_planner_user.md` | User prompt for E2E planning |
+| `e2e_builder_system.md` | System prompt for E2E script generation |
+| `e2e_builder_user.md` | User prompt for E2E building |
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build TypeScript
+npm run build
+
+# Watch mode (rebuild on changes)
+npm run dev
+
+# Run tests
+npm test
+
+# Clean build artifacts
+npm run clean
+```
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Rohan["Rohan (Rust CLI)"]
+    subgraph Rohan["Rohan (TypeScript CLI)"]
         A["OpenAPI Spec"] --> B["LLM Planner"]
         B --> C["Test Plan JSON"]
         C --> D["LLM Builder"]
@@ -309,12 +434,7 @@ flowchart LR
     end
 ```
 
-Rohan handles **test generation**, k6 handles **test execution**. This separation gives you:
-
-- **Battle-tested execution** - k6 is used by thousands of companies
-- **Rich k6 features** - Thresholds, scenarios, protocols, extensions
-- **Flexibility** - Edit generated scripts, add custom logic
-- **Load testing** - Use k6's load testing capabilities out of the box
+Rohan handles **test generation**, k6 handles **test execution**.
 
 ## Why k6?
 

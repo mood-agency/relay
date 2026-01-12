@@ -1,4 +1,28 @@
+# Rust
 /target
+
+# Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment
 .env
+.env.local
+
+# Generated test files
 /tests
 test-plan.json
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
