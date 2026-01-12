@@ -196,7 +196,7 @@ export function GenericTable<T extends Record<string, any>>({
     onSort,
     pagination,
     virtualizeThreshold = 100,
-    rowHeight = 44,
+    rowHeight = 24,
     emptyState,
     isLoading = false,
     scrollResetKey = 0,
@@ -333,14 +333,14 @@ export function GenericTable<T extends Record<string, any>>({
                         ) : shouldVirtualize && virtual ? (
                             <>
                                 {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.topSpacerHeight }} />
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                     </TableRow>
                                 )}
                                 {virtual.visibleItems.map((item, i) => renderRow(item, virtual.startIndex + i))}
                                 {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="p-0" style={{ height: virtual.bottomSpacerHeight }} />
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                     </TableRow>
                                 )}
                             </>

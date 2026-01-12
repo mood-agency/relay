@@ -188,7 +188,6 @@ export const ProcessingQueueTable = React.memo(({
 
     const calculateTimeRemaining = useCallback((m: Message) => {
         const startTime = m.dequeued_at || m.processing_started_at
-        console.log(`[TimeRemaining] Message ${m.id}: dequeued_at=${m.dequeued_at}, processing_started_at=${m.processing_started_at}, startTime=${startTime}, config=${!!config}`)
         if (!startTime) return <span className="text-muted-foreground italic">—</span>
 
         if (!config) return <span className="text-muted-foreground">...</span>
@@ -263,13 +262,13 @@ export const ProcessingQueueTable = React.memo(({
                                 <>
                                     {virtual.topSpacerHeight > 0 && (
                                         <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0" />
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                         </TableRow>
                                     )}
                                     {virtual.visibleItems.map(renderRow)}
                                     {virtual.bottomSpacerHeight > 0 && (
                                         <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0" />
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                         </TableRow>
                                     )}
                                 </>

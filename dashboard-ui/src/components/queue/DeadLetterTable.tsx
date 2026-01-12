@@ -201,7 +201,7 @@ export const DeadLetterTable = React.memo(({
         items: messages,
         scrollTop,
         viewportHeight,
-        rowHeight: 44,
+        rowHeight: 24,
         overscan: 8,
         enabled: shouldVirtualize
     })
@@ -260,7 +260,7 @@ export const DeadLetterTable = React.memo(({
                             <>
                                 {virtual.topSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0" />
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                     </TableRow>
                                 )}
                                 {virtual.visibleItems.map((msg: Message) => (
@@ -280,7 +280,7 @@ export const DeadLetterTable = React.memo(({
                                 ))}
                                 {virtual.bottomSpacerHeight > 0 && (
                                     <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0" />
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                     </TableRow>
                                 )}
                             </>

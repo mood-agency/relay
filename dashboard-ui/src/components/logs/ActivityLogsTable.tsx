@@ -290,7 +290,7 @@ export const ActivityLogsTable = React.memo(({
         items: sortedLogs,
         scrollTop,
         viewportHeight,
-        rowHeight: 44,
+        rowHeight: 24,
         overscan: 28,
         enabled: shouldVirtualize
     })
@@ -349,13 +349,13 @@ export const ActivityLogsTable = React.memo(({
                                 <>
                                     {virtual.topSpacerHeight > 0 && (
                                         <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0" />
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                         </TableRow>
                                     )}
                                     {virtual.visibleItems.map(renderRow)}
                                     {virtual.bottomSpacerHeight > 0 && (
                                         <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0" />
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
                                         </TableRow>
                                     )}
                                 </>

@@ -292,18 +292,9 @@ export function useElementHeight(elementRef: { current: HTMLElement | null }) {
             }
 
             const update = () => {
-                const rect = element.getBoundingClientRect()
                 // Use clientHeight instead of boundingClientRect.height
                 // clientHeight gives the visible height, not the scrollable content height
-                const visibleHeight = element.clientHeight
-                console.log('[ViewportHeight]', {
-                    boundingHeight: rect.height,
-                    clientHeight: element.clientHeight,
-                    scrollHeight: element.scrollHeight,
-                    offsetHeight: element.offsetHeight,
-                    using: visibleHeight
-                })
-                setHeight(visibleHeight)
+                setHeight(element.clientHeight)
             }
             update()
 
@@ -333,7 +324,7 @@ export function useVirtualization<T>({
     items,
     scrollTop,
     viewportHeight,
-    rowHeight = 44,
+    rowHeight = 24,
     overscan = 28,
     enabled = true
 }: {
@@ -356,21 +347,6 @@ export function useVirtualization<T>({
 
         const topSpacerHeight = startIndex * rowHeight
         const bottomSpacerHeight = Math.max(0, (total - endIndex) * rowHeight)
-
-        // Debug logging
-        console.log('[Virtual]', {
-            scrollTop,
-            viewportHeight,
-            viewportPx,
-            total,
-            totalHeight,
-            startIndex,
-            endIndex,
-            visibleCount: endIndex - startIndex,
-            topSpacerHeight,
-            bottomSpacerHeight,
-            sumHeights: topSpacerHeight + ((endIndex - startIndex) * rowHeight) + bottomSpacerHeight
-        })
 
         return {
             rowHeight,
@@ -413,7 +389,7 @@ export function DataTable<T extends Record<string, any>>({
     onSort,
     pagination,
     virtualizeThreshold = 100,
-    rowHeight = 44,
+    rowHeight = 24,
     emptyState,
     isLoading = false,
     scrollResetKey = 0,
@@ -509,13 +485,17 @@ export function DataTable<T extends Record<string, any>>({
                             )
                         ) : shouldVirtualize && virtual ? (
                             <>
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
+                                {virtual.topSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    </TableRow>
+                                )}
                                 {virtual.visibleItems.map((item, index) => renderRow(item, virtual.startIndex + index))}
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
+                                {virtual.bottomSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    </TableRow>
+                                )}
                             </>
                         ) : (
                             data.map((item, index) => renderRow(item, index))

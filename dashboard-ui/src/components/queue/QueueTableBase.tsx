@@ -80,7 +80,7 @@ export function useTableVirtualization(
         items: messages,
         scrollTop,
         viewportHeight,
-        rowHeight: 44,
+        rowHeight: 24,
         overscan: 28,
         enabled: shouldVirtualize
     })
