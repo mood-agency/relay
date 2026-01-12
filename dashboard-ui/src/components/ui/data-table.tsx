@@ -291,7 +291,20 @@ export function useElementHeight(elementRef: { current: HTMLElement | null }) {
                 return
             }
 
-            const update = () => setHeight(element.getBoundingClientRect().height)
+            const update = () => {
+                const rect = element.getBoundingClientRect()
+                // Use clientHeight instead of boundingClientRect.height
+                // clientHeight gives the visible height, not the scrollable content height
+                const visibleHeight = element.clientHeight
+                console.log('[ViewportHeight]', {
+                    boundingHeight: rect.height,
+                    clientHeight: element.clientHeight,
+                    scrollHeight: element.scrollHeight,
+                    offsetHeight: element.offsetHeight,
+                    using: visibleHeight
+                })
+                setHeight(visibleHeight)
+            }
             update()
 
             if (typeof ResizeObserver === "undefined") {
@@ -321,7 +334,7 @@ export function useVirtualization<T>({
     scrollTop,
     viewportHeight,
     rowHeight = 44,
-    overscan = 8,
+    overscan = 28,
     enabled = true
 }: {
     items: T[]
@@ -344,6 +357,21 @@ export function useVirtualization<T>({
         const topSpacerHeight = startIndex * rowHeight
         const bottomSpacerHeight = Math.max(0, (total - endIndex) * rowHeight)
 
+        // Debug logging
+        console.log('[Virtual]', {
+            scrollTop,
+            viewportHeight,
+            viewportPx,
+            total,
+            totalHeight,
+            startIndex,
+            endIndex,
+            visibleCount: endIndex - startIndex,
+            topSpacerHeight,
+            bottomSpacerHeight,
+            sumHeights: topSpacerHeight + ((endIndex - startIndex) * rowHeight) + bottomSpacerHeight
+        })
+
         return {
             rowHeight,
             totalHeight,
@@ -352,6 +380,17 @@ export function useVirtualization<T>({
             topSpacerHeight,
             bottomSpacerHeight,
             visibleItems: items.slice(startIndex, endIndex),
+            // New: use transform-based positioning instead of spacer rows
+            containerStyle: {
+                height: totalHeight,
+                position: 'relative' as const,
+            },
+            rowsContainerStyle: {
+                position: 'absolute' as const,
+                top: topSpacerHeight,
+                left: 0,
+                right: 0,
+            },
         }
     }, [items, scrollTop, enabled, viewportHeight, rowHeight, overscan])
 }

@@ -636,6 +636,8 @@ export async function requeueFailedMessages() {
 
         const processingPipeline = redis.pipeline();
         const requeueIndexEntries = [];
+        // Collect activity log entries to write AFTER pipeline execution succeeds
+        const pendingActivityLogs = [];
         let pipelineCmdIndex = 0;
         let operationsInPipeline = 0;
 
@@ -726,18 +728,22 @@ export async function requeueFailedMessages() {
             movedToDlqCount++;
             operationsInPipeline++;
 
-            // Log activity for timeout -> DLQ
-            logger.info(`Message ${messageData.id} timed out and reached max attempts. Moving to DLQ.`);
-            await this.logActivity("dlq", messageData, {
-              queue: "dead",
-              source_queue: "processing",
-              dest_queue: "dead",
-              consumer_id: metadata.consumer_id || null,
-              attempt_count: metadata.attempt_count,
-              max_attempts: effectiveMaxAttempts,
-              processing_time_ms: elapsedMs,
-              error_reason: "Max attempts exceeded (timeout)",
-              triggered_by: "scheduler",
+            // Queue activity log for after pipeline execution
+            pendingActivityLogs.push({
+              type: "dlq",
+              messageData: { ...messageData },
+              context: {
+                queue: "dead",
+                source_queue: "processing",
+                dest_queue: "dead",
+                consumer_id: metadata.consumer_id || null,
+                attempt_count: metadata.attempt_count,
+                max_attempts: effectiveMaxAttempts,
+                processing_time_ms: elapsedMs,
+                error_reason: "Max attempts exceeded (timeout)",
+                triggered_by: "scheduler",
+              },
+              logMessage: `Message ${messageData.id} timed out and reached max attempts. Moving to DLQ.`,
             });
           } else {
             const messageJson = this._serializeMessage(messageData);
@@ -754,40 +760,56 @@ export async function requeueFailedMessages() {
             requeuedCount++;
             operationsInPipeline++;
 
-            // Log activity for timeout -> requeue
-            logger.info(`Message ${messageData.id} timed out in ${queueName}. Requeueing to main.`);
-            await this.logActivity("timeout", messageData, {
-              queue: "processing",
-              consumer_id: metadata.consumer_id || null,
-              attempt_count: metadata.attempt_count,
-              max_attempts: effectiveMaxAttempts,
-              processing_time_ms: elapsedMs,
-              error_reason: "Processing timeout",
-              triggered_by: "scheduler",
+            // Queue activity logs for after pipeline execution
+            pendingActivityLogs.push({
+              type: "timeout",
+              messageData: { ...messageData },
+              context: {
+                queue: "processing",
+                consumer_id: metadata.consumer_id || null,
+                attempt_count: metadata.attempt_count,
+                max_attempts: effectiveMaxAttempts,
+                processing_time_ms: elapsedMs,
+                error_reason: "Processing timeout",
+                triggered_by: "scheduler",
+              },
+              logMessage: `Message ${messageData.id} timed out in ${queueName}. Requeueing to main.`,
             });
 
-            await this.logActivity("requeue", messageData, {
-              queue: "main",
-              source_queue: "processing",
-              dest_queue: "main",
-              consumer_id: metadata.consumer_id || null,
-              attempt_count: metadata.attempt_count,
-              max_attempts: effectiveMaxAttempts,
-              triggered_by: "scheduler",
+            pendingActivityLogs.push({
+              type: "requeue",
+              messageData: { ...messageData },
+              context: {
+                queue: "main",
+                source_queue: "processing",
+                dest_queue: "main",
+                consumer_id: metadata.consumer_id || null,
+                attempt_count: metadata.attempt_count,
+                max_attempts: effectiveMaxAttempts,
+                triggered_by: "scheduler",
+              },
             });
           }
         }
 
-        if (requeuedCount > 0 || movedToDlqCount > 0) {
-          await this.publishEvent("requeue", {
-            count: requeuedCount,
-            dlq_count: movedToDlqCount,
-            triggered_by: "scheduler"
-          });
-        }
-
         if (operationsInPipeline > 0) {
           const execResults = await processingPipeline.exec();
+
+          // Only log activities AFTER pipeline execution succeeds
+          for (const activityLog of pendingActivityLogs) {
+            if (activityLog.logMessage) {
+              logger.info(activityLog.logMessage);
+            }
+            await this.logActivity(activityLog.type, activityLog.messageData, activityLog.context);
+          }
+
+          if (requeuedCount > 0 || movedToDlqCount > 0) {
+            await this.publishEvent("requeue", {
+              count: requeuedCount,
+              dlq_count: movedToDlqCount,
+              triggered_by: "scheduler"
+            });
+          }
           if (execResults && requeueIndexEntries.length > 0) {
             const typesKey = this._getTypeIndexTypesKey();
             const locKey = this._getMessageLocationHashKey();

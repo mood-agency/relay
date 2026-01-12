@@ -213,10 +213,14 @@ export const DeadLetterTable = React.memo(({
             <ScrollArea
                 viewportRef={scrollContainerRef}
                 className="relative flex-1 min-h-0"
+                viewportClassName="bg-card"
                 scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
-                <Table>
+                <div
+                    style={shouldVirtualize && virtual ? { height: virtual.totalHeight + 48 } : undefined}
+                >
+                    <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
                             <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
@@ -254,9 +258,11 @@ export const DeadLetterTable = React.memo(({
                             )
                         ) : shouldVirtualize && virtual ? (
                             <>
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
+                                {virtual.topSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0" />
+                                    </TableRow>
+                                )}
                                 {virtual.visibleItems.map((msg: Message) => (
                                     <DeadLetterRow
                                         key={msg.id}
@@ -272,9 +278,11 @@ export const DeadLetterTable = React.memo(({
                                         onToggleSelect={onToggleSelect}
                                     />
                                 ))}
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
+                                {virtual.bottomSpacerHeight > 0 && (
+                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className="p-0" />
+                                    </TableRow>
+                                )}
                             </>
                         ) : (
                             messages.map((msg: Message) => (
@@ -294,7 +302,8 @@ export const DeadLetterTable = React.memo(({
                             ))
                         )}
                     </TableBody>
-                </Table>
+                    </Table>
+                </div>
             </ScrollArea>
             {totalPages > 0 && (
                 <PaginationFooter

@@ -120,35 +120,109 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
     for (const stream of priorityStreams) {
       pipeline.xlen(stream);
     }
-    
+
     // DLQ, Acknowledged, Archived, and total acknowledged key
     pipeline.xlen(this.config.dead_letter_queue_name);
     pipeline.xlen(this.config.acknowledged_queue_name);
     pipeline.xlen(this.config.archived_queue_name);
     pipeline.get(this.config.total_acknowledged_key);
 
-    // Get queue contents (limited to 1000 items each) for all priority streams
-    if (includeMessages) {
-      for (const stream of priorityStreams) {
-        pipeline.xrevrange(stream, "+", "-", "COUNT", 1000);
-      }
-      pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 1000);
-      pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 1000);
-      pipeline.xrevrange(this.config.archived_queue_name, "+", "-", "COUNT", 1000);
-    }
-
-    // Get metadata
-    pipeline.hgetall(this.config.metadata_hash_name);
-    
-    // Get Processing (Pending) for all priority streams
+    // Get Processing (Pending) count summary for all priority streams (lightweight)
+    // Only get the summary count, not detailed pending entries
     for (const stream of priorityStreams) {
       pipeline.xpending(stream, this.config.consumer_group_name);
     }
+
+    // For counts-only mode, execute minimal pipeline and return early
+    if (!includeMessages) {
+      const results = await pipeline.exec();
+
+      // Parse lengths
+      let totalMainLen = 0;
+      for (let i = 0; i < priorityCount; i++) {
+        totalMainLen += results[i][1] || 0;
+      }
+      const dlqLen = results[priorityCount][1] || 0;
+      const ackLen = results[priorityCount + 1][1] || 0;
+      const archivedLen = results[priorityCount + 2][1] || 0;
+      const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
+
+      // Parse pending counts
+      let totalProcessingCount = 0;
+      const pendingSummaryStartIdx = priorityCount + 4;
+      for (let i = 0; i < priorityCount; i++) {
+        const pendingSummary = results[pendingSummaryStartIdx + i];
+        if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
+          const pendingCount = Number(pendingSummary[1][0] || 0);
+          if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
+        }
+      }
+
+      const waitingLength = Math.max(0, totalMainLen - totalProcessingCount);
+
+      return {
+        mainQueue: {
+          name: this.config.queue_name,
+          length: waitingLength,
+          priority_levels: this.config.max_priority_levels,
+        },
+        processingQueue: {
+          name: "processing_pending",
+          length: totalProcessingCount,
+        },
+        deadLetterQueue: {
+          name: this.config.dead_letter_queue_name,
+          length: dlqLen,
+        },
+        acknowledgedQueue: {
+          name: this.config.acknowledged_queue_name,
+          length: ackLen,
+          total: totalAck,
+        },
+        archivedQueue: {
+          name: this.config.archived_queue_name,
+          length: archivedLen,
+        },
+        metadata: {
+          totalProcessed: 0,
+          totalFailed: 0,
+          totalAcknowledged: totalAck,
+        },
+        availableTypes: [],
+      };
+    }
+
+    // Full mode: Get queue contents (limited to 1000 items each) for all priority streams
+    for (const stream of priorityStreams) {
+      pipeline.xrevrange(stream, "+", "-", "COUNT", 1000);
+    }
+    pipeline.xrevrange(this.config.dead_letter_queue_name, "+", "-", "COUNT", 1000);
+    pipeline.xrevrange(this.config.acknowledged_queue_name, "+", "-", "COUNT", 1000);
+    pipeline.xrevrange(this.config.archived_queue_name, "+", "-", "COUNT", 1000);
+
+    // Get metadata (only needed when including messages)
+    pipeline.hgetall(this.config.metadata_hash_name);
+
+    // Get detailed Processing (Pending) entries for all priority streams
     for (const stream of priorityStreams) {
       pipeline.xpending(stream, this.config.consumer_group_name, "-", "+", 100);
     }
 
     const results = await pipeline.exec();
+
+    // Pipeline structure for full mode (includeMessages=true):
+    // [0..priorityCount-1]: XLEN for each priority stream
+    // [priorityCount]: XLEN DLQ
+    // [priorityCount+1]: XLEN Acknowledged
+    // [priorityCount+2]: XLEN Archived
+    // [priorityCount+3]: GET total_acknowledged_key
+    // [priorityCount+4..priorityCount+4+priorityCount-1]: XPENDING summary for each priority stream
+    // [priorityCount+4+priorityCount..priorityCount+4+priorityCount+priorityCount-1]: XREVRANGE for each priority stream
+    // [priorityCount+4+priorityCount+priorityCount]: XREVRANGE DLQ
+    // [priorityCount+4+priorityCount+priorityCount+1]: XREVRANGE Acknowledged
+    // [priorityCount+4+priorityCount+priorityCount+2]: XREVRANGE Archived
+    // [priorityCount+4+priorityCount+priorityCount+3]: HGETALL metadata
+    // [priorityCount+4+priorityCount+priorityCount+4..]: XPENDING detailed for each priority stream
 
     // Parse lengths
     let totalMainLen = 0;
@@ -159,15 +233,24 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
     const ackLen = results[priorityCount + 1][1] || 0;
     const archivedLen = results[priorityCount + 2][1] || 0;
     const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
-    
+
+    // Parse pending summary counts (same position for full mode)
+    const pendingSummaryStartIdx = priorityCount + 4;
+    let totalProcessingCount = 0;
+    for (let i = 0; i < priorityCount; i++) {
+      const pendingSummary = results[pendingSummaryStartIdx + i];
+      if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
+        const pendingCount = Number(pendingSummary[1][0] || 0);
+        if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
+      }
+    }
+
     // Parse messages from all priority streams
     let mainMessages = [];
     let deadMessages = [];
     let acknowledgedMessages = [];
     let archivedMessages = [];
     let metadata = {};
-    let pendingSummaryStartIdx;
-    let pendingDetailStartIdx;
 
     // Helper to parse Stream messages
     const parseStreamMessages = (rawMessages, streamName) => {
@@ -189,58 +272,46 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
         });
     };
 
-    if (includeMessages) {
-        const contentStartIdx = priorityCount + 4;
-        
-        // Collect main messages from all priority streams
-        for (let i = 0; i < priorityCount; i++) {
-          const streamMsgs = results[contentStartIdx + i][1];
-          const streamName = priorityStreams[i];
-          mainMessages.push(...parseStreamMessages(streamMsgs, streamName));
-        }
-        mainMessages = mainMessages.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 100);
-        
-        const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
-        const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
-        const archivedMsgsRaw = results[contentStartIdx + priorityCount + 2][1];
-        metadata = results[contentStartIdx + priorityCount + 3][1];
-        
-        deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
-        acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
-        archivedMessages = parseStreamMessages(archivedMsgsRaw, this.config.archived_queue_name);
+    // Content starts after pending summaries
+    const contentStartIdx = pendingSummaryStartIdx + priorityCount;
 
-        pendingSummaryStartIdx = contentStartIdx + priorityCount + 4;
-        pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
-    } else {
-        metadata = results[priorityCount + 4][1];
-        pendingSummaryStartIdx = priorityCount + 5;
-        pendingDetailStartIdx = pendingSummaryStartIdx + priorityCount;
+    // Collect main messages from all priority streams
+    for (let i = 0; i < priorityCount; i++) {
+      const streamMsgs = results[contentStartIdx + i][1];
+      const streamName = priorityStreams[i];
+      mainMessages.push(...parseStreamMessages(streamMsgs, streamName));
     }
+    mainMessages = mainMessages.sort((a,b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, 100);
+
+    const dlqMsgsRaw = results[contentStartIdx + priorityCount][1];
+    const ackMsgsRaw = results[contentStartIdx + priorityCount + 1][1];
+    const archivedMsgsRaw = results[contentStartIdx + priorityCount + 2][1];
+    metadata = results[contentStartIdx + priorityCount + 3][1];
+
+    deadMessages = parseStreamMessages(dlqMsgsRaw, this.config.dead_letter_queue_name);
+    acknowledgedMessages = parseStreamMessages(ackMsgsRaw, this.config.acknowledged_queue_name);
+    archivedMessages = parseStreamMessages(archivedMsgsRaw, this.config.archived_queue_name);
+
+    // Detailed pending entries start after metadata
+    const pendingDetailStartIdx = contentStartIdx + priorityCount + 4;
 
     // Processing messages from all priority streams
     const processingMessages = [];
     const pendingToCheck = [];
-    let totalProcessingCount = 0;
 
     for (let i = 0; i < priorityCount; i++) {
-      const pendingSummary = results[pendingSummaryStartIdx + i];
-      if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
-        const pendingCount = Number(pendingSummary[1][0] || 0);
-        if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
-      }
-
       const pendingResult = results[pendingDetailStartIdx + i][1];
       const pending = Array.isArray(pendingResult) ? pendingResult : [];
       const streamName = priorityStreams[i];
       const priority = priorityCount - 1 - i; // Convert index to priority
-      
+
       pending.forEach(([id, consumer, idle, count]) => {
          pendingToCheck.push({ id, streamName, priority, count });
       });
     }
 
     // Fetch details for pending messages to verify existence (filter out ghosts)
-    if (pendingToCheck.length > 0 && includeMessages) {
+    if (pendingToCheck.length > 0) {
         const checkPipeline = redis.pipeline();
         pendingToCheck.forEach(p => {
             checkPipeline.xrange(p.streamName, p.id, p.id);
@@ -321,7 +392,7 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
     });
 
     // Filter out messages from mainQueue that are present in processingQueue
-    if (includeMessages && mainMessages.length > 0) {
+    if (mainMessages.length > 0) {
       const checkPipeline = redis.pipeline();
       const checkTargets = [];
       for (const m of mainMessages) {

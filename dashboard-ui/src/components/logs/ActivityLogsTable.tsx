@@ -291,7 +291,7 @@ export const ActivityLogsTable = React.memo(({
         scrollTop,
         viewportHeight,
         rowHeight: 44,
-        overscan: 8,
+        overscan: 28,
         enabled: shouldVirtualize
     })
 
@@ -309,53 +309,62 @@ export const ActivityLogsTable = React.memo(({
             <ScrollArea
                 viewportRef={scrollContainerRef}
                 className="relative flex-1 min-h-0"
+                viewportClassName="bg-card"
                 scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
-                <Table>
-                    <TableHeader>
-                        <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className="w-[120px]" />
-                            <SortableHeader column="timestamp" label="Timestamp" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                            <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[90px]" />
-                            <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                            <SortableHeader column="consumer_id" label="Consumer" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                            <SortableHeader column="timing" label="Timing" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                            <SortableHeader column="severity" label="Severity" currentSort={sort} onSort={handleSort} className="w-[70px]" />
-                            <SortableHeader column="type" label="Type" currentSort={sort} onSort={handleSort} className="w-[120px]" />
-                            <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {sortedLogs.length === 0 ? (
-                            !loading && (
-                                <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={colSpan} className="h-[400px] p-0">
-                                        <EmptyState
-                                            icon={isFilterActive ? Search : FileText}
-                                            title="No activity logs found"
-                                            description="Activity will appear here as queue operations occur"
-                                            isFilterActive={isFilterActive}
-                                            activeFiltersDescription={activeFiltersDescription}
-                                        />
-                                    </TableCell>
-                                </TableRow>
-                            )
-                        ) : shouldVirtualize && virtual ? (
-                            <>
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
-                                {virtual.visibleItems.map(renderRow)}
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
-                            </>
-                        ) : (
-                            sortedLogs.map(renderRow)
-                        )}
-                    </TableBody>
-                </Table>
+                <div
+                    style={shouldVirtualize && virtual ? { height: virtual.totalHeight + 48 } : undefined}
+                >
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="hover:bg-transparent border-b border-border/50">
+                                <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className="w-[120px]" />
+                                <SortableHeader column="timestamp" label="Timestamp" currentSort={sort} onSort={handleSort} className="w-[180px]" />
+                                <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[90px]" />
+                                <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
+                                <SortableHeader column="consumer_id" label="Consumer" currentSort={sort} onSort={handleSort} className="w-[180px]" />
+                                <SortableHeader column="timing" label="Timing" currentSort={sort} onSort={handleSort} className="w-[100px]" />
+                                <SortableHeader column="severity" label="Severity" currentSort={sort} onSort={handleSort} className="w-[70px]" />
+                                <SortableHeader column="type" label="Type" currentSort={sort} onSort={handleSort} className="w-[120px]" />
+                                <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {sortedLogs.length === 0 ? (
+                                !loading && (
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableCell colSpan={colSpan} className="h-[400px] p-0">
+                                            <EmptyState
+                                                icon={isFilterActive ? Search : FileText}
+                                                title="No activity logs found"
+                                                description="Activity will appear here as queue operations occur"
+                                                isFilterActive={isFilterActive}
+                                                activeFiltersDescription={activeFiltersDescription}
+                                            />
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            ) : shouldVirtualize && virtual ? (
+                                <>
+                                    {virtual.topSpacerHeight > 0 && (
+                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className="p-0" />
+                                        </TableRow>
+                                    )}
+                                    {virtual.visibleItems.map(renderRow)}
+                                    {virtual.bottomSpacerHeight > 0 && (
+                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className="p-0" />
+                                        </TableRow>
+                                    )}
+                                </>
+                            ) : (
+                                sortedLogs.map(renderRow)
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
             </ScrollArea>
             {totalPages > 0 && (
                 <PaginationFooter

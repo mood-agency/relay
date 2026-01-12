@@ -81,7 +81,7 @@ export function useTableVirtualization(
         scrollTop,
         viewportHeight,
         rowHeight: 44,
-        overscan: 8,
+        overscan: 28,
         enabled: shouldVirtualize
     })
 
@@ -334,6 +334,13 @@ export const EmptyTableBody = ({
             </TableCell>
         </TableRow>
     ) : null
+)
+
+// Filler row to fill remaining space at the bottom of the table
+export const TableFillerRow = ({ colSpan }: { colSpan: number }) => (
+    <TableRow className="hover:bg-transparent border-0">
+        <TableCell colSpan={colSpan} className="p-0 h-full" style={{ height: '100%' }} />
+    </TableRow>
 )
 
 // Re-export commonly used components

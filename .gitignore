@@ -41,6 +41,9 @@ testem.log
 .DS_Store
 Thumbs.db
 
+# Claude Code temp directories
+tmpclaude-*-cwd
+
 .nx/cache
 .nx/workspace-data
 

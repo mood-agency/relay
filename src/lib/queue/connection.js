@@ -42,6 +42,9 @@ export class RedisConnectionManager {
       if (this.config.redis_password) {
         redisOptions.password = this.config.redis_password;
       }
+      if (this.config.redis_tls) {
+        redisOptions.tls = {};
+      }
       this._redis = new Redis(redisOptions);
 
       this._redis.on("connect", () =>
@@ -76,6 +79,9 @@ export class RedisConnectionManager {
       };
       if (this.config.redis_password) {
         redisOptions.password = this.config.redis_password;
+      }
+      if (this.config.redis_tls) {
+        redisOptions.tls = {};
       }
       this._subscriber = new Redis(redisOptions);
       this._subscriber.setMaxListeners(0); // Allow unlimited listeners for SSE

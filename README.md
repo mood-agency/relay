@@ -660,6 +660,40 @@ VITE_API_KEY=your-secret-key-here
 
 This key should match the `SECRET_KEY` configured on the server.
 
+### Infisical Integration
+
+Relay supports loading environment variables from [Infisical](https://infisical.com) for secure secret management. To use Infisical:
+
+1. **Set up Infisical credentials** (one of the following):
+   - Set environment variables:
+     ```bash
+     INFISICAL_TOKEN=your-service-token
+     INFISICAL_PROJECT_ID=your-project-id
+     INFISICAL_ENVIRONMENT=dev  # Optional, defaults to "dev"
+     ```
+   - Or use a `.env` file for local development (Infisical will override these values if configured)
+
+2. **Configure secrets in Infisical Cloud**:
+   - Add all your environment variables as secrets in your Infisical project
+   - Use the same variable names as listed in the Environment Variables section above
+   - Set the appropriate environment (dev, staging, production, etc.)
+
+3. **How it works**:
+   - If `INFISICAL_TOKEN` and `INFISICAL_PROJECT_ID` are set, the application will load secrets from Infisical at startup
+   - Infisical secrets take precedence over local `.env` files or system environment variables
+   - If Infisical is not configured, the application falls back to using `.env` files (via dotenv) or system environment variables
+   - All secrets are validated using the same Zod schema regardless of source
+
+**Example Infisical setup:**
+```bash
+# Local .env file (for Infisical credentials only)
+INFISICAL_TOKEN=st.xxxxx.yyyyy
+INFISICAL_PROJECT_ID=12345678-1234-1234-1234-123456789012
+INFISICAL_ENVIRONMENT=production
+```
+
+**Note**: The Infisical service token should have read permissions for the secrets you need. The application will automatically load all secrets from the root path (`/`) of your specified environment.
+
 ---
 
 ## 🔐 API Authentication

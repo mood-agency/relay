@@ -1,6 +1,4 @@
-
-import { fetch } from "undici"; // Start with node native fetch if available, but since we have devDependencies, we can assume environment supports it or use global fetch if node > 18.
-// We'll use global fetch which is available in Node 18+ and we have @types/node.
+// Using global fetch available in Node 18+ (no import needed)
 
 // Queue Tester Class
 class QueueTester {

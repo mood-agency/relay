@@ -116,52 +116,61 @@ export const MainQueueTable = React.memo(({
             <ScrollArea
                 viewportRef={scrollContainerRef}
                 className="relative flex-1 min-h-0"
+                viewportClassName="bg-card"
                 scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
-                <Table>
-                    <TableHeader>
-                        <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
-                                <input
-                                    type="checkbox"
-                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
-                                    checked={allSelected}
-                                    onChange={() => onToggleSelectAll(messages.map(m => m.id))}
+                <div
+                    style={shouldVirtualize && virtual ? { height: virtual.totalHeight + 48 } : undefined}
+                >
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="hover:bg-transparent border-b border-border/50">
+                                <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
+                                    <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                        checked={allSelected}
+                                        onChange={() => onToggleSelectAll(messages.map(m => m.id))}
+                                    />
+                                </TableHead>
+                                <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <SortableHeader label="Created At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                                <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {messages.length === 0 ? (
+                                <EmptyTableBody
+                                    colSpan={colSpan}
+                                    isLoading={isLoading}
+                                    isFilterActive={isFilterActive}
+                                    activeFiltersDescription={activeFiltersDescription}
                                 />
-                            </TableHead>
-                            <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Created At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {messages.length === 0 ? (
-                            <EmptyTableBody
-                                colSpan={colSpan}
-                                isLoading={isLoading}
-                                isFilterActive={isFilterActive}
-                                activeFiltersDescription={activeFiltersDescription}
-                            />
-                        ) : shouldVirtualize && virtual ? (
-                            <>
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
-                                {virtual.visibleItems.map(renderRow)}
-                                <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                    <TableCell colSpan={colSpan} className="p-0" />
-                                </TableRow>
-                            </>
-                        ) : (
-                            messages.map(renderRow)
-                        )}
-                    </TableBody>
-                </Table>
+                            ) : shouldVirtualize && virtual ? (
+                                <>
+                                    {virtual.topSpacerHeight > 0 && (
+                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        </TableRow>
+                                    )}
+                                    {virtual.visibleItems.map(renderRow)}
+                                    {virtual.bottomSpacerHeight > 0 && (
+                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        </TableRow>
+                                    )}
+                                </>
+                            ) : (
+                                messages.map(renderRow)
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
             </ScrollArea>
             {totalPages > 0 && (
                 <PaginationFooter

@@ -188,6 +188,7 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
   // Special handling when moving TO processing queue:
   // We attempt to dequeue (consume) the messages immediately so they appear in the PEL (Processing list).
   if (toQueue === 'processing') {
+    logger.info(`[MoveToProcessing] Starting auto-dequeue for ${movedCount} messages`);
     const targetIds = new Set(enrichedMessages.map(m => m.id));
     const maxAttempts = movedCount + 200;
     let dequeuedCount = 0;
@@ -228,9 +229,16 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
           }
         }
 
-        if (!results || results.length === 0) break;
+        if (!results || results.length === 0) {
+          logger.info(`[MoveToProcessing] No results from xreadgroup, breaking loop`);
+          break;
+        }
         const [, entries] = results[0] || [];
-        if (!entries || entries.length === 0) break;
+        if (!entries || entries.length === 0) {
+          logger.info(`[MoveToProcessing] No entries in results, breaking loop`);
+          break;
+        }
+        logger.info(`[MoveToProcessing] Got ${entries.length} entries from xreadgroup`);
 
         const now = Date.now() / 1000;
         const parsedEntries = [];
@@ -357,8 +365,12 @@ export async function moveMessages(messages, fromQueue, toQueue, options = {}) {
           });
         }
 
-        if (pipeline2.length > 0) {
-          await pipeline2.exec();
+        if (processed > 0) {
+          logger.info(`[MoveToProcessing] Executing pipeline with ${processed} metadata updates`);
+          const pipelineResult = await pipeline2.exec();
+          logger.info(`[MoveToProcessing] Pipeline result: ${JSON.stringify(pipelineResult?.slice(0, 3))}`);
+        } else {
+          logger.warn(`[MoveToProcessing] No messages processed, skipping pipeline exec`);
         }
 
         this._stats.dequeued += processed;
@@ -525,7 +537,7 @@ export async function removeMessagesByDateRange(startTimestamp, endTimestamp) {
         }
       }
     }
-    if (pipeline.length > 0) await pipeline.exec();
+    if (removedFromCurrentQueue > 0) await pipeline.exec();
 
     if (removedFromCurrentQueue > 0) {
       logger.info(`Removed ${removedFromCurrentQueue} messages from ${queueInfo.type}`);
@@ -1055,13 +1067,19 @@ export async function getQueueMessages(queueType, params = {}) {
                   if (meta.lock_token) m.lock_token = meta.lock_token;
                   // Use consumer_id from metadata if available, otherwise from XPENDING
                   m.consumer_id = meta.consumer_id || (pendingInfo ? pendingInfo.consumer : null);
-                } catch (e) { }
+                  logger.info(`[GetProcessing] Message ${m.id}: dequeued_at=${m.dequeued_at}, custom_ack_timeout=${m.custom_ack_timeout} (from metadata)`);
+                } catch (e) {
+                  logger.warn(`[GetProcessing] Failed to parse metadata for ${m.id}: ${e.message}`);
+                }
               } else {
                 if (pendingInfo) {
                   m.attempt_count = pendingInfo.count;
                   m.dequeued_at = (Date.now() - pendingInfo.idle) / 1000;
                   m.processing_started_at = m.dequeued_at;
                   m.consumer_id = pendingInfo.consumer;
+                  logger.info(`[GetProcessing] Message ${m.id}: dequeued_at=${m.dequeued_at} (from pendingInfo fallback)`);
+                } else {
+                  logger.warn(`[GetProcessing] Message ${m.id}: No metadata AND no pendingInfo! dequeued_at=${m.dequeued_at}`);
                 }
               }
             });

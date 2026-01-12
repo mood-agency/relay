@@ -12,6 +12,7 @@ export class QueueConfig {
    * @param {string|number} [config.redis_port="6379"] - Redis port.
    * @param {string|number} [config.redis_db="0"] - Redis database index.
    * @param {string} [config.redis_password=null] - Redis password.
+   * @param {string} [config.redis_tls="false"] - Enable TLS for Redis connection.
    * @param {string} [config.queue_name="queue"] - Base name for the queue.
    * @param {string} [config.processing_queue_name="queue_processing"] - Name for processing queue (legacy/virtual).
    * @param {string} [config.dead_letter_queue_name="queue_dlq"] - Name for dead letter queue.
@@ -36,6 +37,7 @@ export class QueueConfig {
     this.redis_port = parseInt(config.redis_port || "6379", 10);
     this.redis_db = parseInt(config.redis_db || "0", 10);
     this.redis_password = config.redis_password || null;
+    this.redis_tls = (config.redis_tls || "false").toLowerCase() === "true";
 
     this.queue_name = config.queue_name || "queue";
     this.processing_queue_name = config.processing_queue_name || "queue_processing";

@@ -24,6 +24,7 @@
   "dependencies": {
     "@hono/node-server": "^1.14.4",
     "@hono/zod-openapi": "^0.19.6",
+    "@infisical/sdk": "^4.0.6",
     "@scalar/hono-api-reference": "^0.8.8",
     "date-fns": "^4.1.0",
     "dotenv": "^16.5.0",

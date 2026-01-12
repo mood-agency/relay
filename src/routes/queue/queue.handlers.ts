@@ -72,6 +72,7 @@ interface QueueConfigI {
   redis_port: number;
   redis_db: number;
   redis_password: string | undefined;
+  redis_tls: string;
   queue_name: string;
   processing_queue_name: string;
   dead_letter_queue_name: string;
@@ -87,27 +88,44 @@ interface QueueConfigI {
   events_channel: string;
 }
 
-const queueConfig: QueueConfigI = {
-  redis_host: env.REDIS_HOST,
-  redis_port: env.REDIS_PORT,
-  redis_db: env.REDIS_DB,
-  redis_password: env.REDIS_PASSWORD ?? undefined,
-  queue_name: env.QUEUE_NAME,
-  processing_queue_name: env.PROCESSING_QUEUE_NAME,
-  dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
-  archived_queue_name: env.ARCHIVED_QUEUE_NAME,
-  metadata_hash_name: env.METADATA_HASH_NAME,
-  ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
-  max_attempts: env.MAX_ATTEMPTS,
-  requeue_batch_size: env.REQUEUE_BATCH_SIZE,
-  max_priority_levels: env.MAX_PRIORITY_LEVELS,
-  redis_pool_size: env.REDIS_POOL_SIZE,
-  enable_message_encryption: env.ENABLE_ENCRYPTION,
-  secret_key: env.SECRET_KEY ?? undefined,
-  events_channel: env.EVENTS_CHANNEL,
-};
+function createQueueConfig(): QueueConfigI {
+  return {
+    redis_host: env.REDIS_HOST,
+    redis_port: env.REDIS_PORT,
+    redis_db: env.REDIS_DB,
+    redis_password: env.REDIS_PASSWORD ?? undefined,
+    redis_tls: env.REDIS_TLS,
+    queue_name: env.QUEUE_NAME,
+    processing_queue_name: env.PROCESSING_QUEUE_NAME,
+    dead_letter_queue_name: env.DEAD_LETTER_QUEUE_NAME,
+    archived_queue_name: env.ARCHIVED_QUEUE_NAME,
+    metadata_hash_name: env.METADATA_HASH_NAME,
+    ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
+    max_attempts: env.MAX_ATTEMPTS,
+    requeue_batch_size: env.REQUEUE_BATCH_SIZE,
+    max_priority_levels: env.MAX_PRIORITY_LEVELS,
+    redis_pool_size: env.REDIS_POOL_SIZE,
+    enable_message_encryption: env.ENABLE_ENCRYPTION,
+    secret_key: env.SECRET_KEY ?? undefined,
+    events_channel: env.EVENTS_CHANNEL,
+  };
+}
 
-export const queue = new OptimizedRedisQueue(new QueueConfig(queueConfig as any));
+// Lazy initialization - queue is created on first access after env is initialized
+let _queue: OptimizedRedisQueue | null = null;
+export function getQueue(): OptimizedRedisQueue {
+  if (!_queue) {
+    _queue = new OptimizedRedisQueue(new QueueConfig(createQueueConfig() as any));
+  }
+  return _queue;
+}
+
+// For backwards compatibility - but prefer getQueue() for lazy init
+export const queue = new Proxy({} as OptimizedRedisQueue, {
+  get(_target, prop) {
+    return (getQueue() as any)[prop];
+  },
+});
 
 export const addMessage: AppRouteHandler<AddMessageRoute> = async (c: any) => {
   const { type, payload, priority, ackTimeout, maxAttempts } = c.req.valid("json");
@@ -490,8 +508,8 @@ export const clearQueue: AppRouteHandler<ClearQueueRoute> = async (c: any) => {
 export const getConfig: AppRouteHandler<GetConfigRoute> = async (c: any) => {
   try {
     return c.json({
-      ack_timeout_seconds: queueConfig.ack_timeout_seconds,
-      max_attempts: queueConfig.max_attempts,
+      ack_timeout_seconds: queue.config.ack_timeout_seconds,
+      max_attempts: queue.config.max_attempts,
     }, 200);
   } catch (error: any) {
     return c.json({ message: error.message || "Failed to get config" }, 500);
