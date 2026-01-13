@@ -336,7 +336,7 @@ Rohan supports multiple LLM providers:
 | Anthropic | `@ai-sdk/anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | Together | via OpenAI compat | `TOGETHER_API_KEY` | `meta-llama/Llama-3-70b-chat-hf` |
 | Fireworks | via OpenAI compat | `FIREWORKS_API_KEY` | `llama-v3-70b-instruct` |
-| Ollama | via OpenAI compat | - | `llama3`, `mistral` |
+| Ollama | via OpenAI compat | - | `qwen2.5-coder:7b` (recommended), `llama3` |
 
 ### Provider Examples
 
@@ -353,9 +353,77 @@ npm run rohan -- plan api-spec.json --provider openai --model gpt-4o
 export ANTHROPIC_API_KEY="sk-ant-..."
 npm run rohan -- plan api-spec.json --provider anthropic --model claude-sonnet-4-20250514
 
-# Local Ollama
-npm run rohan -- plan api-spec.json --provider ollama --model llama3
+# Local Ollama (recommended for offline/free usage)
+ollama pull qwen2.5-coder:7b  # First time only
+npm run rohan -- plan api-spec.json --provider ollama --model qwen2.5-coder:7b
 ```
+
+## Local LLM with Ollama (Free & Offline)
+
+Run Rohan completely locally without API costs using Ollama and Qwen2.5-Coder.
+
+### Why Use Local LLM?
+
+| Benefit | Description |
+|---------|-------------|
+| **Zero Cost** | No API fees - runs entirely on your machine |
+| **Offline** | Works without internet connection |
+| **Privacy** | Your API specs never leave your machine |
+| **Speed** | No network latency for API calls |
+
+### Setup
+
+#### 1. Install Ollama
+
+```bash
+# Windows
+winget install Ollama.Ollama
+
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+#### 2. Pull Qwen2.5-Coder Model
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Model specs:
+- **Size**: ~4.7GB download
+- **RAM**: ~6GB during inference
+- **Context**: 32K tokens
+- **Speed**: 10-20 tokens/sec on CPU
+
+#### 3. Run Rohan with Local Model
+
+```bash
+# Generate test plan
+npm run rohan -- plan api-spec.json -o test-plan.json --provider ollama --model qwen2.5-coder:7b
+
+# Build k6 scripts
+npm run rohan -- build test-plan.json -o tests/ --provider ollama --model qwen2.5-coder:7b
+```
+
+### Alternative Local Models
+
+| Model | Size | Quality | Speed | Command |
+|-------|------|---------|-------|---------|
+| `qwen2.5-coder:7b` | 4.7GB | Best | Medium | `ollama pull qwen2.5-coder:7b` |
+| `qwen2.5-coder:3b` | 2.0GB | Good | Fast | `ollama pull qwen2.5-coder:3b` |
+| `deepseek-coder:6.7b` | 3.8GB | Very Good | Medium | `ollama pull deepseek-coder:6.7b` |
+| `codellama:7b` | 3.8GB | Good | Medium | `ollama pull codellama:7b` |
+
+### Hardware Requirements
+
+| RAM | Recommended Model |
+|-----|-------------------|
+| 8GB | `qwen2.5-coder:3b` |
+| 16GB | `qwen2.5-coder:7b` or `deepseek-coder:6.7b` |
+| 32GB+ | Any model, comfortable headroom |
 
 ## Batching for Efficiency
 
