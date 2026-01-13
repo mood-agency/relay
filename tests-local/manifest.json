@@ -1,0 +1,117 @@
+[
+  {
+    "id": 1,
+    "name": "Fail_Create_Message_Missing_Type",
+    "file": "test_fail_create_message_missing_type.js"
+  },
+  {
+    "id": 2,
+    "name": "Fail_Create_Message_Empty_JSON",
+    "file": "test_fail_create_message_empty_json.js"
+  },
+  {
+    "id": 3,
+    "name": "Fail_Create_Message_Invalid_JSON",
+    "file": "test_fail_create_message_invalid_json.js"
+  },
+  {
+    "id": 4,
+    "name": "Fail_Create_Message_Empty_Body",
+    "file": "test_fail_create_message_empty_body.js"
+  },
+  {
+    "id": 5,
+    "name": "Create_Message_Zero_Limit",
+    "file": "test_create_message_zero_limit.js"
+  },
+  {
+    "id": 6,
+    "name": "Get_Messages_Basic",
+    "file": "test_get_messages_basic.js"
+  },
+  {
+    "id": 7,
+    "name": "Get_Messages_Limit_5",
+    "file": "test_get_messages_limit_5.js"
+  },
+  {
+    "id": 8,
+    "name": "Fail_Get_Messages_Negative_Limit",
+    "file": "test_fail_get_messages_negative_limit.js"
+  },
+  {
+    "id": 9,
+    "name": "Create_Message_Basic",
+    "file": "test_create_message_basic.js"
+  },
+  {
+    "id": 10,
+    "name": "Create_Message_String_Payload",
+    "file": "test_create_message_string_payload.js"
+  },
+  {
+    "id": 11,
+    "name": "Fail_Delete_Message_Empty_Id",
+    "file": "test_fail_delete_message_empty_id.js"
+  },
+  {
+    "id": 12,
+    "name": "Fail_Delete_Message_Null_Id",
+    "file": "test_fail_delete_message_null_id.js"
+  },
+  {
+    "id": 13,
+    "name": "Health_Check_Basic",
+    "file": "test_health_check_basic.js"
+  },
+  {
+    "id": 14,
+    "name": "Fail_Get_Message_Invalid_Id",
+    "file": "test_fail_get_message_invalid_id.js"
+  },
+  {
+    "id": 15,
+    "name": "Fail_Get_Message_Empty_Id",
+    "file": "test_fail_get_message_empty_id.js"
+  },
+  {
+    "id": 16,
+    "name": "Fail_Get_Message_Null_Id",
+    "file": "test_fail_get_message_null_id.js"
+  },
+  {
+    "id": 17,
+    "name": "Delete_Message_Basic",
+    "file": "test_delete_message_basic.js"
+  },
+  {
+    "id": 18,
+    "name": "Fail_Delete_Message_Invalid_Id",
+    "file": "test_fail_delete_message_invalid_id.js"
+  },
+  {
+    "id": 19,
+    "name": "Create_Message_Negative_Limit",
+    "file": "test_create_message_negative_limit.js"
+  },
+  {
+    "id": 20,
+    "name": "Create_Message_Max_Limit",
+    "file": "test_create_message_max_limit.js"
+  },
+  {
+    "id": 21,
+    "name": "Create_Message_Min_Limit",
+    "file": "test_create_message_min_limit.js"
+  },
+  {
+    "id": 22,
+    "name": "Create_Message_Decimal_Limit",
+    "file": "test_create_message_decimal_limit.js"
+  },
+  {
+    "id": 23,
+    "name": "Get_Message_Basic",
+    "file": "test_get_message_basic.js"
+  }
+]
