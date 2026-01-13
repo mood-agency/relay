@@ -64,6 +64,30 @@ export const PROVIDERS: Record<Provider, ProviderConfig> = {
     defaultModel: 'llama3',
     models: ['llama3', 'llama2', 'mistral', 'codellama'],
   },
+  portkey: {
+    name: 'Portkey (Nebius/Multi-provider)',
+    envVar: 'PORTKEY_API_KEY',
+    defaultModel: 'Qwen/Qwen2.5-Coder-7B-Instruct',
+    models: [
+      'Qwen/Qwen2.5-Coder-7B-Instruct',
+      'Qwen/Qwen2.5-Coder-32B-Instruct',
+      'Qwen/Qwen2.5-72B-Instruct',
+      'deepseek-ai/DeepSeek-V3',
+      'meta-llama/Llama-3.3-70B-Instruct',
+    ],
+  },
+  cloudflare: {
+    name: 'Cloudflare Workers AI',
+    envVar: 'CLOUDFLARE_API_TOKEN',
+    defaultModel: '@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq',
+    models: [
+      '@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq',
+      '@cf/meta/llama-3.1-8b-instruct',
+      '@cf/meta/llama-3.1-70b-instruct',
+      '@cf/qwen/qwen1.5-14b-chat-awq',
+      '@cf/mistral/mistral-7b-instruct-v0.2',
+    ],
+  },
 };
 
 /**
@@ -74,6 +98,7 @@ export function detectProvider(model: string): Provider {
 
   if (modelLower.startsWith('gpt-')) return 'openai';
   if (modelLower.startsWith('claude-')) return 'anthropic';
+  if (modelLower.startsWith('@cf/')) return 'cloudflare';
   if (modelLower.includes('llama') || modelLower.includes('mixtral') || modelLower.includes('gemma')) {
     return 'groq';
   }
@@ -102,6 +127,10 @@ export function getApiKey(provider: Provider): string | undefined {
  */
 export function hasApiKey(provider: Provider): boolean {
   if (provider === 'ollama') return true; // Ollama doesn't need API key
+  if (provider === 'cloudflare') {
+    // Cloudflare needs both API token and account ID
+    return !!getApiKey(provider) && !!process.env.CLOUDFLARE_ACCOUNT_ID;
+  }
   return !!getApiKey(provider);
 }
 

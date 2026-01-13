@@ -5,7 +5,7 @@
 /**
  * Supported LLM providers
  */
-export type Provider = 'groq' | 'openai' | 'anthropic' | 'together' | 'fireworks' | 'ollama';
+export type Provider = 'groq' | 'openai' | 'anthropic' | 'together' | 'fireworks' | 'ollama' | 'cloudflare' | 'portkey';
 
 /**
  * A single test entry in the test plan

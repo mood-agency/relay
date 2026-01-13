@@ -66,6 +66,31 @@ function createModel(options: LLMOptions) {
       return ollama(model);
     }
 
+    case 'cloudflare': {
+      // Cloudflare Workers AI uses OpenAI-compatible API
+      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+      if (!accountId) {
+        throw new Error('CLOUDFLARE_ACCOUNT_ID environment variable is required');
+      }
+      const cloudflare = createOpenAI({
+        apiKey: getApiKey('cloudflare') || '',
+        baseURL: apiBase ?? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
+      });
+      return cloudflare(model);
+    }
+
+    case 'portkey': {
+      // Portkey uses OpenAI-compatible API with Nebius backend
+      const portkey = createOpenAI({
+        apiKey: getApiKey('portkey') || '',
+        baseURL: apiBase ?? 'https://api.portkey.ai/v1',
+        headers: {
+          'x-portkey-provider': 'nebius',
+        },
+      });
+      return portkey(model);
+    }
+
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }

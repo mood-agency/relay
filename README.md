@@ -387,6 +387,7 @@ Rohan supports multiple LLM providers:
 | Anthropic | `@ai-sdk/anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | Together | via OpenAI compat | `TOGETHER_API_KEY` | `meta-llama/Llama-3-70b-chat-hf` |
 | Fireworks | via OpenAI compat | `FIREWORKS_API_KEY` | `llama-v3-70b-instruct` |
+| Cloudflare | via OpenAI compat | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | `@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq` |
 | Ollama | via OpenAI compat | - | `qwen2.5-coder:7b` (recommended), `llama3` |
 
 ### Provider Examples
@@ -407,6 +408,11 @@ npm run rohan -- plan api-spec.json --provider anthropic --model claude-sonnet-4
 # Local Ollama (recommended for offline/free usage)
 ollama pull qwen2.5-coder:7b  # First time only
 npm run rohan -- plan api-spec.json --provider ollama --model qwen2.5-coder:7b
+
+# Cloudflare Workers AI
+export CLOUDFLARE_API_TOKEN="your-api-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+npm run rohan -- plan api-spec.json --provider cloudflare --model @cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq
 ```
 
 ## Local LLM with Ollama (Free & Offline)
@@ -475,6 +481,46 @@ npm run rohan -- build test-plan.json -o tests/ --provider ollama --model qwen2.
 | 8GB | `qwen2.5-coder:3b` |
 | 16GB | `qwen2.5-coder:7b` or `deepseek-coder:6.7b` |
 | 32GB+ | Any model, comfortable headroom |
+
+## Cloudflare Workers AI
+
+Use Cloudflare Workers AI for fast, affordable inference with models like DeepSeek Coder.
+
+### Why Use Cloudflare Workers AI?
+
+| Benefit | Description |
+|---------|-------------|
+| **Fast Inference** | Global edge network for low latency |
+| **Affordable** | Pay-per-use pricing, generous free tier |
+| **AWQ Models** | Quantized models for faster inference |
+| **No GPU Setup** | No hardware to manage |
+
+### Setup
+
+1. **Get your Cloudflare Account ID**: Dashboard → Workers & Pages → Account ID (right sidebar)
+
+2. **Create an API Token**: My Profile → API Tokens → Create Token → Workers AI template
+
+3. **Set environment variables**:
+```bash
+export CLOUDFLARE_API_TOKEN="your-api-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+```
+
+4. **Run Rohan with Cloudflare**:
+```bash
+npm run rohan -- plan api-spec.json --provider cloudflare --model @cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq
+```
+
+### Available Models
+
+| Model | Best For |
+|-------|----------|
+| `@cf/deepseek-ai/deepseek-coder-6.7b-instruct-awq` | Code generation (recommended) |
+| `@cf/meta/llama-3.1-8b-instruct` | General purpose |
+| `@cf/meta/llama-3.1-70b-instruct` | Complex reasoning |
+| `@cf/qwen/qwen1.5-14b-chat-awq` | Balanced performance |
+| `@cf/mistral/mistral-7b-instruct-v0.2` | Fast, lightweight |
 
 ## Batching for Efficiency
 
