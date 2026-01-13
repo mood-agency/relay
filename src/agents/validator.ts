@@ -1,136 +1,128 @@
 /**
- * Validator Agent - Validates k6 scripts and auto-fixes errors
+ * Validator Agent - Validates k6 scripts and auto-fixes errors using agentic tool use
+ *
+ * This agent uses Vercel AI SDK's tool use capability to autonomously:
+ * 1. Read the script
+ * 2. Validate it with k6 dry-run
+ * 3. If errors, fix the code and write it back
+ * 4. Repeat until valid or max steps reached
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { readFile, writeFile } from '../utils/files.js';
 import { LLMClient } from '../llm/client.js';
-import { PromptLoader, renderTemplate, cleanCodeResponse } from '../generator/templates.js';
+import { validateK6Script, readScript, writeScript } from './tools/k6Tools.js';
 import { step, success, warn } from '../utils/progress.js';
 import type { ValidationResult, ValidationReport, BuildOptions } from '../types.js';
 
-const execAsync = promisify(exec);
+/**
+ * System prompt for the validator agent
+ */
+const VALIDATOR_SYSTEM_PROMPT = `You are a k6 script validator and fixer agent. Your task is to validate and fix k6 test scripts.
+
+## Workflow
+1. First, read the script content using the readScript tool
+2. Validate the script using validateK6Script tool
+3. If the script is valid, report success
+4. If invalid, analyze the error message, fix the code, and use writeScript to save the fix
+5. After writing a fix, validate again to confirm it works
+6. Repeat until the script is valid or you've tried multiple fixes
+
+## Common k6 Errors and Fixes
+- Missing imports: Add \`import http from 'k6/http';\` and \`import { check } from 'k6';\`
+- Syntax errors: Fix JavaScript syntax (missing brackets, semicolons, template literals)
+- Undefined variables: Ensure all variables are declared before use
+- Wrong Content-Type: Use \`{ headers: { 'Content-Type': 'application/json' } }\` for JSON bodies
+- JSON body: Use \`JSON.stringify(body)\` for request body
+
+## Important Rules
+- Always read the script first to see current state
+- After fixing, always validate again
+- Keep the test intent intact - don't change what the test is testing
+- If you cannot fix the error after several attempts, report failure`;
 
 /**
- * Run k6 dry-run to validate a script
+ * Validate and fix a single script using agentic tool use
  */
-async function validateScript(scriptPath: string): Promise<{ valid: boolean; error?: string }> {
-  try {
-    await execAsync(`k6 run --dry-run "${scriptPath}"`, {
-      timeout: 30000,
-    });
-    return { valid: true };
-  } catch (err) {
-    const error = err as { stderr?: string; message?: string };
-    const errorMessage = error.stderr || error.message || 'Unknown error';
-    return { valid: false, error: errorMessage };
-  }
-}
-
-/**
- * Fix a broken k6 script using LLM
- */
-async function fixScript(
+async function validateAndFixScriptAgentic(
   client: LLMClient,
-  loader: PromptLoader,
-  testName: string,
-  code: string,
-  errorMessage: string,
-  endpointSpec: Record<string, unknown>,
-): Promise<string> {
-  const systemPrompt = await loader.load('agent_validator_system');
-  const userTemplate = await loader.load('agent_validator_user');
-
-  const userPrompt = renderTemplate(userTemplate, {
-    test_name: testName,
-    code: code,
-    error: errorMessage,
-    endpoint_spec: JSON.stringify(endpointSpec, null, 2),
-  });
-
-  const response = await client.generateWithRetry(systemPrompt, userPrompt);
-  return cleanCodeResponse(response);
-}
-
-/**
- * Validate and fix a single script
- */
-async function validateAndFixScript(
-  client: LLMClient,
-  loader: PromptLoader,
   scriptPath: string,
   testName: string,
   endpointSpec: Record<string, unknown>,
-  maxAttempts: number,
+  maxSteps: number,
   verbose: boolean,
 ): Promise<ValidationResult> {
   const filename = scriptPath.split(/[\\/]/).pop() || scriptPath;
-  let code = await readFile(scriptPath);
-  let attempts = 0;
-  let lastError: string | undefined;
 
-  // First validation
-  const initial = await validateScript(scriptPath);
-  if (initial.valid) {
+  try {
+    const result = await client.generateWithTools({
+      system: VALIDATOR_SYSTEM_PROMPT,
+      prompt: `Validate and fix the k6 script at: ${scriptPath}
+
+Test Name: ${testName}
+Endpoint Spec: ${JSON.stringify(endpointSpec, null, 2)}
+
+Start by reading the script, then validate it. If there are errors, fix them.`,
+      tools: {
+        validateK6Script,
+        readScript,
+        writeScript,
+      },
+      maxSteps,
+    });
+
+    // Analyze the result to determine if validation succeeded
+    const steps = result.steps || [];
+    let wasFixed = false;
+    let isValid = false;
+    let lastError: string | undefined;
+    let attempts = 0;
+
+    // Count validation attempts and check results
+    for (const step of steps) {
+      if (step.toolResults) {
+        for (const toolResult of step.toolResults) {
+          if (toolResult.toolName === 'validateK6Script') {
+            attempts++;
+            const validationResult = toolResult.result as { valid: boolean; error?: string };
+            if (validationResult.valid) {
+              isValid = true;
+            } else {
+              lastError = validationResult.error;
+            }
+          }
+          if (toolResult.toolName === 'writeScript') {
+            wasFixed = true;
+          }
+        }
+      }
+    }
+
+    if (verbose) {
+      console.log(`   ${testName}: ${steps.length} agent steps, ${attempts} validations`);
+    }
+
     return {
       test_name: testName,
       filename,
-      valid: true,
+      valid: isValid,
+      error: isValid ? undefined : lastError,
+      fixed: wasFixed && isValid,
+      attempts,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      test_name: testName,
+      filename,
+      valid: false,
+      error: message,
       fixed: false,
       attempts: 0,
     };
   }
-
-  lastError = initial.error;
-
-  // Try to fix
-  while (attempts < maxAttempts) {
-    attempts++;
-    if (verbose) {
-      console.log(`   Attempt ${attempts}/${maxAttempts} to fix ${testName}...`);
-    }
-
-    try {
-      const fixedCode = await fixScript(client, loader, testName, code, lastError || '', endpointSpec);
-
-      // Write fixed code
-      await writeFile(scriptPath, fixedCode);
-      code = fixedCode;
-
-      // Validate again
-      const result = await validateScript(scriptPath);
-      if (result.valid) {
-        return {
-          test_name: testName,
-          filename,
-          valid: true,
-          fixed: true,
-          attempts,
-        };
-      }
-      lastError = result.error;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (verbose) {
-        console.log(`   Fix attempt failed: ${message}`);
-      }
-      lastError = message;
-    }
-  }
-
-  return {
-    test_name: testName,
-    filename,
-    valid: false,
-    error: lastError,
-    fixed: false,
-    attempts,
-  };
 }
 
 /**
- * Validate all scripts in a directory
+ * Validate all scripts in a directory using agentic validation
  */
 export async function validateScripts(
   scriptsDir: string,
@@ -145,8 +137,6 @@ export async function validateScripts(
     apiBase: options.apiBase,
   });
 
-  const loader = new PromptLoader(options.promptDir);
-
   const results: ValidationResult[] = [];
   let valid = 0;
   let fixed = 0;
@@ -156,40 +146,25 @@ export async function validateScripts(
     const filename = `test_${entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.js`;
     const scriptPath = `${scriptsDir}/${filename}`;
 
-    try {
-      const result = await validateAndFixScript(
-        client,
-        loader,
-        scriptPath,
-        entry.name,
-        entry.endpoint_spec,
-        options.maxAttempts,
-        options.verbose,
-      );
+    const result = await validateAndFixScriptAgentic(
+      client,
+      scriptPath,
+      entry.name,
+      entry.endpoint_spec,
+      options.maxAttempts * 2, // maxSteps = maxAttempts * 2 to allow read/validate/write cycles
+      options.verbose,
+    );
 
-      results.push(result);
+    results.push(result);
 
-      if (result.valid && !result.fixed) {
-        success(`${entry.name} - valid`);
-        valid++;
-      } else if (result.valid && result.fixed) {
-        success(`${entry.name} - fixed after ${result.attempts} attempt(s)`);
-        fixed++;
-      } else {
-        warn(`${entry.name} - could not fix (${result.attempts} attempts)`);
-        failed++;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      warn(`${entry.name} - error: ${message}`);
-      results.push({
-        test_name: entry.name,
-        filename,
-        valid: false,
-        error: message,
-        fixed: false,
-        attempts: 0,
-      });
+    if (result.valid && !result.fixed) {
+      success(`${entry.name} - valid`);
+      valid++;
+    } else if (result.valid && result.fixed) {
+      success(`${entry.name} - fixed after ${result.attempts} attempt(s)`);
+      fixed++;
+    } else {
+      warn(`${entry.name} - could not fix (${result.attempts} attempts)`);
       failed++;
     }
   }

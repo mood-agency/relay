@@ -3,7 +3,7 @@
  * Supports multiple providers with unified interface
  */
 
-import { generateText } from 'ai';
+import { generateText, type CoreTool } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -141,8 +141,19 @@ export class LLMClient {
   /**
    * Get current model name
    */
-  getModel(): string {
+  getModelName(): string {
     return this.model;
+  }
+
+  /**
+   * Get the model instance for direct use with generateText
+   */
+  getModelInstance() {
+    return createModel({
+      provider: this.provider,
+      model: this.model,
+      apiBase: this.apiBase,
+    });
   }
 
   /**
@@ -151,6 +162,27 @@ export class LLMClient {
   getInfo(): string {
     const providerName = PROVIDERS[this.provider].name;
     return `${providerName} (${this.model})`;
+  }
+
+  /**
+   * Generate text with tools (agentic mode)
+   * Allows the LLM to use tools and loop multiple times
+   */
+  async generateWithTools<T extends Record<string, CoreTool>>(options: {
+    system: string;
+    prompt: string;
+    tools: T;
+    maxSteps?: number;
+  }) {
+    const modelInstance = this.getModelInstance();
+
+    return generateText({
+      model: modelInstance,
+      system: options.system,
+      prompt: options.prompt,
+      tools: options.tools,
+      maxSteps: options.maxSteps ?? 5,
+    });
   }
 }
 
