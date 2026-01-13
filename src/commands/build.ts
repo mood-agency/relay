@@ -6,6 +6,7 @@ import type { TestPlan, BuildOptions } from '../types.js';
 import { readJson, resolvePath } from '../utils/files.js';
 import { buildScripts } from '../generator/builder.js';
 import { step, success, error, warn, section } from '../utils/progress.js';
+import { validateScripts } from '../agents/validator.js';
 
 interface BuildCommandOptions {
   output: string;
@@ -19,6 +20,8 @@ interface BuildCommandOptions {
   overwrite: boolean;
   verbose: boolean;
   promptDir?: string;
+  validate: boolean;
+  maxAttempts: string;
 }
 
 export async function buildCommand(
@@ -38,6 +41,8 @@ export async function buildCommand(
     overwrite: cmdOptions.overwrite,
     verbose: cmdOptions.verbose,
     promptDir: cmdOptions.promptDir,
+    validate: cmdOptions.validate,
+    maxAttempts: parseInt(cmdOptions.maxAttempts, 10),
   };
 
   try {
@@ -75,7 +80,17 @@ export async function buildCommand(
     success(`Generated ${scripts.length} scripts`);
     console.log(`   ${manifest.length} files in manifest`);
 
-    // 4. Print k6 run instructions
+    // 4. Validate scripts if requested
+    if (options.validate && !plan.e2e) {
+      console.log();
+      const testEntries = plan.tests.map(t => ({
+        name: t.name,
+        endpoint_spec: t.endpoint_spec,
+      }));
+      await validateScripts(resolvePath(options.output), testEntries, options);
+    }
+
+    // 5. Print k6 run instructions
     const testsPath = options.output;
 
     section('🚀 Run tests with k6:');

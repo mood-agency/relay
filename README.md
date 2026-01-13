@@ -11,6 +11,52 @@ Rohan is a CLI tool that automatically generates [k6](https://k6.io) test script
 - **Multiple LLM Providers** - Works with Groq, OpenAI, Anthropic, Together, Fireworks, and Ollama
 - **Batching** - Efficient batch processing to reduce API calls and costs
 - **E2E Workflows** - Generate multi-step end-to-end test scenarios
+- **Smart Agents** - Optional subagents for validation, deep analysis, and intelligent coverage planning
+
+## Smart Agents (AI-Powered Enhancement)
+
+Rohan includes optional AI-powered subagents that enhance test generation quality and coverage:
+
+| Agent | Flag | Description |
+|-------|------|-------------|
+| **Validator** | `--validate` | Validates generated k6 scripts with dry-run and auto-fixes syntax errors |
+| **Analyzer** | `--analyze` | Deep analyzes OpenAPI specs to detect workflow patterns, auth flows, and relationships |
+| **Smart Planner** | `--smart` | Prioritizes tests by criticality and calculates coverage metrics |
+
+### Quick Examples
+
+```bash
+# Smart planning with coverage metrics
+rohan plan api-spec.json --smart --target-coverage 90
+
+# E2E with deep analysis
+rohan plan api-spec.json --e2e --analyze
+
+# Build with auto-validation and fixing
+rohan build test-plan.json --validate --max-attempts 5
+
+# Full pipeline: analyze → smart plan → build → validate
+rohan plan api-spec.json --e2e --analyze --smart -o plan.json
+rohan build plan.json --validate -o tests/
+```
+
+### What Each Agent Does
+
+**🔍 Validator Agent** - Runs `k6 --dry-run` on each generated script. If errors are found, it uses the LLM to automatically fix the code and retries until valid or max attempts reached.
+
+**🔬 Analyzer Agent** - Examines your OpenAPI spec to identify:
+- CRUD patterns and resource lifecycles
+- Authentication flows (login, token refresh, logout)
+- State machines (draft → published → archived)
+- Nested resource relationships
+
+**🧠 Smart Planner** - Enhances test generation with:
+- Priority levels (critical, high, medium, low)
+- Test categories (happy_path, boundary, negative, security)
+- Coverage metrics (endpoint, method, status code coverage)
+- Sorted output with critical tests first
+
+> **Note**: Smart agents require additional LLM calls. Use them when quality and coverage are more important than speed.
 
 ## Test Scenario Coverage
 
@@ -284,6 +330,9 @@ npm run rohan -- plan <spec-path> [options]
 | `--e2e` | bool | false | Generate E2E workflow tests |
 | `--verbose` | bool | false | Enable detailed logging |
 | `--prompt-dir` | path | - | Custom prompt directory |
+| `--smart` | bool | false | Enable smart coverage-aware planning |
+| `--target-coverage` | int | 80 | Target coverage percentage (with --smart) |
+| `--analyze` | bool | false | Deep analyze spec for E2E workflows (with --e2e) |
 
 ### `build` Command
 
@@ -304,6 +353,8 @@ npm run rohan -- build <plan-path> [options]
 | `--e2e` | bool | false | Build E2E workflow tests |
 | `--verbose` | bool | false | Enable detailed logging |
 | `--prompt-dir` | path | - | Custom prompt directory |
+| `--validate` | bool | false | Validate scripts with k6 and auto-fix errors |
+| `--max-attempts` | int | 3 | Max validation/fix attempts (with --validate) |
 
 ### `exec` Command
 
@@ -444,6 +495,130 @@ npm run rohan -- build test-plan.json --batch-size 5
 npm run rohan -- plan api-spec.json --batch-size 1
 ```
 
+## Smart Agents
+
+Rohan includes optional subagents that enhance test generation quality:
+
+### Validator Agent (`--validate`)
+
+Validates generated k6 scripts and automatically fixes syntax errors:
+
+- Runs `k6 --dry-run` to check syntax
+- Parses error messages
+- Uses LLM to fix broken code
+- Retries until valid or max attempts reached
+
+**Usage:**
+```bash
+# Basic validation
+rohan build test-plan.json --validate
+
+# With more fix attempts
+rohan build test-plan.json --validate --max-attempts 5
+
+# With verbose output
+rohan build test-plan.json --validate --verbose
+```
+
+**Output:**
+```
+🔍 Validating generated scripts...
+✓ Get_Users_Basic - valid
+✓ Create_User_Basic - fixed after 2 attempts
+⚠ Delete_User_Invalid - could not fix (3 errors after 3 attempts)
+
+🔍 Validation Summary
+   ✓ Valid: 45
+   🔧 Fixed: 3
+   ✗ Failed: 2
+```
+
+### Analyzer Agent (`--analyze`)
+
+Deep analyzes OpenAPI specs to detect complex patterns (use with `--e2e`):
+
+- Identifies workflow patterns (CRUD, sagas, state machines)
+- Detects authentication flows
+- Maps resource relationships
+- Provides enriched context to E2E planner
+
+**Usage:**
+```bash
+# E2E with deep analysis
+rohan plan api-spec.json --e2e --analyze
+
+# With verbose output
+rohan plan api-spec.json --e2e --analyze --verbose
+```
+
+**Output:**
+```
+🔬 Running deep analysis on OpenAPI spec...
+✓ Analysis complete:
+   📊 5 workflow patterns detected
+   🔐 2 auth flows detected
+   🔄 1 state machines detected
+   🔗 3 resource relationships detected
+
+   Top workflow patterns:
+   • User_Registration_Flow (saga, critical)
+   • Order_Lifecycle (state_machine, critical)
+   • CRUD_Products (crud, high)
+```
+
+### Smart Planner Agent (`--smart`)
+
+Generates prioritized test plans with coverage metrics:
+
+- Calculates coverage for endpoints, methods, status codes
+- Prioritizes tests (critical, high, medium, low)
+- Categorizes tests (happy_path, boundary, negative, security)
+- Reports coverage gaps
+
+**Usage:**
+```bash
+# Smart planning with default 80% target
+rohan plan api-spec.json --smart
+
+# With custom coverage target
+rohan plan api-spec.json --smart --target-coverage 90
+
+# Combine with E2E analysis
+rohan plan api-spec.json --e2e --analyze --smart
+```
+
+**Output:**
+```
+🧠 Smart Planning Mode
+🎯 Target coverage: 85%
+
+📊 Coverage Metrics
+   Endpoint Coverage: 100%
+   Method Coverage: 100%
+   Status Code Coverage: 85%
+   Parameter Coverage: 72%
+
+   Tests by priority:
+   • Critical: 12
+   • High: 18
+   • Medium: 8
+   • Low: 4
+
+✓ Generated 42 test entries with smart coverage
+```
+
+### Complete Pipeline Example
+
+```bash
+# Full pipeline with all agents
+rohan plan api-spec.json --smart --target-coverage 90 -o plan.json
+rohan build plan.json --validate --max-attempts 3 -o tests/
+
+# E2E with deep analysis + validation
+rohan plan api-spec.json --e2e --analyze -o e2e-plan.json
+rohan build e2e-plan.json --e2e --validate -o tests/
+```
+
 ## Prompt Customization
 
 Prompts are stored in the `prompts/` directory. Override them with `--prompt-dir`:
@@ -466,6 +641,12 @@ npm run rohan -- plan api-spec.json --prompt-dir ./my-prompts/
 | `e2e_planner_user.md` | User prompt for E2E planning |
 | `e2e_builder_system.md` | System prompt for E2E script generation |
 | `e2e_builder_user.md` | User prompt for E2E building |
+| `agent_validator_system.md` | System prompt for script validation/fixing |
+| `agent_validator_user.md` | User prompt for validation |
+| `agent_analyzer_system.md` | System prompt for deep spec analysis |
+| `agent_analyzer_user.md` | User prompt for analysis |
+| `smart_planner_system.md` | System prompt for smart planning |
+| `smart_planner_user.md` | User prompt for smart planning |
 
 ## Development
 
@@ -491,10 +672,16 @@ npm run clean
 ```mermaid
 flowchart LR
     subgraph Rohan["Rohan (TypeScript CLI)"]
-        A["OpenAPI Spec"] --> B["LLM Planner"]
+        A["OpenAPI Spec"] --> AA["Analyzer Agent"]
+        AA -.->|"--analyze"| B
+        A --> B["LLM Planner"]
+        B --> BB["Smart Planner"]
+        BB -.->|"--smart"| C
         B --> C["Test Plan JSON"]
         C --> D["LLM Builder"]
         D --> E["k6 Scripts"]
+        E --> EE["Validator Agent"]
+        EE -.->|"--validate"| F
     end
     subgraph K6["k6 Runtime"]
         E --> F["Test Execution"]

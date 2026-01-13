@@ -27,7 +27,14 @@ export type PromptName =
   | 'e2e_planner_system'
   | 'e2e_planner_user'
   | 'e2e_builder_system'
-  | 'e2e_builder_user';
+  | 'e2e_builder_user'
+  // Agent prompts
+  | 'agent_validator_system'
+  | 'agent_validator_user'
+  | 'agent_analyzer_system'
+  | 'agent_analyzer_user'
+  | 'smart_planner_system'
+  | 'smart_planner_user';
 
 /**
  * Prompt loader that supports custom prompt directories

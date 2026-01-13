@@ -40,6 +40,9 @@ export function createCli(): Command {
     .option('--e2e', 'Generate E2E workflow tests', false)
     .option('--verbose', 'Enable detailed logging', false)
     .option('--prompt-dir <path>', 'Custom prompt directory (env: ROHAN_PROMPT_DIR)', DEFAULT_PROMPT_DIR)
+    .option('--smart', 'Enable smart coverage-aware planning', false)
+    .option('--target-coverage <number>', 'Target coverage percentage (with --smart)', '80')
+    .option('--analyze', 'Deep analyze spec for E2E workflows (with --e2e)', false)
     .action(planCommand);
 
   // Build command - Generate k6 scripts from test plan
@@ -58,6 +61,8 @@ export function createCli(): Command {
     .option('--overwrite', 'Overwrite existing test files', false)
     .option('--verbose', 'Enable detailed logging', false)
     .option('--prompt-dir <path>', 'Custom prompt directory (env: ROHAN_PROMPT_DIR)', DEFAULT_PROMPT_DIR)
+    .option('--validate', 'Validate scripts with k6 and auto-fix errors', false)
+    .option('--max-attempts <number>', 'Max validation/fix attempts (with --validate)', '3')
     .action(buildCommand);
 
   // Exec command - Show k6 run instructions

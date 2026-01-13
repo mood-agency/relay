@@ -78,6 +78,106 @@ export interface EndpointInfo {
 }
 
 /**
+ * Test priority levels for smart planning
+ */
+export type TestPriority = 'critical' | 'high' | 'medium' | 'low';
+
+/**
+ * Test category for classification
+ */
+export type TestCategory = 'happy_path' | 'boundary' | 'negative' | 'security' | 'e2e';
+
+/**
+ * Extended test entry with smart planning metadata
+ */
+export interface SmartTestEntry extends TestEntry {
+  priority: TestPriority;
+  category: TestCategory;
+  coverage_impact?: number;
+}
+
+/**
+ * Workflow pattern detected by analyzer
+ */
+export interface WorkflowPattern {
+  name: string;
+  type: 'crud' | 'saga' | 'state_machine' | 'auth_flow';
+  priority: TestPriority;
+  endpoints: string[];
+  description: string;
+}
+
+/**
+ * Resource relationship detected by analyzer
+ */
+export interface ResourceRelationship {
+  parent: string;
+  child: string;
+  type: 'nested' | 'reference' | 'dependency';
+}
+
+/**
+ * Analysis result from analyzer agent
+ */
+export interface AnalysisResult {
+  workflow_patterns: WorkflowPattern[];
+  auth_flows: string[];
+  state_machines: string[];
+  resource_relationships: ResourceRelationship[];
+  coverage_recommendations: string[];
+}
+
+/**
+ * Coverage metrics for smart planning
+ */
+export interface CoverageMetrics {
+  endpoint_coverage: number;
+  method_coverage: number;
+  status_code_coverage: number;
+  parameter_coverage: number;
+  tests_by_priority: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+}
+
+/**
+ * Enhanced test plan with smart planning metadata
+ */
+export interface SmartTestPlan extends TestPlan {
+  smart: boolean;
+  target_coverage: number;
+  coverage_metrics?: CoverageMetrics;
+  analysis?: AnalysisResult;
+  tests: SmartTestEntry[];
+}
+
+/**
+ * Validation result for a single script
+ */
+export interface ValidationResult {
+  test_name: string;
+  filename: string;
+  valid: boolean;
+  error?: string;
+  fixed: boolean;
+  attempts: number;
+}
+
+/**
+ * Validation summary report
+ */
+export interface ValidationReport {
+  total: number;
+  valid: number;
+  fixed: number;
+  failed: number;
+  results: ValidationResult[];
+}
+
+/**
  * CLI options for plan command
  */
 export interface PlanOptions {
@@ -91,6 +191,10 @@ export interface PlanOptions {
   e2e: boolean;
   verbose: boolean;
   promptDir?: string;
+  // Smart agent options
+  smart: boolean;
+  targetCoverage: number;
+  analyze: boolean;
 }
 
 /**
@@ -108,6 +212,9 @@ export interface BuildOptions {
   overwrite: boolean;
   verbose: boolean;
   promptDir?: string;
+  // Validator agent options
+  validate: boolean;
+  maxAttempts: number;
 }
 
 /**

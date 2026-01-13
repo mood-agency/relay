@@ -11,11 +11,15 @@ import type {
   OpenAPISpec,
   PlanOptions,
   BatchPlanResult,
+  SmartTestPlan,
+  AnalysisResult,
 } from '../types.js';
 import { LLMClient } from '../llm/client.js';
 import { PromptLoader, renderTemplate, cleanJsonResponse } from './templates.js';
 import { extractEndpoints, getAPIInfo } from '../utils/openapi.js';
 import { step, success, error, warn, debug, ProgressCounter } from '../utils/progress.js';
+import { analyzeSpec } from '../agents/analyzer.js';
+import { smartPlan } from '../agents/smartPlanner.js';
 
 /**
  * Create a test plan from an OpenAPI spec
@@ -24,7 +28,7 @@ export async function createTestPlan(
   spec: OpenAPISpec,
   specPath: string,
   options: PlanOptions,
-): Promise<TestPlan> {
+): Promise<TestPlan | SmartTestPlan> {
   const client = new LLMClient({
     model: options.model,
     provider: options.provider,
@@ -33,6 +37,13 @@ export async function createTestPlan(
 
   const loader = new PromptLoader(options.promptDir);
   const info = getAPIInfo(spec);
+
+  // Run analyzer if requested (with E2E mode)
+  let analysis: AnalysisResult | undefined;
+  if (options.analyze && options.e2e) {
+    analysis = await analyzeSpec(spec, options);
+    console.log();
+  }
 
   // Create base test plan
   const plan: TestPlan = {
@@ -49,7 +60,7 @@ export async function createTestPlan(
 
   if (options.e2e) {
     // E2E mode: analyze full spec for workflow patterns
-    return createE2ETestPlan(spec, plan, client, loader, options);
+    return createE2ETestPlan(spec, plan, client, loader, options, analysis);
   }
 
   // Standard mode: generate tests per endpoint
@@ -96,6 +107,23 @@ export async function createTestPlan(
   }
 
   success(`Generated ${plan.tests.length} test entries`);
+
+  // Apply smart planning if requested
+  if (options.smart) {
+    console.log();
+    const smartResult = await smartPlan(plan.tests, spec, analysis, options);
+
+    const smartTestPlan: SmartTestPlan = {
+      ...plan,
+      smart: true,
+      target_coverage: options.targetCoverage,
+      coverage_metrics: smartResult.coverage_metrics,
+      analysis: analysis,
+      tests: smartResult.tests,
+    };
+
+    return smartTestPlan;
+  }
 
   return plan;
 }
@@ -265,12 +293,19 @@ async function createE2ETestPlan(
   client: LLMClient,
   loader: PromptLoader,
   _options: PlanOptions,
+  analysis?: AnalysisResult,
 ): Promise<TestPlan> {
   step('🔗', 'E2E Mode: Analyzing full API spec for workflow patterns...');
 
   const prompts = await loader.loadPlannerPrompts(false, true);
   const specString = JSON.stringify(spec, null, 2);
-  const userPrompt = renderTemplate(prompts.user, { spec: specString });
+
+  // Include analysis in the prompt if available
+  const analysisContext = analysis
+    ? `\n\n## Analysis Context\n${JSON.stringify(analysis, null, 2)}`
+    : '';
+
+  const userPrompt = renderTemplate(prompts.user, { spec: specString + analysisContext });
 
   try {
     const response = await client.generateWithRetry(prompts.system, userPrompt);

@@ -19,6 +19,9 @@ interface PlanCommandOptions {
   e2e: boolean;
   verbose: boolean;
   promptDir?: string;
+  smart: boolean;
+  targetCoverage: string;
+  analyze: boolean;
 }
 
 export async function planCommand(
@@ -37,6 +40,9 @@ export async function planCommand(
     e2e: cmdOptions.e2e,
     verbose: cmdOptions.verbose,
     promptDir: cmdOptions.promptDir,
+    smart: cmdOptions.smart,
+    targetCoverage: parseInt(cmdOptions.targetCoverage, 10),
+    analyze: cmdOptions.analyze,
   };
 
   try {
