@@ -18,6 +18,7 @@ export const EnvSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
 
+
   // Redis
   REDIS_HOST: z.string().default("localhost"),
   REDIS_PORT: z.coerce.number().default(6379),
@@ -25,9 +26,15 @@ export const EnvSchema = z.object({
   REDIS_DB: z.coerce.number().default(0),
   REDIS_POOL_SIZE: z.coerce.number().default(10),
   REDIS_TLS: z.string().default("false"),
+
+  // Postgres
+  DATABASE_URL: z.string().default("postgresql://postgres:postgres@localhost:5432/queue_db"),
+  PG_POOL_SIZE: z.coerce.number().default(10),
+
   
   // Queue Configuration
   QUEUE_NAME: z.string().default("queue"),
+  // These names might be less relevant with a single table, but useful for filtering/logic compatibility
   PROCESSING_QUEUE_NAME: z.string().default("queue_processing"),
   DEAD_LETTER_QUEUE_NAME: z.string().default("queue_dlq"),
   ARCHIVED_QUEUE_NAME: z.string().default("queue_archived"),
