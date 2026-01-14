@@ -7,8 +7,6 @@ import {
     AlertTriangle,
     Loader2,
     Pause,
-    Filter,
-    Search,
     ArrowRightLeft,
     Plus,
     Download,
@@ -16,11 +14,9 @@ import {
     Key,
     KeyRound,
     MoreVertical,
-    Activity,
     User,
     FileText,
     AlertCircle,
-    History,
     Inbox,
     Pickaxe,
     XCircle,
@@ -29,8 +25,6 @@ import {
 } from "lucide-react"
 
 import { format } from "date-fns"
-import { DateTimePicker } from "@/components/ui/date-time-picker"
-import MultipleSelector, { Option } from "@/components/ui/multi-select"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -169,9 +163,10 @@ export default function Dashboard() {
         onEvent: (type) => {
             // Refresh activity logs on relevant events if we are on the activity view
             // We refresh on 'requeue' (timeout movement) and other major events
+            // Use silent=true to avoid showing loading spinner on SSE-triggered updates
             if (currentView === 'activity') {
                 if (activityTab === 'activity') fetchActivityLogs()
-                else if (activityTab === 'anomalies') fetchAnomalies()
+                else if (activityTab === 'anomalies') fetchAnomalies(true)
                 else if (activityTab === 'consumers') fetchConsumerStats()
             }
         }
@@ -216,7 +211,6 @@ export default function Dashboard() {
     const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<string>('')
     const [anomalySortBy, setAnomalySortBy] = useState<string>('timestamp')
     const [anomalySortOrder, setAnomalySortOrder] = useState<string>('desc')
-    const anomalySortInitialRef = useRef(true)
     const [messageHistory, setMessageHistory] = useState<MessageHistoryResponse | null>(null)
     const [loadingHistory, setLoadingHistory] = useState(false)
     const [messageIdSearch, setMessageIdSearch] = useState('')
@@ -257,8 +251,8 @@ export default function Dashboard() {
         }
     }, [authFetch, activityFilter])
 
-    const fetchAnomalies = useCallback(async () => {
-        setLoadingAnomalies(true)
+    const fetchAnomalies = useCallback(async (silent = false) => {
+        if (!silent) setLoadingAnomalies(true)
         try {
             const params = new URLSearchParams()
             if (anomalySeverityFilter) params.append('severity', anomalySeverityFilter)
@@ -267,15 +261,19 @@ export default function Dashboard() {
             params.append('sort_by', anomalySortBy)
             params.append('sort_order', anomalySortOrder)
 
+            console.log(`[fetchAnomalies] Fetching with sort_by=${anomalySortBy}, sort_order=${anomalySortOrder}`)
             const response = await authFetch(`/api/queue/activity/anomalies?${params.toString()}`)
             if (response.ok) {
                 const data = await response.json()
+                if (data.anomalies?.length > 0) {
+                    console.log(`[fetchAnomalies] Response: first ts=${data.anomalies[0]?.timestamp}, last ts=${data.anomalies[data.anomalies.length - 1]?.timestamp}`)
+                }
                 setAnomalies(data)
             }
         } catch (err) {
             console.error('Failed to fetch anomalies:', err)
         } finally {
-            setLoadingAnomalies(false)
+            if (!silent) setLoadingAnomalies(false)
         }
     }, [authFetch, anomalySeverityFilter, anomalyActionFilter, anomalyTypeFilter, anomalySortBy, anomalySortOrder])
 
@@ -313,7 +311,7 @@ export default function Dashboard() {
         }
     }, [authFetch])
 
-    // Effect to fetch activity data when view changes
+    // Effect to fetch activity data when view/tab changes
     useEffect(() => {
         if (currentView === 'activity') {
             if (activityTab === 'activity') {
@@ -332,16 +330,17 @@ export default function Dashboard() {
         fetchConsumerStats()
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Re-fetch anomalies when sort changes (skip initial render)
+    // Re-fetch anomalies when sort or filter changes (skip initial render)
+    const anomalyParamsInitialRef = useRef(true)
     useEffect(() => {
-        if (anomalySortInitialRef.current) {
-            anomalySortInitialRef.current = false
+        if (anomalyParamsInitialRef.current) {
+            anomalyParamsInitialRef.current = false
             return
         }
         if (currentView === 'activity' && activityTab === 'anomalies') {
             fetchAnomalies()
         }
-    }, [anomalySortBy, anomalySortOrder, currentView, activityTab, fetchAnomalies])
+    }, [anomalySortBy, anomalySortOrder, anomalySeverityFilter, anomalyActionFilter, anomalyTypeFilter, currentView, activityTab, fetchAnomalies])
 
     // Move messages handler (wraps the hook's handler with dialog state)
     const handleMoveMessages = useCallback(async () => {
@@ -495,244 +494,6 @@ export default function Dashboard() {
                         </div>
 
                         <div className="flex items-center justify-end gap-1 w-[300px]">
-                            {/* Messages Filter - only show when viewing queues */}
-                            {currentView === 'queues' && (
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className={cn("h-8 w-8 relative", queue.isFilterActive && "bg-primary/10 text-primary")}
-                                            aria-label="Message Filters"
-                                        >
-                                            <Filter className="h-3.5 w-3.5" />
-                                            {queue.isFilterActive && (
-                                                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
-                                            )}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-72 p-4" align="end">
-                                        <div className="space-y-4">
-                                            <div className="flex items-center justify-between">
-                                                <h4 className="font-medium text-sm">Message Filters</h4>
-                                                {queue.isFilterActive && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => {
-                                                            queue.setSearch("")
-                                                            queue.setFilterType("all")
-                                                            queue.setFilterPriority("")
-                                                            queue.setFilterAttempts("")
-                                                            queue.setStartDate(undefined)
-                                                            queue.setEndDate(undefined)
-                                                        }}
-                                                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                                    >
-                                                        Clear all
-                                                    </Button>
-                                                )}
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Search</label>
-                                                <div className="relative">
-                                                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                    <input
-                                                        placeholder="Search ID, payload..."
-                                                        value={queue.search}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => queue.setSearch(e.target.value)}
-                                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Message Type</label>
-                                                <MultipleSelector
-                                                    defaultOptions={queue.availableTypes.map(t => ({ label: t, value: t }))}
-                                                    value={
-                                                        queue.filterType === "all" || !queue.filterType
-                                                            ? []
-                                                            : queue.filterType.split(",").map(t => ({ label: t, value: t }))
-                                                    }
-                                                    onChange={(selected: Option[]) => {
-                                                        if (selected.length === 0) {
-                                                            queue.setFilterType("all")
-                                                        } else {
-                                                            queue.setFilterType(selected.map(s => s.value).join(","))
-                                                        }
-                                                    }}
-                                                    hideClearAllButton
-                                                    badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
-                                                    emptyIndicator={
-                                                        <p className="text-center text-sm text-muted-foreground">No types found</p>
-                                                    }
-                                                />
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Priority</label>
-                                                <Select value={queue.filterPriority || "any"} onValueChange={(val: string) => queue.setFilterPriority(val === "any" ? "" : val)}>
-                                                    <SelectTrigger className="w-full">
-                                                        <SelectValue placeholder="Any" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="any">Any</SelectItem>
-                                                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
-                                                            <SelectItem key={p} value={String(p)}>{p}</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="1"
-                                                    placeholder="Any"
-                                                    value={queue.filterAttempts}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                        const val = e.target.value
-                                                        if (val === "" || /^\d+$/.test(val)) {
-                                                            queue.setFilterAttempts(val)
-                                                        }
-                                                    }}
-                                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                                />
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Date Range</label>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-muted-foreground">Start</label>
-                                                        <DateTimePicker
-                                                            date={queue.startDate}
-                                                            setDate={queue.setStartDate}
-                                                            placeholder="Start"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-muted-foreground">End</label>
-                                                        <DateTimePicker
-                                                            date={queue.endDate}
-                                                            setDate={queue.setEndDate}
-                                                            placeholder="End"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </PopoverContent>
-                                </Popover>
-                            )}
-
-                            {/* History Filter - only show when viewing activity logs */}
-                            {currentView === 'activity' && (
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className={cn(
-                                                "h-8 w-8 relative",
-                                                (activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && "bg-primary/10 text-primary"
-                                            )}
-                                            aria-label="History Filters"
-                                        >
-                                            <Filter className="h-3.5 w-3.5" />
-                                            {(activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && (
-                                                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
-                                            )}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-72 p-4" align="end">
-                                        <div className="space-y-4">
-                                            <div className="flex items-center justify-between">
-                                                <h4 className="font-medium text-sm">History Filters</h4>
-                                                {(activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null) && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => {
-                                                            setActivityFilter(prev => ({
-                                                                ...prev,
-                                                                action: '',
-                                                                message_id: '',
-                                                                has_anomaly: null,
-                                                                offset: 0
-                                                            }))
-                                                        }}
-                                                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                                    >
-                                                        Clear all
-                                                    </Button>
-                                                )}
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Message ID</label>
-                                                <div className="relative">
-                                                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                    <input
-                                                        placeholder="Search by message ID..."
-                                                        value={activityFilter.message_id}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setActivityFilter(prev => ({ ...prev, message_id: e.target.value, offset: 0 }))}
-                                                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Action</label>
-                                                <Select value={activityFilter.action || "any"} onValueChange={(val: string) => setActivityFilter(prev => ({ ...prev, action: val === "any" ? "" : val, offset: 0 }))}>
-                                                    <SelectTrigger className="w-full">
-                                                        <SelectValue placeholder="Any" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="any">Any</SelectItem>
-                                                        <SelectItem value="enqueue">Enqueue</SelectItem>
-                                                        <SelectItem value="dequeue">Dequeue</SelectItem>
-                                                        <SelectItem value="ack">Acknowledge</SelectItem>
-                                                        <SelectItem value="nack">Nack</SelectItem>
-                                                        <SelectItem value="requeue">Requeue</SelectItem>
-                                                        <SelectItem value="timeout">Timeout</SelectItem>
-                                                        <SelectItem value="touch">Touch</SelectItem>
-                                                        <SelectItem value="move">Move</SelectItem>
-                                                        <SelectItem value="dlq">Dead Letter</SelectItem>
-                                                        <SelectItem value="delete">Delete</SelectItem>
-                                                        <SelectItem value="clear">Clear</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Anomaly Status</label>
-                                                <Select
-                                                    value={activityFilter.has_anomaly === null ? "any" : activityFilter.has_anomaly ? "yes" : "no"}
-                                                    onValueChange={(val: string) => setActivityFilter(prev => ({
-                                                        ...prev,
-                                                        has_anomaly: val === "any" ? null : val === "yes",
-                                                        offset: 0
-                                                    }))}
-                                                >
-                                                    <SelectTrigger className="w-full">
-                                                        <SelectValue placeholder="Any" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="any">Any</SelectItem>
-                                                        <SelectItem value="yes">Has Anomaly</SelectItem>
-                                                        <SelectItem value="no">No Anomaly</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                        </div>
-                                    </PopoverContent>
-                                </Popover>
-                            )}
                             <Popover>
                                 <PopoverTrigger asChild>
                                     <Button
@@ -871,6 +632,20 @@ export default function Dashboard() {
                                     isFilterActive={queue.isFilterActive}
                                     activeFiltersDescription={queue.activeFiltersDescription}
                                     isLoading={queue.showMessagesLoading}
+                                    // Filter props
+                                    search={queue.search}
+                                    setSearch={queue.setSearch}
+                                    filterType={queue.filterType}
+                                    setFilterType={queue.setFilterType}
+                                    filterPriority={queue.filterPriority}
+                                    setFilterPriority={queue.setFilterPriority}
+                                    filterAttempts={queue.filterAttempts}
+                                    setFilterAttempts={queue.setFilterAttempts}
+                                    startDate={queue.startDate}
+                                    setStartDate={queue.setStartDate}
+                                    endDate={queue.endDate}
+                                    setEndDate={queue.setEndDate}
+                                    availableTypes={queue.availableTypes}
                                 />
                             )}
                             {queue.activeTab === 'processing' && (
@@ -898,6 +673,20 @@ export default function Dashboard() {
                                     isFilterActive={queue.isFilterActive}
                                     activeFiltersDescription={queue.activeFiltersDescription}
                                     isLoading={queue.showMessagesLoading}
+                                    // Filter props
+                                    search={queue.search}
+                                    setSearch={queue.setSearch}
+                                    filterType={queue.filterType}
+                                    setFilterType={queue.setFilterType}
+                                    filterPriority={queue.filterPriority}
+                                    setFilterPriority={queue.setFilterPriority}
+                                    filterAttempts={queue.filterAttempts}
+                                    setFilterAttempts={queue.setFilterAttempts}
+                                    startDate={queue.startDate}
+                                    setStartDate={queue.setStartDate}
+                                    endDate={queue.endDate}
+                                    setEndDate={queue.setEndDate}
+                                    availableTypes={queue.availableTypes}
                                 />
                             )}
                             {queue.activeTab === 'dead' && (
@@ -925,6 +714,20 @@ export default function Dashboard() {
                                     isFilterActive={queue.isFilterActive}
                                     activeFiltersDescription={queue.activeFiltersDescription}
                                     isLoading={queue.showMessagesLoading}
+                                    // Filter props
+                                    search={queue.search}
+                                    setSearch={queue.setSearch}
+                                    filterType={queue.filterType}
+                                    setFilterType={queue.setFilterType}
+                                    filterPriority={queue.filterPriority}
+                                    setFilterPriority={queue.setFilterPriority}
+                                    filterAttempts={queue.filterAttempts}
+                                    setFilterAttempts={queue.setFilterAttempts}
+                                    startDate={queue.startDate}
+                                    setStartDate={queue.setStartDate}
+                                    endDate={queue.endDate}
+                                    setEndDate={queue.setEndDate}
+                                    availableTypes={queue.availableTypes}
                                 />
                             )}
                             {queue.activeTab === 'acknowledged' && (
@@ -951,6 +754,20 @@ export default function Dashboard() {
                                     isFilterActive={queue.isFilterActive}
                                     activeFiltersDescription={queue.activeFiltersDescription}
                                     isLoading={queue.showMessagesLoading}
+                                    // Filter props
+                                    search={queue.search}
+                                    setSearch={queue.setSearch}
+                                    filterType={queue.filterType}
+                                    setFilterType={queue.setFilterType}
+                                    filterPriority={queue.filterPriority}
+                                    setFilterPriority={queue.setFilterPriority}
+                                    filterAttempts={queue.filterAttempts}
+                                    setFilterAttempts={queue.setFilterAttempts}
+                                    startDate={queue.startDate}
+                                    setStartDate={queue.setStartDate}
+                                    endDate={queue.endDate}
+                                    setEndDate={queue.setEndDate}
+                                    availableTypes={queue.availableTypes}
                                 />
                             )}
                             {queue.activeTab === 'archived' && (
@@ -977,6 +794,20 @@ export default function Dashboard() {
                                     isFilterActive={queue.isFilterActive}
                                     activeFiltersDescription={queue.activeFiltersDescription}
                                     isLoading={queue.showMessagesLoading}
+                                    // Filter props
+                                    search={queue.search}
+                                    setSearch={queue.setSearch}
+                                    filterType={queue.filterType}
+                                    setFilterType={queue.setFilterType}
+                                    filterPriority={queue.filterPriority}
+                                    setFilterPriority={queue.setFilterPriority}
+                                    filterAttempts={queue.filterAttempts}
+                                    setFilterAttempts={queue.setFilterAttempts}
+                                    startDate={queue.startDate}
+                                    setStartDate={queue.setStartDate}
+                                    endDate={queue.endDate}
+                                    setEndDate={queue.setEndDate}
+                                    availableTypes={queue.availableTypes}
                                 />
                             )}
                         </div>
@@ -1046,6 +877,13 @@ export default function Dashboard() {
                                         fetchMessageHistory(msgId)
                                         setHistoryDialog({ isOpen: true, messageId: msgId })
                                     }}
+                                    // Filter props
+                                    filterAction={activityFilter.action}
+                                    setFilterAction={(value) => setActivityFilter(prev => ({ ...prev, action: value, offset: 0 }))}
+                                    filterMessageId={activityFilter.message_id}
+                                    setFilterMessageId={(value) => setActivityFilter(prev => ({ ...prev, message_id: value, offset: 0 }))}
+                                    filterHasAnomaly={activityFilter.has_anomaly}
+                                    setFilterHasAnomaly={(value) => setActivityFilter(prev => ({ ...prev, has_anomaly: value, offset: 0 }))}
                                 />
                             )}
                             {activityTab === 'anomalies' && (

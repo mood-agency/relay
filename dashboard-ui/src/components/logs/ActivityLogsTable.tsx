@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react"
-import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy } from "lucide-react"
+import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy, Filter } from "lucide-react"
 
 import {
     Table,
@@ -21,6 +21,19 @@ import {
     useElementHeight,
     useVirtualization
 } from "@/components/ui/data-table"
+import { Button } from "@/components/ui/button"
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/select"
 
 import { toast } from "@/components/ui/sonner"
 import { ActivityLogEntry } from "./types"
@@ -202,6 +215,13 @@ export interface ActivityLogsTableProps {
     isFilterActive?: boolean
     activeFiltersDescription?: string
     onViewMessageHistory?: (messageId: string) => void
+    // Filter props
+    filterAction?: string
+    setFilterAction?: (value: string) => void
+    filterMessageId?: string
+    setFilterMessageId?: (value: string) => void
+    filterHasAnomaly?: boolean | null
+    setFilterHasAnomaly?: (value: boolean | null) => void
 }
 
 export const ActivityLogsTable = React.memo(({
@@ -217,14 +237,25 @@ export const ActivityLogsTable = React.memo(({
     scrollResetKey,
     isFilterActive,
     activeFiltersDescription,
-    onViewMessageHistory
+    onViewMessageHistory,
+    // Filter props
+    filterAction,
+    setFilterAction,
+    filterMessageId,
+    setFilterMessageId,
+    filterHasAnomaly,
+    setFilterHasAnomaly
 }: ActivityLogsTableProps) => {
+    const [filterOpen, setFilterOpen] = useState(false)
     const logsList = Array.isArray(logs) ? logs : []
     const scrollContainerRef = useRef<HTMLDivElement | null>(null)
     const viewportHeight = useElementHeight(scrollContainerRef)
     const [scrollTop, setScrollTop] = useState(0)
     const [sort, setSort] = useState<SortState>({ column: null, direction: 'desc' })
-    const colSpan = 6
+
+    // Check if filter props are provided
+    const hasFilterProps = setFilterAction !== undefined && setFilterMessageId !== undefined
+    const colSpan = hasFilterProps ? 7 : 6
 
     const handleSort = (column: SortColumn) => {
         setSort(prev => ({
@@ -310,6 +341,95 @@ export const ActivityLogsTable = React.memo(({
                                 <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
                                 <SortableHeader column="consumer_id" label="Consumer" currentSort={sort} onSort={handleSort} className="w-[180px]" />
                                 <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
+                                {hasFilterProps && (
+                                    <TableHead className="sticky top-0 z-20 bg-card text-right pr-2 w-[50px]">
+                                        <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+                                            <PopoverTrigger asChild>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className={cn("h-7 w-7 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                                    aria-label="Log Filters"
+                                                >
+                                                    <Filter className="h-3.5 w-3.5" />
+                                                    {isFilterActive && (
+                                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                                    )}
+                                                </Button>
+                                            </PopoverTrigger>
+                                            <PopoverContent className="w-72 p-4" align="end">
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <h4 className="font-medium text-sm">Log Filters</h4>
+                                                        {isFilterActive && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    setFilterAction!("")
+                                                                    setFilterMessageId!("")
+                                                                    setFilterHasAnomaly!(null)
+                                                                }}
+                                                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                            >
+                                                                Clear all
+                                                            </Button>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Message ID</label>
+                                                        <div className="relative">
+                                                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                            <input
+                                                                placeholder="Search by message ID..."
+                                                                value={filterMessageId || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterMessageId!(e.target.value)}
+                                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Action</label>
+                                                        <Select value={filterAction || "any"} onValueChange={(val: string) => setFilterAction!(val === "any" ? "" : val)}>
+                                                            <SelectTrigger className="w-full">
+                                                                <SelectValue placeholder="Any" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="any">Any</SelectItem>
+                                                                <SelectItem value="enqueue">Enqueue</SelectItem>
+                                                                <SelectItem value="dequeue">Dequeue</SelectItem>
+                                                                <SelectItem value="ack">Acknowledge</SelectItem>
+                                                                <SelectItem value="nack">Negative Ack</SelectItem>
+                                                                <SelectItem value="requeue">Requeue</SelectItem>
+                                                                <SelectItem value="move">Move</SelectItem>
+                                                                <SelectItem value="delete">Delete</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Has Anomaly</label>
+                                                        <Select
+                                                            value={filterHasAnomaly === null ? "any" : filterHasAnomaly ? "yes" : "no"}
+                                                            onValueChange={(val: string) => setFilterHasAnomaly!(val === "any" ? null : val === "yes")}
+                                                        >
+                                                            <SelectTrigger className="w-full">
+                                                                <SelectValue placeholder="Any" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="any">Any</SelectItem>
+                                                                <SelectItem value="yes">Yes</SelectItem>
+                                                                <SelectItem value="no">No</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                            </PopoverContent>
+                                        </Popover>
+                                    </TableHead>
+                                )}
                             </TableRow>
                         </TableHeader>
                         <TableBody>

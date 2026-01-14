@@ -255,8 +255,8 @@ describe('Queue Routes - Integration Tests', () => {
     it('should return 200 with messages from the queue', async () => {
       // Add a message first
       await testClient(router).queue.message.$post({ json: { type: 'test', payload: { foo: 'bar' } } });
-      
-      const res = await testClient(router).queue[':queueType'].messages.$get({ 
+
+      const res = await testClient(router).queue[':queueType'].messages.$get({
         param: { queueType: 'main' }
       });
       expect(res.status).toBe(200);
@@ -265,6 +265,355 @@ describe('Queue Routes - Integration Tests', () => {
       expect(result).toHaveProperty('pagination');
       expect(result.messages.length).toBeGreaterThan(0);
       expect(result.messages[0].type).toBe('test');
+    });
+
+    it('should sort messages by created_at ascending', async () => {
+      // Add messages with slight delay to ensure different timestamps
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-test-1', payload: { order: 1 } } });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-test-2', payload: { order: 2 } } });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-test-3', payload: { order: 3 } } });
+
+      // Get messages sorted by created_at ascending (oldest first)
+      const res = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'created_at', sortOrder: 'asc' }
+      });
+      expect(res.status).toBe(200);
+      const result = await res.json() as any;
+
+      // Filter to our test messages
+      const testMsgs = result.messages.filter((m: any) => m.type?.startsWith('sort-created-test-'));
+      expect(testMsgs.length).toBeGreaterThanOrEqual(3);
+
+      // Verify ascending order (each created_at should be >= previous)
+      for (let i = 1; i < testMsgs.length; i++) {
+        expect(testMsgs[i].created_at).toBeGreaterThanOrEqual(testMsgs[i - 1].created_at);
+      }
+    });
+
+    it('should sort messages by created_at descending', async () => {
+      // Add messages with slight delay
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-desc-1', payload: { order: 1 } } });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-desc-2', payload: { order: 2 } } });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await testClient(router).queue.message.$post({ json: { type: 'sort-created-desc-3', payload: { order: 3 } } });
+
+      // Get messages sorted by created_at descending (newest first)
+      const res = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'created_at', sortOrder: 'desc' }
+      });
+      expect(res.status).toBe(200);
+      const result = await res.json() as any;
+
+      // Filter to our test messages
+      const testMsgs = result.messages.filter((m: any) => m.type?.startsWith('sort-created-desc-'));
+      expect(testMsgs.length).toBeGreaterThanOrEqual(3);
+
+      // Verify descending order (each created_at should be <= previous)
+      for (let i = 1; i < testMsgs.length; i++) {
+        expect(testMsgs[i].created_at).toBeLessThanOrEqual(testMsgs[i - 1].created_at);
+      }
+    });
+
+    it('should sort messages by type alphabetically ascending', async () => {
+      // Add messages with different types
+      await testClient(router).queue.message.$post({ json: { type: 'zulu-sort-type', payload: {} } });
+      await testClient(router).queue.message.$post({ json: { type: 'alpha-sort-type', payload: {} } });
+      await testClient(router).queue.message.$post({ json: { type: 'mike-sort-type', payload: {} } });
+
+      // Get messages sorted by type ascending
+      const res = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'type', sortOrder: 'asc' }
+      });
+      expect(res.status).toBe(200);
+      const result = await res.json() as any;
+
+      // Filter to our test messages
+      const testMsgs = result.messages.filter((m: any) => m.type?.endsWith('-sort-type'));
+      expect(testMsgs.length).toBeGreaterThanOrEqual(3);
+
+      // Verify alphabetical ascending order
+      for (let i = 1; i < testMsgs.length; i++) {
+        expect(testMsgs[i].type.localeCompare(testMsgs[i - 1].type)).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it('should sort messages by type alphabetically descending', async () => {
+      // Add messages with different types
+      await testClient(router).queue.message.$post({ json: { type: 'zulu-sort-type-desc', payload: {} } });
+      await testClient(router).queue.message.$post({ json: { type: 'alpha-sort-type-desc', payload: {} } });
+      await testClient(router).queue.message.$post({ json: { type: 'mike-sort-type-desc', payload: {} } });
+
+      // Get messages sorted by type descending
+      const res = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'type', sortOrder: 'desc' }
+      });
+      expect(res.status).toBe(200);
+      const result = await res.json() as any;
+
+      // Filter to our test messages
+      const testMsgs = result.messages.filter((m: any) => m.type?.endsWith('-sort-type-desc'));
+      expect(testMsgs.length).toBeGreaterThanOrEqual(3);
+
+      // Verify alphabetical descending order
+      for (let i = 1; i < testMsgs.length; i++) {
+        expect(testMsgs[i].type.localeCompare(testMsgs[i - 1].type)).toBeLessThanOrEqual(0);
+      }
+    });
+
+    it('should sort messages by priority', async () => {
+      // Add messages with different priorities
+      await testClient(router).queue.message.$post({ json: { type: 'priority-sort-test', priority: 1, payload: { p: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'priority-sort-test', priority: 5, payload: { p: 5 } } });
+      await testClient(router).queue.message.$post({ json: { type: 'priority-sort-test', priority: 3, payload: { p: 3 } } });
+
+      // Get messages sorted by priority ascending
+      const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'priority', sortOrder: 'asc', filterType: 'priority-sort-test' }
+      });
+      expect(resAsc.status).toBe(200);
+      const resultAsc = await resAsc.json() as any;
+
+      // Verify ascending order
+      for (let i = 1; i < resultAsc.messages.length; i++) {
+        expect(resultAsc.messages[i].priority).toBeGreaterThanOrEqual(resultAsc.messages[i - 1].priority);
+      }
+
+      // Get messages sorted by priority descending
+      const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'priority', sortOrder: 'desc', filterType: 'priority-sort-test' }
+      });
+      expect(resDesc.status).toBe(200);
+      const resultDesc = await resDesc.json() as any;
+
+      // Verify descending order
+      for (let i = 1; i < resultDesc.messages.length; i++) {
+        expect(resultDesc.messages[i].priority).toBeLessThanOrEqual(resultDesc.messages[i - 1].priority);
+      }
+    });
+
+    it('should sort messages by id', async () => {
+      // Add a few messages with a unique type for this test run
+      const testType = `id-sort-main-${Date.now()}`;
+      await testClient(router).queue.message.$post({ json: { type: testType, payload: { n: 1 } } });
+      await testClient(router).queue.message.$post({ json: { type: testType, payload: { n: 2 } } });
+      await testClient(router).queue.message.$post({ json: { type: testType, payload: { n: 3 } } });
+
+      // Get messages sorted by id ascending
+      const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'id', sortOrder: 'asc', filterType: testType }
+      });
+      expect(resAsc.status).toBe(200);
+      const resultAsc = await resAsc.json() as any;
+
+      expect(resultAsc.messages.length).toBe(3);
+
+      // The messages should be sorted by id - verify by comparing to manually sorted
+      const idsAsc = resultAsc.messages.map((m: any) => m.id);
+      const sortedAsc = [...idsAsc].sort((a: string, b: string) => a < b ? -1 : a > b ? 1 : 0);
+      expect(idsAsc).toEqual(sortedAsc);
+
+      // Get messages sorted by id descending
+      const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+        param: { queueType: 'main' },
+        query: { sortBy: 'id', sortOrder: 'desc', filterType: testType }
+      });
+      expect(resDesc.status).toBe(200);
+      const resultDesc = await resDesc.json() as any;
+
+      expect(resultDesc.messages.length).toBe(3);
+
+      // The messages should be sorted by id descending
+      const idsDesc = resultDesc.messages.map((m: any) => m.id);
+      const sortedDesc = [...idsDesc].sort((a: string, b: string) => a > b ? -1 : a < b ? 1 : 0);
+      expect(idsDesc).toEqual(sortedDesc);
+    });
+
+    // Acknowledged queue sorting tests
+    describe('acknowledged queue sorting', () => {
+      // Helper function to create acknowledged messages
+      async function createAcknowledgedMessage(type: string, priority: number = 0) {
+        // Enqueue
+        await testClient(router).queue.message.$post({
+          json: { type, priority, payload: { type, priority } }
+        });
+
+        // Dequeue
+        const dequeueRes = await testClient(router).queue.message.$get({
+          query: { timeout: '1', type }
+        });
+        if (dequeueRes.status !== 200) return null;
+
+        const msg = await dequeueRes.json() as any;
+
+        // Acknowledge
+        await testClient(router).queue.ack.$post({
+          json: {
+            id: msg.id,
+            _stream_id: msg._stream_id,
+            _stream_name: msg._stream_name
+          }
+        });
+
+        return msg;
+      }
+
+      it('should sort acknowledged messages by id', async () => {
+        // Create acknowledged messages with a unique type for this test run
+        const testType = `ack-id-sort-${Date.now()}`;
+        await createAcknowledgedMessage(testType);
+        await createAcknowledgedMessage(testType);
+        await createAcknowledgedMessage(testType);
+
+        // Get messages sorted by id ascending, filtered by type (use higher limit to ensure we get all)
+        const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'id', sortOrder: 'asc', filterType: testType, limit: '100' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json() as any;
+
+        expect(resultAsc.messages.length).toBe(3);
+
+        // Verify ascending order - the filtered results should be sorted
+        for (let i = 1; i < resultAsc.messages.length; i++) {
+          expect(resultAsc.messages[i].id.localeCompare(resultAsc.messages[i - 1].id)).toBeGreaterThanOrEqual(0);
+        }
+
+        // Get messages sorted by id descending, filtered by type
+        const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'id', sortOrder: 'desc', filterType: testType, limit: '100' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json() as any;
+
+        expect(resultDesc.messages.length).toBe(3);
+
+        // Verify descending order
+        for (let i = 1; i < resultDesc.messages.length; i++) {
+          expect(resultDesc.messages[i].id.localeCompare(resultDesc.messages[i - 1].id)).toBeLessThanOrEqual(0);
+        }
+      });
+
+      it('should sort acknowledged messages by type', async () => {
+        // Create acknowledged messages with different types (all ending with same suffix for filtering)
+        await createAcknowledgedMessage('zulu-ack-type-test');
+        await createAcknowledgedMessage('alpha-ack-type-test');
+        await createAcknowledgedMessage('mike-ack-type-test');
+
+        // Get all messages then filter (type sort with filter doesn't work well for different types)
+        const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'type', sortOrder: 'asc' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json() as any;
+        const testMsgsAsc = resultAsc.messages.filter((m: any) => m.type?.endsWith('-ack-type-test'));
+
+        expect(testMsgsAsc.length).toBeGreaterThanOrEqual(3);
+
+        // Verify alphabetical ascending order
+        for (let i = 1; i < testMsgsAsc.length; i++) {
+          expect(testMsgsAsc[i].type.localeCompare(testMsgsAsc[i - 1].type)).toBeGreaterThanOrEqual(0);
+        }
+
+        // Get messages sorted by type descending
+        const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'type', sortOrder: 'desc' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json() as any;
+        const testMsgsDesc = resultDesc.messages.filter((m: any) => m.type?.endsWith('-ack-type-test'));
+
+        expect(testMsgsDesc.length).toBeGreaterThanOrEqual(3);
+
+        // Verify alphabetical descending order
+        for (let i = 1; i < testMsgsDesc.length; i++) {
+          expect(testMsgsDesc[i].type.localeCompare(testMsgsDesc[i - 1].type)).toBeLessThanOrEqual(0);
+        }
+      });
+
+      it('should sort acknowledged messages by priority', async () => {
+        // Create acknowledged messages with different priorities
+        await createAcknowledgedMessage('ack-priority-sort', 1);
+        await createAcknowledgedMessage('ack-priority-sort', 5);
+        await createAcknowledgedMessage('ack-priority-sort', 3);
+
+        // Get messages sorted by priority ascending
+        const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'priority', sortOrder: 'asc', filterType: 'ack-priority-sort' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json() as any;
+
+        // Verify ascending order
+        for (let i = 1; i < resultAsc.messages.length; i++) {
+          expect(resultAsc.messages[i].priority).toBeGreaterThanOrEqual(resultAsc.messages[i - 1].priority);
+        }
+
+        // Get messages sorted by priority descending
+        const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'priority', sortOrder: 'desc', filterType: 'ack-priority-sort' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json() as any;
+
+        // Verify descending order
+        for (let i = 1; i < resultDesc.messages.length; i++) {
+          expect(resultDesc.messages[i].priority).toBeLessThanOrEqual(resultDesc.messages[i - 1].priority);
+        }
+      });
+
+      it('should sort acknowledged messages by attempt_count', async () => {
+        // Create acknowledged messages with a unique type
+        const testType = 'ack-attempts-sort-test';
+        await createAcknowledgedMessage(testType);
+        await createAcknowledgedMessage(testType);
+        await createAcknowledgedMessage(testType);
+
+        // Get messages sorted by attempt_count ascending, filtered by type
+        const resAsc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'attempt_count', sortOrder: 'asc', filterType: testType }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json() as any;
+
+        expect(resultAsc.messages.length).toBeGreaterThanOrEqual(3);
+
+        // Verify ascending order (all should have attempt_count = 1)
+        for (let i = 1; i < resultAsc.messages.length; i++) {
+          expect(resultAsc.messages[i].attempt_count).toBeGreaterThanOrEqual(resultAsc.messages[i - 1].attempt_count);
+        }
+
+        // Get messages sorted by attempt_count descending, filtered by type
+        const resDesc = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'acknowledged' },
+          query: { sortBy: 'attempt_count', sortOrder: 'desc', filterType: testType }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json() as any;
+
+        expect(resultDesc.messages.length).toBeGreaterThanOrEqual(3);
+
+        // Verify descending order
+        for (let i = 1; i < resultDesc.messages.length; i++) {
+          expect(resultDesc.messages[i].attempt_count).toBeLessThanOrEqual(resultDesc.messages[i - 1].attempt_count);
+        }
+      });
     });
   });
 
@@ -1655,6 +2004,247 @@ describe('Queue Routes - Integration Tests', () => {
         // Should not return any anomalies with 'touch' action (dlq_movement is from 'move')
         const touchAnomalies = result.anomalies.filter((a: any) => a.action === 'touch');
         expect(touchAnomalies.length).toBe(0);
+      });
+
+      it('should sort anomalies by timestamp - asc vs desc comparison', async () => {
+        const testId = Date.now();
+        // Create multiple DLQ movement anomalies with delay between them for distinct timestamps
+        for (let i = 0; i < 3; i++) {
+          await testClient(router).queue.message.$post({ json: { type: `sort-ts-compare-${testId}-${i}`, payload: { order: i } } });
+          const listRes = await testClient(router).queue[':queueType'].messages.$get({
+            param: { queueType: 'main' },
+            query: { filterType: `sort-ts-compare-${testId}-${i}` }
+          });
+          const list = await listRes.json();
+          const msg = list.messages[0];
+          await testClient(router).queue.move.$post({
+            json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: `Test ${i}` }
+          });
+          // Delay to ensure distinct timestamps
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        // Wait for activity logs
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Fetch BOTH asc and desc with same filter to get same dataset
+        const resAsc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'timestamp', sort_order: 'asc' }
+        });
+        const resDesc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'timestamp', sort_order: 'desc' }
+        });
+
+        expect(resAsc.status).toBe(200);
+        expect(resDesc.status).toBe(200);
+
+        const resultAsc = await resAsc.json();
+        const resultDesc = await resDesc.json();
+
+        // Filter to only our test anomalies
+        const ascAnomalies = resultAsc.anomalies.filter((a: any) =>
+          a.anomaly?.type === 'dlq_movement' && a.message_type?.startsWith(`sort-ts-compare-${testId}`)
+        );
+        const descAnomalies = resultDesc.anomalies.filter((a: any) =>
+          a.anomaly?.type === 'dlq_movement' && a.message_type?.startsWith(`sort-ts-compare-${testId}`)
+        );
+
+        // Verify we have our 3 test anomalies in both
+        expect(ascAnomalies.length).toBe(3);
+        expect(descAnomalies.length).toBe(3);
+
+        // THE KEY TEST: first item in asc should equal last item in desc (and vice versa)
+        expect(ascAnomalies[0].log_id).toBe(descAnomalies[2].log_id);
+        expect(ascAnomalies[2].log_id).toBe(descAnomalies[0].log_id);
+
+        // Verify asc order internally
+        expect(ascAnomalies[0].timestamp).toBeLessThan(ascAnomalies[1].timestamp);
+        expect(ascAnomalies[1].timestamp).toBeLessThan(ascAnomalies[2].timestamp);
+
+        // Verify desc order internally
+        expect(descAnomalies[0].timestamp).toBeGreaterThan(descAnomalies[1].timestamp);
+        expect(descAnomalies[1].timestamp).toBeGreaterThan(descAnomalies[2].timestamp);
+      });
+
+      it('should sort anomalies by severity', async () => {
+        // We need to create anomalies with different severities
+        // dlq_movement = critical, flash_message = info/warning
+
+        // Create a DLQ movement anomaly (critical)
+        await testClient(router).queue.message.$post({ json: { type: 'sort-severity-test-1', payload: {} } });
+        let listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-severity-test-1' }
+        });
+        let list = await listRes.json();
+        let msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test severity' }
+        });
+
+        // Create another DLQ movement anomaly with delay
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await testClient(router).queue.message.$post({ json: { type: 'sort-severity-test-2', payload: {} } });
+        listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-severity-test-2' }
+        });
+        list = await listRes.json();
+        msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test severity 2' }
+        });
+
+        // Wait for activity logs
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies sorted by severity ascending (info first, then warning, then critical)
+        const resAsc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'severity', sort_order: 'asc' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json();
+
+        // Get anomalies sorted by severity descending (critical first)
+        const resDesc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'severity', sort_order: 'desc' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json();
+
+        // Verify sorting - ascending should have lower severity first
+        const severityOrder: Record<string, number> = { info: 1, warning: 2, critical: 3 };
+
+        for (let i = 1; i < resultAsc.anomalies.length; i++) {
+          const prevSev = severityOrder[resultAsc.anomalies[i - 1].anomaly?.severity] || 0;
+          const currSev = severityOrder[resultAsc.anomalies[i].anomaly?.severity] || 0;
+          expect(currSev).toBeGreaterThanOrEqual(prevSev);
+        }
+
+        // Verify descending - higher severity first
+        for (let i = 1; i < resultDesc.anomalies.length; i++) {
+          const prevSev = severityOrder[resultDesc.anomalies[i - 1].anomaly?.severity] || 0;
+          const currSev = severityOrder[resultDesc.anomalies[i].anomaly?.severity] || 0;
+          expect(currSev).toBeLessThanOrEqual(prevSev);
+        }
+      });
+
+      it('should sort anomalies by type alphabetically', async () => {
+        // Create anomalies that might have different types
+        // dlq_movement type
+        await testClient(router).queue.message.$post({ json: { type: 'sort-type-test-1', payload: {} } });
+        let listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-type-test-1' }
+        });
+        let list = await listRes.json();
+        let msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test type sort' }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Another dlq_movement
+        await testClient(router).queue.message.$post({ json: { type: 'sort-type-test-2', payload: {} } });
+        listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-type-test-2' }
+        });
+        list = await listRes.json();
+        msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test type sort 2' }
+        });
+
+        // Wait for activity logs
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies sorted by type ascending
+        const resAsc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'type', sort_order: 'asc' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json();
+
+        // Verify alphabetical ordering ascending
+        for (let i = 1; i < resultAsc.anomalies.length; i++) {
+          const prevType = resultAsc.anomalies[i - 1].anomaly?.type || '';
+          const currType = resultAsc.anomalies[i].anomaly?.type || '';
+          expect(currType.localeCompare(prevType)).toBeGreaterThanOrEqual(0);
+        }
+
+        // Get anomalies sorted by type descending
+        const resDesc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'type', sort_order: 'desc' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json();
+
+        // Verify alphabetical ordering descending
+        for (let i = 1; i < resultDesc.anomalies.length; i++) {
+          const prevType = resultDesc.anomalies[i - 1].anomaly?.type || '';
+          const currType = resultDesc.anomalies[i].anomaly?.type || '';
+          expect(currType.localeCompare(prevType)).toBeLessThanOrEqual(0);
+        }
+      });
+
+      it('should sort anomalies by action', async () => {
+        // Create anomalies with 'move' action (DLQ movement)
+        await testClient(router).queue.message.$post({ json: { type: 'sort-action-test-1', payload: {} } });
+        let listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-action-test-1' }
+        });
+        let list = await listRes.json();
+        let msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test action sort' }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        await testClient(router).queue.message.$post({ json: { type: 'sort-action-test-2', payload: {} } });
+        listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'sort-action-test-2' }
+        });
+        list = await listRes.json();
+        msg = list.messages[0];
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test action sort 2' }
+        });
+
+        // Wait for activity logs
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies sorted by action ascending
+        const resAsc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'action', sort_order: 'asc' }
+        });
+        expect(resAsc.status).toBe(200);
+        const resultAsc = await resAsc.json();
+
+        // Verify alphabetical ordering ascending
+        for (let i = 1; i < resultAsc.anomalies.length; i++) {
+          const prevAction = resultAsc.anomalies[i - 1].action || '';
+          const currAction = resultAsc.anomalies[i].action || '';
+          expect(currAction.localeCompare(prevAction)).toBeGreaterThanOrEqual(0);
+        }
+
+        // Get anomalies sorted by action descending
+        const resDesc = await testClient(router).queue.activity.anomalies.$get({
+          query: { sort_by: 'action', sort_order: 'desc' }
+        });
+        expect(resDesc.status).toBe(200);
+        const resultDesc = await resDesc.json();
+
+        // Verify alphabetical ordering descending
+        for (let i = 1; i < resultDesc.anomalies.length; i++) {
+          const prevAction = resultDesc.anomalies[i - 1].action || '';
+          const currAction = resultDesc.anomalies[i].action || '';
+          expect(currAction.localeCompare(prevAction)).toBeLessThanOrEqual(0);
+        }
       });
     });
 

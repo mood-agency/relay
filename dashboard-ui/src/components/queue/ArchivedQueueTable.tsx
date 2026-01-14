@@ -1,4 +1,5 @@
-import React from "react"
+import React, { useState } from "react"
+import { Filter, Search } from "lucide-react"
 
 import {
     BaseQueueTableProps,
@@ -25,6 +26,21 @@ import {
     cn,
     Message
 } from "./QueueTableBase"
+import { Button } from "@/components/ui/button"
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/select"
+import { DateTimePicker } from "@/components/ui/date-time-picker"
+import MultipleSelector, { Option } from "@/components/ui/multi-select"
 
 // ============================================================================
 // Archived Queue Row Component
@@ -66,7 +82,22 @@ const ArchivedQueueRow = React.memo(({
 // Archived Queue Table Component
 // ============================================================================
 
-export interface ArchivedQueueTableProps extends BaseQueueTableProps { }
+export interface ArchivedQueueTableProps extends BaseQueueTableProps {
+    // Filter props (optional - filter column only shows when these are provided)
+    search?: string
+    setSearch?: (value: string) => void
+    filterType?: string
+    setFilterType?: (value: string) => void
+    filterPriority?: string
+    setFilterPriority?: (value: string) => void
+    filterAttempts?: string
+    setFilterAttempts?: (value: string) => void
+    startDate?: Date | undefined
+    setStartDate?: (date: Date | undefined) => void
+    endDate?: Date | undefined
+    setEndDate?: (date: Date | undefined) => void
+    availableTypes?: string[]
+}
 
 export const ArchivedQueueTable = React.memo(({
     messages,
@@ -91,11 +122,29 @@ export const ArchivedQueueTable = React.memo(({
     highlightedIds,
     isFilterActive,
     activeFiltersDescription,
-    isLoading
+    isLoading,
+    // Filter props
+    search,
+    setSearch,
+    filterType,
+    setFilterType,
+    filterPriority,
+    setFilterPriority,
+    filterAttempts,
+    setFilterAttempts,
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+    availableTypes
 }: ArchivedQueueTableProps) => {
+    const [filterOpen, setFilterOpen] = useState(false)
     const { shouldVirtualize, scrollContainerRef, setScrollTop, virtual } = useTableVirtualization(messages, scrollResetKey)
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
-    const colSpan = 8
+
+    // Check if filter props are provided - if so, show filter column
+    const hasFilterProps = setSearch !== undefined && setFilterType !== undefined
+    const colSpan = hasFilterProps ? 9 : 8
 
     const renderRow = (msg: Message) => (
         <ArchivedQueueRow
@@ -140,6 +189,141 @@ export const ArchivedQueueTable = React.memo(({
                                 <SortableHeader label="Archived At" field="archived_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
+                                {hasFilterProps && (
+                                    <TableHead className="sticky top-0 z-20 bg-card text-right pr-2 w-[50px]">
+                                        <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+                                            <PopoverTrigger asChild>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className={cn("h-7 w-7 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                                    aria-label="Message Filters"
+                                                >
+                                                    <Filter className="h-3.5 w-3.5" />
+                                                    {isFilterActive && (
+                                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                                    )}
+                                                </Button>
+                                            </PopoverTrigger>
+                                            <PopoverContent className="w-72 p-4" align="end">
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <h4 className="font-medium text-sm">Message Filters</h4>
+                                                        {isFilterActive && (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    setSearch!("")
+                                                                    setFilterType!("all")
+                                                                    setFilterPriority!("")
+                                                                    setFilterAttempts!("")
+                                                                    setStartDate!(undefined)
+                                                                    setEndDate!(undefined)
+                                                                }}
+                                                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                            >
+                                                                Clear all
+                                                            </Button>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Search</label>
+                                                        <div className="relative">
+                                                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                            <input
+                                                                placeholder="Search ID, payload..."
+                                                                value={search}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
+                                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Message Type</label>
+                                                        <MultipleSelector
+                                                            defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
+                                                            value={
+                                                                filterType === "all" || !filterType
+                                                                    ? []
+                                                                    : filterType.split(",").map(t => ({ label: t, value: t }))
+                                                            }
+                                                            onChange={(selected: Option[]) => {
+                                                                if (selected.length === 0) {
+                                                                    setFilterType!("all")
+                                                                } else {
+                                                                    setFilterType!(selected.map(s => s.value).join(","))
+                                                                }
+                                                            }}
+                                                            hideClearAllButton
+                                                            badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
+                                                            emptyIndicator={
+                                                                <p className="text-center text-sm text-muted-foreground">No types found</p>
+                                                            }
+                                                        />
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Priority</label>
+                                                        <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
+                                                            <SelectTrigger className="w-full">
+                                                                <SelectValue placeholder="Any" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="any">Any</SelectItem>
+                                                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                                                                    <SelectItem key={p} value={String(p)}>{p}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            placeholder="Any"
+                                                            value={filterAttempts}
+                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                                                const val = e.target.value
+                                                                if (val === "" || /^\d+$/.test(val)) {
+                                                                    setFilterAttempts!(val)
+                                                                }
+                                                            }}
+                                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                        />
+                                                    </div>
+
+                                                    <div className="space-y-2">
+                                                        <label className="text-xs font-medium text-foreground/80">Archived At</label>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="space-y-1">
+                                                                <label className="text-[10px] text-muted-foreground">From</label>
+                                                                <DateTimePicker
+                                                                    date={startDate}
+                                                                    setDate={setStartDate!}
+                                                                    placeholder="From"
+                                                                />
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                <label className="text-[10px] text-muted-foreground">To</label>
+                                                                <DateTimePicker
+                                                                    date={endDate}
+                                                                    setDate={setEndDate!}
+                                                                    placeholder="To"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </PopoverContent>
+                                        </Popover>
+                                    </TableHead>
+                                )}
                             </TableRow>
                         </TableHeader>
                         <TableBody>

@@ -445,12 +445,13 @@ export async function getMessageHistory(messageId) {
  * @returns {Promise<Object>} Paginated anomalies.
  */
 export async function getAnomalies(filters = {}) {
-  const { severity, type, action, start_time, end_time, limit = 100, sort_by = 'timestamp', sort_order = 'desc' } = filters;
+  const { severity, type, action, start_time, end_time, limit = 100 } = filters;
+
+  // Robust parameter handling
+  const sort_by = (filters.sort_by || 'timestamp').toLowerCase();
+  const sort_order = (filters.sort_order || 'desc').toLowerCase();
 
   // Fetch a larger batch to ensure we have enough after filtering and sorting
-  // We need to fetch more than the limit because:
-  // 1. We may filter by severity after fetching
-  // 2. We need to sort the full dataset before limiting
   const fetchLimit = Math.max(1000, limit * 10);
 
   const { logs, pagination } = await this.getActivityLogs({
@@ -473,6 +474,8 @@ export async function getAnomalies(filters = {}) {
   const severityOrder = { critical: 3, warning: 2, info: 1 };
   const direction = sort_order === 'asc' ? 1 : -1;
 
+  logger.debug(`[Method:getAnomalies] Sorting ${anomalies.length} items by ${sort_by} (${sort_order})`);
+
   anomalies.sort((a, b) => {
     let comparison = 0;
     switch (sort_by) {
@@ -482,10 +485,14 @@ export async function getAnomalies(filters = {}) {
         comparison = aSev - bSev;
         break;
       case 'type':
-        comparison = (a.anomaly?.type || '').localeCompare(b.anomaly?.type || '');
+        const aType = a.anomaly?.type || '';
+        const bType = b.anomaly?.type || '';
+        comparison = aType.localeCompare(bType);
         break;
       case 'action':
-        comparison = (a.action || '').localeCompare(b.action || '');
+        const aAction = a.action || '';
+        const bAction = b.action || '';
+        comparison = aAction.localeCompare(bAction);
         break;
       case 'timestamp':
       default:
@@ -508,7 +515,9 @@ export async function getAnomalies(filters = {}) {
   for (const log of anomalies) {
     if (log.anomaly) {
       summary.by_type[log.anomaly.type] = (summary.by_type[log.anomaly.type] || 0) + 1;
-      summary.by_severity[log.anomaly.severity]++;
+      if (summary.by_severity[log.anomaly.severity] !== undefined) {
+        summary.by_severity[log.anomaly.severity]++;
+      }
     }
   }
 
