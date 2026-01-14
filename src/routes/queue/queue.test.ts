@@ -573,7 +573,7 @@ describe('Queue Routes - Integration Tests', () => {
       // Check failed_at is set
       for (const msg of dlqMessages) {
           expect(msg.failed_at).toBeDefined();
-          expect(msg.last_error).toBe("Manually moved to DLQ");
+          expect(msg.last_error).toBe("Manually moved to Failed Queue");
       }
     }, 15000);
   });
@@ -1512,13 +1512,149 @@ describe('Queue Routes - Integration Tests', () => {
         const res = await testClient(router).queue.activity.anomalies.$get();
         expect(res.status).toBe(200);
         const result = await res.json();
-        
+
         expect(result.summary).toHaveProperty('total');
         expect(result.summary).toHaveProperty('by_type');
         expect(result.summary).toHaveProperty('by_severity');
         expect(result.summary.by_severity).toHaveProperty('critical');
         expect(result.summary.by_severity).toHaveProperty('warning');
         expect(result.summary.by_severity).toHaveProperty('info');
+      });
+
+      it('should filter anomalies by action type', async () => {
+        // Create DLQ movement anomaly via move action
+        await testClient(router).queue.message.$post({ json: { type: 'action-filter-test', payload: {} } });
+
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'action-filter-test' }
+        });
+        const list = await listRes.json();
+        const msg = list.messages[0];
+
+        // Move to DLQ (this creates a 'move' action with dlq_movement anomaly)
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test action filter' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies filtered by 'move' action
+        const res = await testClient(router).queue.activity.anomalies.$get({
+          query: { action: 'move' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+
+        // All returned anomalies should be from 'move' actions
+        for (const log of result.anomalies) {
+          expect(log.action).toBe('move');
+        }
+
+        // Should have at least one anomaly (the dlq_movement)
+        expect(result.anomalies.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should filter anomalies by anomaly type', async () => {
+        // Create DLQ movement anomaly
+        await testClient(router).queue.message.$post({ json: { type: 'type-filter-test', payload: {} } });
+
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'type-filter-test' }
+        });
+        const list = await listRes.json();
+        const msg = list.messages[0];
+
+        // Move to DLQ to create dlq_movement anomaly
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test type filter' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies filtered by 'dlq_movement' type
+        const res = await testClient(router).queue.activity.anomalies.$get({
+          query: { type: 'dlq_movement' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+
+        // All returned anomalies should be dlq_movement type
+        for (const log of result.anomalies) {
+          expect(log.anomaly?.type).toBe('dlq_movement');
+        }
+
+        // Should have at least one anomaly
+        expect(result.anomalies.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should filter anomalies by both action and type', async () => {
+        // Create DLQ movement anomaly via move action
+        await testClient(router).queue.message.$post({ json: { type: 'combo-filter-test', payload: {} } });
+
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'combo-filter-test' }
+        });
+        const list = await listRes.json();
+        const msg = list.messages[0];
+
+        // Move to DLQ
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead', errorReason: 'Test combo filter' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies filtered by both action='move' and type='dlq_movement'
+        const res = await testClient(router).queue.activity.anomalies.$get({
+          query: { action: 'move', type: 'dlq_movement' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+
+        // All returned anomalies should match both filters
+        for (const log of result.anomalies) {
+          expect(log.action).toBe('move');
+          expect(log.anomaly?.type).toBe('dlq_movement');
+        }
+
+        // Should have at least one anomaly
+        expect(result.anomalies.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should return empty results when filtering by non-matching action', async () => {
+        // Create DLQ movement anomaly (which is a 'move' action)
+        await testClient(router).queue.message.$post({ json: { type: 'empty-action-test', payload: {} } });
+
+        const listRes = await testClient(router).queue[':queueType'].messages.$get({
+          param: { queueType: 'main' },
+          query: { filterType: 'empty-action-test' }
+        });
+        const list = await listRes.json();
+        const msg = list.messages[0];
+
+        await testClient(router).queue.move.$post({
+          json: { messages: [msg], fromQueue: 'main', toQueue: 'dead' }
+        });
+
+        // Wait briefly
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get anomalies filtered by 'touch' action (should not match dlq_movement)
+        const res = await testClient(router).queue.activity.anomalies.$get({
+          query: { action: 'touch' }
+        });
+        expect(res.status).toBe(200);
+        const result = await res.json();
+
+        // Should not return any anomalies with 'touch' action (dlq_movement is from 'move')
+        const touchAnomalies = result.anomalies.filter((a: any) => a.action === 'touch');
+        expect(touchAnomalies.length).toBe(0);
       });
     });
 
@@ -1552,8 +1688,74 @@ describe('Queue Routes - Integration Tests', () => {
         });
         expect(res.status).toBe(200);
         const result = await res.json();
-        
+
         expect(result).toHaveProperty('stats');
+      });
+
+      it('should return correct count of unique consumers', async () => {
+        // Create messages and dequeue with different consumer IDs
+        await testClient(router).queue.message.$post({ json: { type: 'count-test-1', payload: {} } });
+        await testClient(router).queue.message.$post({ json: { type: 'count-test-2', payload: {} } });
+        await testClient(router).queue.message.$post({ json: { type: 'count-test-3', payload: {} } });
+
+        // Dequeue with different consumer IDs
+        await testClient(router).queue.message.$get({ query: { timeout: '1', consumerId: 'worker-alpha' } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1', consumerId: 'worker-beta' } });
+        await testClient(router).queue.message.$get({ query: { timeout: '1', consumerId: 'worker-alpha' } }); // Same as first
+
+        // Wait briefly for activity logs to be written
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const res = await testClient(router).queue.activity.consumers.$get();
+        expect(res.status).toBe(200);
+        const result = await res.json();
+
+        // Should have exactly 2 unique consumers (worker-alpha and worker-beta)
+        const consumerCount = Object.keys(result.stats).length;
+        expect(consumerCount).toBe(2);
+
+        // Verify consumer names are present
+        expect(result.stats).toHaveProperty('worker-alpha');
+        expect(result.stats).toHaveProperty('worker-beta');
+
+        // Verify worker-alpha has 2 dequeues (first and third messages)
+        expect(result.stats['worker-alpha'].dequeue_count).toBe(2);
+        // Verify worker-beta has 1 dequeue
+        expect(result.stats['worker-beta'].dequeue_count).toBe(1);
+      });
+
+      it('should show consumer count increase from 0 to 1 after first dequeue', async () => {
+        // 1. Verify no consumers exist initially
+        const initialRes = await testClient(router).queue.activity.consumers.$get();
+        expect(initialRes.status).toBe(200);
+        const initialResult = await initialRes.json();
+        const initialCount = Object.keys(initialResult.stats).length;
+        expect(initialCount).toBe(0);
+
+        // 2. Enqueue a message
+        await testClient(router).queue.message.$post({ json: { type: 'first-consumer-test', payload: { data: 'test' } } });
+
+        // 3. Dequeue with a specific consumer name
+        const dequeueRes = await testClient(router).queue.message.$get({
+          query: { timeout: '1', consumerId: 'my-first-worker' }
+        });
+        expect(dequeueRes.status).toBe(200);
+
+        // Wait for activity logs
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 4. Verify consumer count is now 1 and name matches
+        const afterRes = await testClient(router).queue.activity.consumers.$get();
+        expect(afterRes.status).toBe(200);
+        const afterResult = await afterRes.json();
+
+        const afterCount = Object.keys(afterResult.stats).length;
+        expect(afterCount).toBe(1);
+
+        // Verify the consumer name is correct
+        expect(afterResult.stats).toHaveProperty('my-first-worker');
+        expect(afterResult.stats['my-first-worker'].dequeue_count).toBe(1);
+        expect(afterResult.stats['my-first-worker'].last_dequeue).toBeGreaterThan(0);
       });
     });
 

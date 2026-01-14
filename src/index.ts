@@ -44,39 +44,24 @@ import Redis from "ioredis";
   };
 
   const startOverdueRequeueWorker = () => {
-    const baseIntervalMs = Math.max(
-      1000,
-      Math.min(5000, Math.floor(env.ACK_TIMEOUT_SECONDS * 1000))
-    );
-    const maxBackoffMs = 30000; // Max 30 seconds between checks when idle
-    let currentIntervalMs = baseIntervalMs;
+    const overdueCheckIntervalMs = env.OVERDUE_CHECK_INTERVAL_MS;
 
     const tick = async () => {
       try {
-        const requeuedCount = await queue.requeueFailedMessages();
-
-        if (requeuedCount > 0) {
-          // Activity detected - reset to base interval
-          currentIntervalMs = baseIntervalMs;
-        } else {
-          // No activity - apply exponential backoff
-          currentIntervalMs = Math.min(currentIntervalMs * 1.5, maxBackoffMs);
-        }
+        await queue.requeueFailedMessages();
       } catch (error) {
         logger.error({ err: error }, "Overdue requeue worker failed");
-        // On error, use base interval to retry sooner
-        currentIntervalMs = baseIntervalMs;
       }
 
-      // Schedule next tick with dynamic interval
-      const nextTick = setTimeout(tick, currentIntervalMs);
+      // Schedule next tick
+      const nextTick = setTimeout(tick, overdueCheckIntervalMs);
       nextTick.unref?.();
     };
 
     // Start the worker
     tick();
     logger.info(
-      `Overdue requeue worker started (baseInterval=${baseIntervalMs}ms, maxBackoff=${maxBackoffMs}ms, ackTimeout=${env.ACK_TIMEOUT_SECONDS}s)`
+      `Overdue requeue worker started (interval=${overdueCheckIntervalMs}ms, ackTimeout=${env.ACK_TIMEOUT_SECONDS}s)`
     );
   };
   

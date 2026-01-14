@@ -59,7 +59,7 @@ export const DeadLetterRow = React.memo(({
     const payloadText = JSON.stringify(msg.payload)
     const errorText = msg.error_message || msg.last_error || "Unknown error"
     return (
-        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
+        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight", isSelected && "bg-primary/10")}>
             <TableCell>
                 <input
                     type="checkbox"

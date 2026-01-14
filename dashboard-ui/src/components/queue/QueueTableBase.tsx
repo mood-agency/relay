@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
 import { Message, QueueConfig, syntaxHighlightJson } from "./types"
@@ -196,23 +197,38 @@ export const IdCell = React.memo(({
     msg?: Message,
     onEdit?: (message: Message) => void
 }) => (
-    <TableCell>
-        {onEdit && msg ? (
+    <TableCell className="group/id">
+        <div className="flex items-center gap-1">
+            {onEdit && msg ? (
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation()
+                        onEdit(msg)
+                    }}
+                    className="text-xs text-foreground font-mono hover:underline hover:text-primary focus:outline-none text-left truncate"
+                    title={`Edit ${id}`}
+                >
+                    {id}
+                </button>
+            ) : (
+                <span className="text-xs text-foreground font-mono truncate" title={id}>
+                    {id}
+                </span>
+            )}
             <button
                 onClick={(e) => {
                     e.stopPropagation()
-                    onEdit(msg)
+                    e.preventDefault()
+                    navigator.clipboard.writeText(id)
+                    toast.success("ID copied to clipboard")
                 }}
-                className="text-xs text-foreground font-mono hover:underline hover:text-primary focus:outline-none text-left"
-                title={`Edit ${id}`}
+                className="opacity-0 group-hover/id:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                tabIndex={-1}
+                title="Copy ID"
             >
-                {id}
+                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
             </button>
-        ) : (
-            <span className="text-xs text-foreground font-mono" title={id}>
-                {id}
-            </span>
-        )}
+        </div>
     </TableCell>
 ))
 

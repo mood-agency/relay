@@ -436,20 +436,30 @@ export async function getMessageHistory(messageId) {
  * @param {Object} [filters={}] - Filter options.
  * @param {string} [filters.severity] - Filter by severity (info, warning, critical).
  * @param {string} [filters.type] - Filter by anomaly type.
+ * @param {string|string[]} [filters.action] - Filter by action(s).
  * @param {number} [filters.start_time] - Start timestamp (seconds).
  * @param {number} [filters.end_time] - End timestamp (seconds).
  * @param {number} [filters.limit=100] - Maximum entries to return.
+ * @param {string} [filters.sort_by='timestamp'] - Sort by field (severity, type, action, timestamp).
+ * @param {string} [filters.sort_order='desc'] - Sort order (asc, desc).
  * @returns {Promise<Object>} Paginated anomalies.
  */
 export async function getAnomalies(filters = {}) {
-  const { severity, type, start_time, end_time, limit = 100 } = filters;
+  const { severity, type, action, start_time, end_time, limit = 100, sort_by = 'timestamp', sort_order = 'desc' } = filters;
+
+  // Fetch a larger batch to ensure we have enough after filtering and sorting
+  // We need to fetch more than the limit because:
+  // 1. We may filter by severity after fetching
+  // 2. We need to sort the full dataset before limiting
+  const fetchLimit = Math.max(1000, limit * 10);
 
   const { logs, pagination } = await this.getActivityLogs({
     has_anomaly: true,
     anomaly_type: type,
+    action,
     start_time,
     end_time,
-    limit: limit * 2, // Fetch more to filter by severity
+    limit: fetchLimit,
   });
 
   let anomalies = logs;
@@ -458,6 +468,32 @@ export async function getAnomalies(filters = {}) {
   if (severity) {
     anomalies = anomalies.filter((log) => log.anomaly?.severity === severity);
   }
+
+  // Sort anomalies
+  const severityOrder = { critical: 3, warning: 2, info: 1 };
+  const direction = sort_order === 'asc' ? 1 : -1;
+
+  anomalies.sort((a, b) => {
+    let comparison = 0;
+    switch (sort_by) {
+      case 'severity':
+        const aSev = a.anomaly?.severity ? severityOrder[a.anomaly.severity] || 0 : 0;
+        const bSev = b.anomaly?.severity ? severityOrder[b.anomaly.severity] || 0 : 0;
+        comparison = aSev - bSev;
+        break;
+      case 'type':
+        comparison = (a.anomaly?.type || '').localeCompare(b.anomaly?.type || '');
+        break;
+      case 'action':
+        comparison = (a.action || '').localeCompare(b.action || '');
+        break;
+      case 'timestamp':
+      default:
+        comparison = (a.timestamp || 0) - (b.timestamp || 0);
+        break;
+    }
+    return comparison * direction;
+  });
 
   // Limit results
   anomalies = anomalies.slice(0, limit);

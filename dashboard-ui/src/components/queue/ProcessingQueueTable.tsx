@@ -116,7 +116,7 @@ const ProcessingQueueRow = React.memo(({
     calculateTimeRemaining: (m: Message) => React.ReactNode,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
-    <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
+    <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight", isSelected && "bg-primary/10")}>
         <SelectCell id={msg.id} isSelected={isSelected} onToggleSelect={onToggleSelect} />
         <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
         <TypeCell type={msg.type} />
@@ -197,7 +197,7 @@ export const ProcessingQueueTable = React.memo(({
         const deadline = startTime + timeoutSeconds
         const remaining = deadline - now
 
-        if (remaining <= 0) return <span className="text-destructive font-medium">Overdue</span>
+        if (remaining <= 0) return <span className="bg-destructive/15 text-destructive text-xs font-medium px-2 py-0.5 rounded-full">Timeout</span>
 
         return <span className="text-primary font-mono">{Math.ceil(remaining)}s</span>
     }, [config, currentTime])

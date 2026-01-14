@@ -2,8 +2,7 @@ import React from "react"
 import {
     Loader2,
     User,
-    RefreshCw,
-    Users
+    RefreshCw
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -16,7 +15,6 @@ import {
     TableRow
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
 import { ConsumerStatsResponse } from "./types"
@@ -43,23 +41,6 @@ export function ConsumerStatsTable({
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
-            {/* Tab Header */}
-            <div className="shrink-0 px-4 pt-3 pb-2 border-b border-border/50">
-                <Tabs defaultValue="stats" className="w-full">
-                    <TabsList className="h-9">
-                        <TabsTrigger value="stats" className="gap-2 text-xs">
-                            <Users className="h-3.5 w-3.5" />
-                            Consumer Stats
-                            {consumerEntries.length > 0 && (
-                                <span className="ml-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-primary/10 text-primary">
-                                    {consumerEntries.length}
-                                </span>
-                            )}
-                        </TabsTrigger>
-                    </TabsList>
-                </Tabs>
-            </div>
-
             <ScrollArea className="relative flex-1 min-h-0" scrollBarClassName="mt-12 h-[calc(100%-3rem)]">
                 {loading && (
                     <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
@@ -79,10 +60,12 @@ export function ConsumerStatsTable({
                         {!loading && consumerEntries.length === 0 ? (
                             <TableRow className="hover:bg-transparent">
                                 <TableCell colSpan={4} className="h-[400px] p-0">
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                                        <User className="h-12 w-12 mb-3 opacity-30" />
-                                        <p className="font-medium">No consumer data</p>
-                                        <p className="text-sm">Consumer stats will appear as messages are dequeued</p>
+                                    <div className="flex flex-col items-center justify-center h-full text-center animate-in fade-in zoom-in duration-300">
+                                        <div className="bg-muted/30 p-6 rounded-full mb-6 ring-8 ring-muted/10">
+                                            <User className="h-10 w-10" />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-foreground mb-2">No consumer data</h3>
+                                        <p className="text-sm text-muted-foreground max-w-[400px] leading-relaxed">Consumer stats will appear as messages are dequeued</p>
                                     </div>
                                 </TableCell>
                             </TableRow>

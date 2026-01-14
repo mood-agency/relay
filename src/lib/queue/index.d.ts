@@ -311,9 +311,12 @@ export interface ActivityLogsResult {
 export interface AnomalyFilters {
   severity?: 'info' | 'warning' | 'critical';
   type?: string;
+  action?: string | string[];
   start_time?: number;
   end_time?: number;
   limit?: number;
+  sort_by?: 'severity' | 'type' | 'action' | 'timestamp';
+  sort_order?: 'asc' | 'desc';
 }
 
 export interface AnomaliesResult {

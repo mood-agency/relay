@@ -47,7 +47,7 @@ const ArchivedQueueRow = React.memo(({
     formatTime: (ts?: number) => string,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
-    <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight")}>
+    <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight", isSelected && "bg-primary/10")}>
         <SelectCell id={msg.id} isSelected={isSelected} onToggleSelect={onToggleSelect} />
         <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
         <TypeCell type={msg.type} />

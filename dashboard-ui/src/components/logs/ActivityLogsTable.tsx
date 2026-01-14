@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react"
-import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react"
+import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy } from "lucide-react"
 
 import {
     Table,
@@ -22,14 +22,16 @@ import {
     useVirtualization
 } from "@/components/ui/data-table"
 
+import { toast } from "@/components/ui/sonner"
 import { ActivityLogEntry } from "./types"
-import { getActionBadge, getSeverityBadge } from "./helpers"
+import { getActionBadge } from "./helpers"
+import { syntaxHighlightJson } from "@/components/queue/types"
 
 // ============================================================================
 // Sort Types and Helpers
 // ============================================================================
 
-type SortColumn = 'message_id' | 'timestamp' | 'action' | 'queue' | 'consumer_id' | 'timing' | 'severity' | 'type' | 'payload'
+type SortColumn = 'message_id' | 'timestamp' | 'action' | 'queue' | 'consumer_id' | 'payload'
 type SortDirection = 'asc' | 'desc'
 
 interface SortState {
@@ -92,23 +94,38 @@ const ActivityLogRow = React.memo(({
         "group transition-colors duration-150 border-muted/30",
         log.anomaly && log.anomaly.severity === 'critical' && "bg-destructive/5"
     )}>
-        <TableCell className="max-w-[120px]">
+        <TableCell className="max-w-[120px] group/id">
             {log.message_id ? (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <button
-                            onClick={() => onViewMessageHistory?.(log.message_id!)}
-                            className="text-xs text-foreground font-mono hover:text-primary hover:underline cursor-pointer truncate block max-w-full"
-                            title={log.message_id}
-                        >
-                            {log.message_id}
-                        </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                        <p className="font-mono text-xs">{log.message_id}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Click to view full history</p>
-                    </TooltipContent>
-                </Tooltip>
+                <div className="flex items-center gap-1">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                onClick={() => onViewMessageHistory?.(log.message_id!)}
+                                className="text-xs text-foreground font-mono hover:text-primary hover:underline cursor-pointer truncate"
+                                title={log.message_id}
+                            >
+                                {log.message_id}
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            <p className="font-mono text-xs">{log.message_id}</p>
+                            <p className="text-xs text-muted-foreground mt-1">Click to view full history</p>
+                        </TooltipContent>
+                    </Tooltip>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            navigator.clipboard.writeText(log.message_id!)
+                            toast.success("ID copied to clipboard")
+                        }}
+                        className="opacity-0 group-hover/id:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                        tabIndex={-1}
+                        title="Copy ID"
+                    >
+                        <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </button>
+                </div>
             ) : (
                 <span className="text-muted-foreground text-xs">—</span>
             )}
@@ -131,50 +148,32 @@ const ActivityLogRow = React.memo(({
         <TableCell className="text-xs font-mono text-foreground" title={log.consumer_id || ''}>
             {log.consumer_id || '—'}
         </TableCell>
-        <TableCell className="text-xs text-foreground whitespace-nowrap">
-            {log.time_in_queue_ms !== null && log.processing_time_ms !== null ? (
-                <span>{Math.round(log.time_in_queue_ms)}ms / {Math.round(log.processing_time_ms)}ms</span>
-            ) : log.time_in_queue_ms !== null ? (
-                <span>{Math.round(log.time_in_queue_ms)}ms</span>
-            ) : log.processing_time_ms !== null ? (
-                <span>{Math.round(log.processing_time_ms)}ms</span>
-            ) : (
-                <span className="text-muted-foreground">—</span>
-            )}
-        </TableCell>
-        <TableCell>
-            {log.anomaly ? (
-                getSeverityBadge(log.anomaly.severity)
-            ) : (
-                <span className="text-muted-foreground text-xs">—</span>
-            )}
-        </TableCell>
-        <TableCell>
-            {log.anomaly ? (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <span className="text-xs cursor-help">{log.anomaly.type}</span>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                        <p className="font-medium">{log.anomaly.type}</p>
-                        <p className="text-xs text-muted-foreground">{log.anomaly.description}</p>
-                    </TooltipContent>
-                </Tooltip>
-            ) : (
-                <span className="text-muted-foreground text-xs">—</span>
-            )}
-        </TableCell>
-        <TableCell className="max-w-[200px]">
+        <TableCell className="max-w-[200px] cursor-default group/payload">
             {log.payload ? (
                 <Tooltip>
                     <TooltipTrigger asChild>
-                        <span className="text-xs font-mono truncate block cursor-help opacity-70 hover:opacity-100 transition-opacity">
-                            {JSON.stringify(log.payload)}
-                        </span>
+                        <div className="flex items-center gap-1">
+                            <span className="text-xs font-mono truncate text-muted-foreground group-hover/payload:text-foreground transition-colors">
+                                {JSON.stringify(log.payload)}
+                            </span>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                    navigator.clipboard.writeText(JSON.stringify(log.payload, null, 2))
+                                    toast.success("Payload copied to clipboard")
+                                }}
+                                className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                tabIndex={-1}
+                                title="Copy payload"
+                            >
+                                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                            </button>
+                        </div>
                     </TooltipTrigger>
-                    <TooltipContent className="max-w-[500px] overflow-auto max-h-[300px]">
-                        <pre className="text-[10px] font-mono whitespace-pre-wrap">
-                            {JSON.stringify(log.payload, null, 2)}
+                    <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(log.payload, null, 2)) }} />
                         </pre>
                     </TooltipContent>
                 </Tooltip>
@@ -225,7 +224,7 @@ export const ActivityLogsTable = React.memo(({
     const viewportHeight = useElementHeight(scrollContainerRef)
     const [scrollTop, setScrollTop] = useState(0)
     const [sort, setSort] = useState<SortState>({ column: null, direction: 'desc' })
-    const colSpan = 9
+    const colSpan = 6
 
     const handleSort = (column: SortColumn) => {
         setSort(prev => ({
@@ -256,20 +255,6 @@ export const ActivityLogsTable = React.memo(({
                     break
                 case 'consumer_id':
                     comparison = (a.consumer_id || '').localeCompare(b.consumer_id || '')
-                    break
-                case 'timing':
-                    const aTime = (a.time_in_queue_ms ?? 0) + (a.processing_time_ms ?? 0)
-                    const bTime = (b.time_in_queue_ms ?? 0) + (b.processing_time_ms ?? 0)
-                    comparison = aTime - bTime
-                    break
-                case 'severity':
-                    const severityOrder: Record<string, number> = { critical: 3, warning: 2, info: 1 }
-                    const aSev = a.anomaly?.severity ? severityOrder[a.anomaly.severity] || 0 : 0
-                    const bSev = b.anomaly?.severity ? severityOrder[b.anomaly.severity] || 0 : 0
-                    comparison = aSev - bSev
-                    break
-                case 'type':
-                    comparison = (a.anomaly?.type || '').localeCompare(b.anomaly?.type || '')
                     break
                 case 'payload':
                     comparison = JSON.stringify(a.payload || '').localeCompare(JSON.stringify(b.payload || ''))
@@ -324,9 +309,6 @@ export const ActivityLogsTable = React.memo(({
                                 <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[90px]" />
                                 <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
                                 <SortableHeader column="consumer_id" label="Consumer" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                                <SortableHeader column="timing" label="Timing" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                                <SortableHeader column="severity" label="Severity" currentSort={sort} onSort={handleSort} className="w-[70px]" />
-                                <SortableHeader column="type" label="Type" currentSort={sort} onSort={handleSort} className="w-[120px]" />
                                 <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
                             </TableRow>
                         </TableHeader>

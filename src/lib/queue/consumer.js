@@ -3,6 +3,7 @@ import { MessageMetadata } from "./models.js";
 
 /**
  * Dequeues a message from the queue.
+ * Uses blocking XREADGROUP with multiple streams for efficient waiting.
  * @param {number} [timeout=0] - Timeout in seconds.
  * @param {number|null} [ackTimeout=null] - Acknowledgement timeout.
  * @param {string[]|null} [specificStreams=null] - Specific streams to poll.
@@ -16,16 +17,230 @@ export async function dequeueMessage(timeout = 0, ackTimeout = null, specificStr
   const redis = this.redisManager.redis;
 
   try {
-    const deadlineMs = Date.now() + timeoutMs;
-    const baseSleepMs = 50;
-
     if (type) {
-      const indexKey = this._getTypeIndexKey(type);
-      const manualStream = this._getManualStreamName();
-      const locKey = this._getMessageLocationHashKey();
-      await this._ensureConsumerGroup(manualStream);
+      // Type-filtered dequeue uses polling (Lua script approach)
+      return this._dequeueByType(timeout, ackTimeout, type, consumerId);
+    }
 
-      const lua = `
+    // Ensure consumer groups exist for all streams before blocking read
+    await this._ensureAllConsumerGroups(priorityStreams);
+
+    // Build XREADGROUP args for multiple streams
+    // XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]
+    const streamIds = priorityStreams.map(() => ">"); // Read new messages only
+
+    // First, try a non-blocking read to get any available messages (priority order)
+    let readResult = await this._tryNonBlockingRead(priorityStreams);
+
+    if (readResult) {
+      return this._processReadResult(readResult, ackTimeout, consumerId);
+    }
+
+    // If no messages and we have a timeout, use blocking XREADGROUP
+    if (timeoutMs > 0) {
+      readResult = await this._blockingRead(priorityStreams, streamIds, timeoutMs);
+
+      if (readResult) {
+        return this._processReadResult(readResult, ackTimeout, consumerId);
+      }
+    }
+
+    return null;
+
+  } catch (e) {
+    if (e.message && e.message.includes("NOGROUP")) {
+      // Ensure consumer groups exist for all priority streams
+      for (const stream of priorityStreams) {
+        await this._ensureConsumerGroup(stream);
+      }
+      return this.dequeueMessage(timeout, ackTimeout, specificStreams, type, consumerId);
+    }
+    logger.error(`Error dequeuing message: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Ensures consumer groups exist for all streams.
+ * Uses cached knowledge to avoid unnecessary XGROUP CREATE calls.
+ * @param {string[]} streams - Array of stream names.
+ * @private
+ */
+async function _ensureAllConsumerGroups(streams) {
+  const unknownStreams = streams.filter(s => !this.isConsumerGroupKnown(s));
+
+  if (unknownStreams.length === 0) return;
+
+  // Create groups in parallel for unknown streams
+  await Promise.all(
+    unknownStreams.map(stream => this._ensureConsumerGroup(stream).catch(() => {}))
+  );
+}
+
+/**
+ * Tries a non-blocking read from streams in priority order.
+ * Returns immediately with a message if available, null otherwise.
+ * @param {string[]} priorityStreams - Streams ordered by priority (highest first).
+ * @returns {Promise<Object|null>} Read result or null.
+ * @private
+ */
+async function _tryNonBlockingRead(priorityStreams) {
+  const redis = this.redisManager.redis;
+
+  // Read from each stream in priority order (non-blocking)
+  for (const streamName of priorityStreams) {
+    try {
+      const results = await redis.xreadgroup(
+        "GROUP",
+        this.config.consumer_group_name,
+        this.config.consumer_name,
+        "COUNT",
+        1,
+        "STREAMS",
+        streamName,
+        ">"
+      );
+
+      if (results && results.length > 0) {
+        const [, messages] = results[0] || [];
+        if (messages && messages.length > 0) {
+          const [streamId, fields] = messages[0];
+          return { streamName, streamId, fields };
+        }
+      }
+    } catch (e) {
+      if (e?.message && e.message.includes("NOGROUP")) {
+        await this._ensureConsumerGroup(streamName);
+        // Retry this stream
+        try {
+          const results = await redis.xreadgroup(
+            "GROUP",
+            this.config.consumer_group_name,
+            this.config.consumer_name,
+            "COUNT",
+            1,
+            "STREAMS",
+            streamName,
+            ">"
+          );
+          if (results && results.length > 0) {
+            const [, messages] = results[0] || [];
+            if (messages && messages.length > 0) {
+              const [streamId, fields] = messages[0];
+              return { streamName, streamId, fields };
+            }
+          }
+        } catch {
+          // Continue to next stream
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Performs a blocking read across multiple streams.
+ * Uses Redis BLOCK parameter to wait efficiently without polling.
+ * @param {string[]} priorityStreams - Streams ordered by priority.
+ * @param {string[]} streamIds - Stream IDs to read from (typically ">").
+ * @param {number} timeoutMs - Maximum time to block in milliseconds.
+ * @returns {Promise<Object|null>} Read result or null.
+ * @private
+ */
+async function _blockingRead(priorityStreams, streamIds, timeoutMs) {
+  const redis = this.redisManager.redis;
+
+  try {
+    // XREADGROUP with BLOCK reads from multiple streams atomically
+    // Redis will return the first message from any stream
+    const results = await redis.xreadgroup(
+      "GROUP",
+      this.config.consumer_group_name,
+      this.config.consumer_name,
+      "COUNT",
+      1,
+      "BLOCK",
+      timeoutMs,
+      "STREAMS",
+      ...priorityStreams,
+      ...streamIds
+    );
+
+    if (!results || results.length === 0) {
+      return null;
+    }
+
+    // Results are returned in stream order, find the first with messages
+    // Note: With blocking reads, Redis returns whichever stream gets a message first
+    for (const [streamName, messages] of results) {
+      if (messages && messages.length > 0) {
+        const [streamId, fields] = messages[0];
+        return { streamName, streamId, fields };
+      }
+    }
+
+    return null;
+  } catch (e) {
+    if (e?.message && e.message.includes("NOGROUP")) {
+      // Re-ensure groups and retry once
+      await Promise.all(priorityStreams.map(s => this._ensureConsumerGroup(s).catch(() => {})));
+
+      try {
+        const results = await redis.xreadgroup(
+          "GROUP",
+          this.config.consumer_group_name,
+          this.config.consumer_name,
+          "COUNT",
+          1,
+          "BLOCK",
+          timeoutMs,
+          "STREAMS",
+          ...priorityStreams,
+          ...streamIds
+        );
+
+        if (!results || results.length === 0) {
+          return null;
+        }
+
+        for (const [streamName, messages] of results) {
+          if (messages && messages.length > 0) {
+            const [streamId, fields] = messages[0];
+            return { streamName, streamId, fields };
+          }
+        }
+      } catch {
+        return null;
+      }
+    }
+    throw e;
+  }
+}
+
+/**
+ * Dequeues a message by type using the type index.
+ * This uses polling since it needs Lua script for atomic type filtering.
+ * @param {number} timeout - Timeout in seconds.
+ * @param {number|null} ackTimeout - Acknowledgement timeout.
+ * @param {string} type - Message type to filter by.
+ * @param {string|null} consumerId - Consumer identifier.
+ * @returns {Promise<Object|null>} The dequeued message or null.
+ * @private
+ */
+async function _dequeueByType(timeout, ackTimeout, type, consumerId) {
+  const redis = this.redisManager.redis;
+  const timeoutMs = Math.max(0, Math.floor(timeout * 1000));
+  const deadlineMs = Date.now() + timeoutMs;
+  const baseSleepMs = 50;
+
+  const indexKey = this._getTypeIndexKey(type);
+  const manualStream = this._getManualStreamName();
+  const locKey = this._getMessageLocationHashKey();
+  await this._ensureConsumerGroup(manualStream);
+
+  const lua = `
 local indexKey = KEYS[1]
 local locKey = KEYS[2]
 local manualStream = KEYS[3]
@@ -118,117 +333,41 @@ end
 return nil
 `;
 
-      const findAndMoveByType = async () => {
-        const results = await redis.eval(
-          lua,
-          3,
-          indexKey,
-          locKey,
-          manualStream,
-          this.config.consumer_group_name,
-          this.config.consumer_name,
-          "50"
-        );
-        if (!results || results.length === 0) return null;
-        const [streamEntry] = results;
-        if (!streamEntry || streamEntry.length < 2) return null;
-        const [streamName, messages] = streamEntry;
-        if (!messages || messages.length === 0) return null;
-        const [streamId, fields] = messages[0];
-        return { streamName, streamId, fields };
-      };
+  const findAndMoveByType = async () => {
+    const results = await redis.eval(
+      lua,
+      3,
+      indexKey,
+      locKey,
+      manualStream,
+      this.config.consumer_group_name,
+      this.config.consumer_name,
+      "50"
+    );
+    if (!results || results.length === 0) return null;
+    const [streamEntry] = results;
+    if (!streamEntry || streamEntry.length < 2) return null;
+    const [streamName, messages] = streamEntry;
+    if (!messages || messages.length === 0) return null;
+    const [streamId, fields] = messages[0];
+    return { streamName, streamId, fields };
+  };
 
-      let readResult = await findAndMoveByType();
+  let readResult = await findAndMoveByType();
 
-      let sleepMs = baseSleepMs;
-      while (!readResult && Date.now() < deadlineMs) {
-        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-        readResult = await findAndMoveByType();
-        sleepMs = Math.min(500, Math.floor(sleepMs * 1.5));
-      }
-
-      if (!readResult) return null;
-      return this._processReadResult(readResult, ackTimeout, consumerId);
-    }
-
-    // Original logic for normal dequeue
-    const readOne = async (streamName) => {
-      const args = [
-        "GROUP",
-        this.config.consumer_group_name,
-        this.config.consumer_name,
-        "COUNT",
-        1,
-      ];
-
-      const results = await redis.xreadgroup(
-        ...args,
-        "STREAMS",
-        streamName,
-        ">"
-      );
-
-      if (!results || results.length === 0) return null;
-      const [, messages] = results[0] || [];
-      if (!messages || messages.length === 0) return null;
-
-      const [streamId, fields] = messages[0];
-      return { streamName, streamId, fields };
-    };
-
-    const readOneWithGroupEnsure = async (streamName) => {
-      try {
-        return await readOne(streamName);
-      } catch (e) {
-        if (e?.message && e.message.includes("NOGROUP")) {
-          await this._ensureConsumerGroup(streamName);
-          return await readOne(streamName);
-        }
-        throw e;
-      }
-    };
-
-    let readResult = null;
-
-    for (const streamName of priorityStreams) {
-      readResult = await readOneWithGroupEnsure(streamName);
-      if (readResult) break;
-    }
-
-    let sleepMs = baseSleepMs;
-    while (!readResult && Date.now() < deadlineMs) {
-      for (const streamName of priorityStreams) {
-        readResult = await readOneWithGroupEnsure(streamName);
-        if (readResult) break;
-      }
-
-      if (readResult) break;
-
-      const remainingMs = deadlineMs - Date.now();
-      if (remainingMs <= 0) break;
-      const waitMs = Math.min(sleepMs, remainingMs);
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      sleepMs = Math.min(250, Math.floor(sleepMs * 1.5));
-    }
-
-    if (!readResult) {
-      return null;
-    }
-
-    return this._processReadResult(readResult, ackTimeout, consumerId);
-
-  } catch (e) {
-    if (e.message && e.message.includes("NOGROUP")) {
-      // Ensure consumer groups exist for all priority streams
-      for (const stream of priorityStreams) {
-        await this._ensureConsumerGroup(stream);
-      }
-      return this.dequeueMessage(timeout, ackTimeout, specificStreams, type, consumerId);
-    }
-    logger.error(`Error dequeuing message: ${e}`);
-    return null;
+  let sleepMs = baseSleepMs;
+  while (!readResult && Date.now() < deadlineMs) {
+    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+    readResult = await findAndMoveByType();
+    sleepMs = Math.min(500, Math.floor(sleepMs * 1.5));
   }
+
+  if (!readResult) return null;
+  return this._processReadResult(readResult, ackTimeout, consumerId);
 }
+
+// Export the helper functions as part of the module
+export { _ensureAllConsumerGroups, _tryNonBlockingRead, _blockingRead, _dequeueByType };
 
 /**
  * Processes a read result from Redis Stream and returns the message object.
@@ -323,11 +462,13 @@ export async function _processReadResult(readResult, ackTimeout = null, consumer
     }
   };
 
-  await this.redisManager.redis.hset(
-    this.config.metadata_hash_name,
-    metadataKey,
-    JSON.stringify(metadataWithMessage)
-  );
+  // Store metadata and add to pending IDs Set (for fast dashboard queries)
+  const pendingIdsKey = this._getPendingIdsSetKey();
+  await this.redisManager.redis
+    .multi()
+    .hset(this.config.metadata_hash_name, metadataKey, JSON.stringify(metadataWithMessage))
+    .sadd(pendingIdsKey, messageId)
+    .exec();
 
   try {
     if (messageData.type && messageId) {
@@ -476,6 +617,10 @@ export async function acknowledgeMessage(ackPayload) {
     }
 
     const pipeline = this.redisManager.pipeline();
+
+    // 0. Remove from pending IDs Set (fast dashboard cache)
+    const pendingIdsKey = this._getPendingIdsSetKey();
+    pipeline.srem(pendingIdsKey, messageId);
 
     // 1. Acknowledge in Consumer Group
     pipeline.xack(streamName, this.config.consumer_group_name, streamId);
@@ -640,6 +785,7 @@ export async function requeueFailedMessages() {
         const pendingActivityLogs = [];
         let pipelineCmdIndex = 0;
         let operationsInPipeline = 0;
+        const pendingIdsKey = this._getPendingIdsSetKey();
 
         for (const [msgId, , idleMs] of pending) {
           if (idleMs < 1000) continue;
@@ -716,6 +862,9 @@ export async function requeueFailedMessages() {
             messageData.attempt_count = metadata.attempt_count;
             const dlqJson = this._serializeMessage(messageData);
 
+            // Remove from pending IDs Set (no longer processing)
+            processingPipeline.srem(pendingIdsKey, messageData.id);
+            pipelineCmdIndex++;
             processingPipeline.xadd(this.config.dead_letter_queue_name, "*", "data", dlqJson);
             pipelineCmdIndex++;
             processingPipeline.xack(queueName, this.config.consumer_group_name, msgId);
@@ -748,6 +897,9 @@ export async function requeueFailedMessages() {
           } else {
             const messageJson = this._serializeMessage(messageData);
 
+            // Remove from pending IDs Set (message goes back to main queue)
+            processingPipeline.srem(pendingIdsKey, messageData.id);
+            pipelineCmdIndex++;
             const xaddCmdIndex = pipelineCmdIndex;
             processingPipeline.xadd(queueName, "*", "data", messageJson);
             pipelineCmdIndex++;
@@ -899,6 +1051,7 @@ export async function nackMessage(messageId, errorReason) {
     maxAttempts = foundMsg.custom_max_attempts;
 
   const pipeline = this.redisManager.pipeline();
+  const pendingIdsKey = this._getPendingIdsSetKey();
 
   // 3. Apply Retry Policy
   if (metadata.attempt_count >= maxAttempts) {
@@ -912,6 +1065,8 @@ export async function nackMessage(messageId, errorReason) {
     delete dlqMsg._stream_id;
     delete dlqMsg._stream_name;
 
+    // Remove from pending IDs Set (no longer processing)
+    pipeline.srem(pendingIdsKey, messageId);
     pipeline.xadd(
       this.config.dead_letter_queue_name,
       "*",
@@ -958,6 +1113,8 @@ export async function nackMessage(messageId, errorReason) {
 
     const msgJson = this._serializeMessage(requeueMsg);
 
+    // Remove from pending IDs Set (message goes back to main queue)
+    pipeline.srem(pendingIdsKey, messageId);
     pipeline.xadd(streamName, "*", "data", msgJson);
     pipeline.xack(streamName, this.config.consumer_group_name, streamId);
     pipeline.xdel(streamName, streamId);

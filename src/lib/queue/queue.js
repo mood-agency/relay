@@ -25,6 +25,32 @@ export class OptimizedRedisQueue {
       failed: 0,
       requeued: 0,
     };
+    // Cache for consumer group existence (reduces NOGROUP errors)
+    this._consumerGroupsExist = new Set();
+  }
+
+  /**
+   * Marks a consumer group as existing (called after successful creation or first use).
+   * @param {string} streamName - The stream name.
+   */
+  markConsumerGroupExists(streamName) {
+    this._consumerGroupsExist.add(streamName);
+  }
+
+  /**
+   * Checks if a consumer group is known to exist.
+   * @param {string} streamName - The stream name.
+   * @returns {boolean} True if the group is known to exist.
+   */
+  isConsumerGroupKnown(streamName) {
+    return this._consumerGroupsExist.has(streamName);
+  }
+
+  /**
+   * Clears the consumer group cache (useful for testing or reconnection).
+   */
+  clearConsumerGroupCache() {
+    this._consumerGroupsExist.clear();
   }
 }
 

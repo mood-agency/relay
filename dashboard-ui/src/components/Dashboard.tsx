@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
     RefreshCw,
@@ -212,6 +212,11 @@ export default function Dashboard() {
     const [anomalies, setAnomalies] = useState<AnomaliesResponse | null>(null)
     const [loadingAnomalies, setLoadingAnomalies] = useState(false)
     const [anomalySeverityFilter, setAnomalySeverityFilter] = useState<string>('')
+    const [anomalyActionFilter, setAnomalyActionFilter] = useState<string>('')
+    const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<string>('')
+    const [anomalySortBy, setAnomalySortBy] = useState<string>('timestamp')
+    const [anomalySortOrder, setAnomalySortOrder] = useState<string>('desc')
+    const anomalySortInitialRef = useRef(true)
     const [messageHistory, setMessageHistory] = useState<MessageHistoryResponse | null>(null)
     const [loadingHistory, setLoadingHistory] = useState(false)
     const [messageIdSearch, setMessageIdSearch] = useState('')
@@ -257,6 +262,10 @@ export default function Dashboard() {
         try {
             const params = new URLSearchParams()
             if (anomalySeverityFilter) params.append('severity', anomalySeverityFilter)
+            if (anomalyActionFilter) params.append('action', anomalyActionFilter)
+            if (anomalyTypeFilter) params.append('type', anomalyTypeFilter)
+            params.append('sort_by', anomalySortBy)
+            params.append('sort_order', anomalySortOrder)
 
             const response = await authFetch(`/api/queue/activity/anomalies?${params.toString()}`)
             if (response.ok) {
@@ -268,7 +277,7 @@ export default function Dashboard() {
         } finally {
             setLoadingAnomalies(false)
         }
-    }, [authFetch, anomalySeverityFilter])
+    }, [authFetch, anomalySeverityFilter, anomalyActionFilter, anomalyTypeFilter, anomalySortBy, anomalySortOrder])
 
     const fetchMessageHistory = useCallback(async (messageId: string) => {
         if (!messageId) {
@@ -317,10 +326,22 @@ export default function Dashboard() {
         }
     }, [currentView, activityTab, fetchActivityLogs, fetchAnomalies, fetchConsumerStats])
 
-    // Fetch anomalies summary on initial load for badge indicator
+    // Fetch anomalies and consumer stats on initial load for badge indicators
     useEffect(() => {
         fetchAnomalies()
+        fetchConsumerStats()
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Re-fetch anomalies when sort changes (skip initial render)
+    useEffect(() => {
+        if (anomalySortInitialRef.current) {
+            anomalySortInitialRef.current = false
+            return
+        }
+        if (currentView === 'activity' && activityTab === 'anomalies') {
+            fetchAnomalies()
+        }
+    }, [anomalySortBy, anomalySortOrder, currentView, activityTab, fetchAnomalies])
 
     // Move messages handler (wraps the hook's handler with dialog state)
     const handleMoveMessages = useCallback(async () => {
@@ -967,7 +988,7 @@ export default function Dashboard() {
                             {[
                                 { id: 'activity' as const, icon: FileText, label: 'All Logs' },
                                 { id: 'anomalies' as const, icon: AlertCircle, label: 'Anomalies', count: anomalies?.summary.total },
-                                { id: 'consumers' as const, icon: User, label: 'Consumers' },
+                                { id: 'consumers' as const, icon: User, label: 'Consumers', count: consumerStats ? Object.keys(consumerStats.stats).length : undefined },
                             ].map((tab) => {
                                 const Icon = tab.icon
                                 const isActive = activityTab === tab.id
@@ -1033,6 +1054,14 @@ export default function Dashboard() {
                                     loading={loadingAnomalies}
                                     severityFilter={anomalySeverityFilter}
                                     setSeverityFilter={setAnomalySeverityFilter}
+                                    actionFilter={anomalyActionFilter}
+                                    setActionFilter={setAnomalyActionFilter}
+                                    typeFilter={anomalyTypeFilter}
+                                    setTypeFilter={setAnomalyTypeFilter}
+                                    sortBy={anomalySortBy}
+                                    setSortBy={setAnomalySortBy}
+                                    sortOrder={anomalySortOrder}
+                                    setSortOrder={setAnomalySortOrder}
                                     onRefresh={fetchAnomalies}
                                     formatTime={queue.formatTimestamp}
                                 />

@@ -289,6 +289,12 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
     // Throttling Ref
     const lastStatusFetchRef = useRef(0)
 
+    // OPTIMIZATION: SSE event batching for high-throughput scenarios
+    // Accumulates events and processes them in batches to reduce re-renders
+    const pendingEventsRef = useRef<Array<{ type: string; payload: any }>>([])
+    const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const SSE_BATCH_DELAY_MS = 300 // Batch events within 300ms windows
+
     // File Input Ref
     const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -421,6 +427,220 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
     // SSE / Auto Refresh
     // =========================================================================
 
+    // OPTIMIZATION: Process batched SSE events
+    const processBatchedEvents = useCallback(() => {
+        const events = pendingEventsRef.current
+        if (events.length === 0) return
+
+        // Clear the pending events
+        pendingEventsRef.current = []
+        batchTimeoutRef.current = null
+
+        // Group events by type for efficient processing
+        const enqueueEvents: Array<{ type: string; payload: any }> = []
+        const deleteEvents: Array<{ type: string; payload: any }> = []
+        const moveEvents: Array<{ type: string; payload: any }> = []
+        const updateEvents: Array<{ type: string; payload: any }> = []
+        let hasForceRefresh = false
+
+        for (const event of events) {
+            if (event.type === 'enqueue') {
+                if (event.payload.force_refresh) {
+                    hasForceRefresh = true
+                } else {
+                    enqueueEvents.push(event)
+                }
+            } else if (event.type === 'acknowledge' || event.type === 'delete') {
+                deleteEvents.push(event)
+            } else if (event.type === 'move') {
+                moveEvents.push(event)
+            } else if (event.type === 'update') {
+                updateEvents.push(event)
+            }
+        }
+
+        // If any force refresh, just do a full refresh
+        if (hasForceRefresh) {
+            if (activeTab === 'main') {
+                fetchMessages(true)
+            }
+            fetchStatus(false)
+            return
+        }
+
+        // Process enqueue events (batch merge new messages)
+        if (enqueueEvents.length > 0 && activeTab === 'main') {
+            const allNewMessages: Message[] = []
+            const allNewIds: string[] = []
+
+            for (const event of enqueueEvents) {
+                const messagesToAdd = event.payload.messages || (event.payload.message ? [event.payload.message] : [])
+                const hasRedactedPayload = messagesToAdd.some((m: Message) => m.payload === "[REDACTED]")
+
+                if (hasRedactedPayload) {
+                    // Need full fetch if any redacted
+                    fetchMessages(true)
+                    return
+                }
+
+                for (const m of messagesToAdd) {
+                    // Apply filters
+                    if (filterType && filterType !== 'all') {
+                        const types = filterType.split(',')
+                        if (!types.includes(m.type)) continue
+                    }
+                    if (filterPriority && m.priority !== parseInt(filterPriority)) continue
+                    if (filterAttempts && (m.attempt_count || 0) < parseInt(filterAttempts)) continue
+                    if (startDate && m.created_at * 1000 < startDate.getTime()) continue
+                    if (endDate && m.created_at * 1000 > endDate.getTime()) continue
+                    if (search) {
+                        const searchLower = search.toLowerCase()
+                        const matchesId = m.id.toLowerCase().includes(searchLower)
+                        const matchesPayload = m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)
+                        const matchesError = m.error_message && m.error_message.toLowerCase().includes(searchLower)
+                        if (!matchesId && !matchesPayload && !matchesError) continue
+                    }
+                    allNewMessages.push(m)
+                    allNewIds.push(m.id)
+                }
+            }
+
+            if (allNewMessages.length > 0) {
+                setMessagesData(prev => {
+                    const base: MessagesResponse = prev ?? {
+                        messages: [],
+                        pagination: { total: 0, page: 1, limit: Number(pageSize) || 100, totalPages: 1 }
+                    }
+
+                    // Filter out duplicates
+                    const existingIds = new Set(base.messages.map(m => m.id))
+                    const uniqueNew = allNewMessages.filter(m => !existingIds.has(m.id))
+                    if (uniqueNew.length === 0) return base
+
+                    const newTotal = base.pagination.total + uniqueNew.length
+                    const newTotalPages = Math.ceil(newTotal / base.pagination.limit)
+
+                    const compare = (a: Message, b: Message) => {
+                        let valA = (a as any)[sortBy]
+                        let valB = (b as any)[sortBy]
+                        if (sortBy === 'payload') { valA = JSON.stringify(valA); valB = JSON.stringify(valB) }
+                        if (valA < valB) return sortOrder === 'asc' ? -1 : 1
+                        if (valA > valB) return sortOrder === 'asc' ? 1 : -1
+                        return 0
+                    }
+
+                    // Only update rows if on page 1 or new messages belong before current
+                    let shouldUpdateRows = currentPage === 1
+                    if (!shouldUpdateRows && base.messages.length > 0) {
+                        const firstMsg = base.messages[0]
+                        shouldUpdateRows = uniqueNew.some(m => compare(m, firstMsg) < 0)
+                    }
+
+                    if (shouldUpdateRows) {
+                        const combined = [...base.messages, ...uniqueNew]
+                        combined.sort(compare)
+                        return {
+                            ...base,
+                            messages: combined.slice(0, Number(pageSize)),
+                            pagination: { ...base.pagination, total: newTotal, totalPages: newTotalPages }
+                        }
+                    }
+
+                    return {
+                        ...base,
+                        pagination: { ...base.pagination, total: newTotal, totalPages: newTotalPages }
+                    }
+                })
+
+                // Batch highlight animation
+                setTimeout(() => {
+                    setHighlightedIds(prev => {
+                        const next = new Set(prev)
+                        allNewIds.forEach(id => next.add(id))
+                        return next
+                    })
+                    setTimeout(() => {
+                        setHighlightedIds(prev => {
+                            const next = new Set(prev)
+                            allNewIds.forEach(id => next.delete(id))
+                            return next
+                        })
+                    }, 2000)
+                }, 0)
+            }
+        }
+
+        // Process delete events (batch removal)
+        if (deleteEvents.length > 0) {
+            const allIdsToRemove: string[] = []
+            for (const event of deleteEvents) {
+                const ids = event.payload.ids || (event.payload.id ? [event.payload.id] : [])
+                const affectedQueue = event.payload.queue
+                if (affectedQueue && affectedQueue !== activeTab) continue
+                allIdsToRemove.push(...ids)
+            }
+
+            if (allIdsToRemove.length > 0) {
+                const idsSet = new Set(allIdsToRemove)
+                setMessagesData(prev => {
+                    if (!prev) return prev
+                    const inViewCount = prev.messages.filter(m => idsSet.has(m.id)).length
+                    const newTotal = Math.max(0, prev.pagination.total - inViewCount)
+                    const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1
+                    return {
+                        ...prev,
+                        messages: prev.messages.filter(m => !idsSet.has(m.id)),
+                        pagination: { ...prev.pagination, total: newTotal, totalPages: newTotalPages }
+                    }
+                })
+            }
+        }
+
+        // Process move events
+        for (const event of moveEvents) {
+            const { from, to, ids } = event.payload
+            if (from === activeTab && ids?.length > 0) {
+                const idsSet = new Set(ids)
+                setMessagesData(prev => {
+                    if (!prev) return prev
+                    const removedCount = prev.messages.filter(m => idsSet.has(m.id)).length
+                    const newTotal = Math.max(0, prev.pagination.total - removedCount)
+                    return {
+                        ...prev,
+                        messages: prev.messages.filter(m => !idsSet.has(m.id)),
+                        pagination: { ...prev.pagination, total: newTotal, totalPages: Math.ceil(newTotal / prev.pagination.limit) || 1 }
+                    }
+                })
+            }
+            if (to === activeTab) {
+                fetchMessages(true)
+            }
+        }
+
+        // Process update events
+        if (updateEvents.length > 0) {
+            const updates = new Map<string, any>()
+            for (const event of updateEvents) {
+                if (event.payload.queue && event.payload.queue !== activeTab) continue
+                if (event.payload.id && event.payload.updates) {
+                    updates.set(event.payload.id, event.payload.updates)
+                }
+            }
+            if (updates.size > 0) {
+                setMessagesData(prev => {
+                    if (!prev) return prev
+                    return {
+                        ...prev,
+                        messages: prev.messages.map(m => {
+                            const upd = updates.get(m.id)
+                            return upd ? { ...m, ...upd } : m
+                        })
+                    }
+                })
+            }
+        }
+    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search, fetchMessages, fetchStatus])
+
     useEffect(() => {
         let interval: NodeJS.Timeout
         let eventSource: EventSource
@@ -441,223 +661,20 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
                         onEvent(type, payload)
                     }
 
+                    // OPTIMIZATION: Throttle status fetches
                     const now = Date.now()
                     if (now - lastStatusFetchRef.current > 2000) {
                         fetchStatus(false)
                         lastStatusFetchRef.current = now
                     }
 
-                    if (type === 'enqueue') {
-                        if (payload.force_refresh) {
-                            if (activeTab === 'main') {
-                                fetchMessages(true)
-                            }
-                            fetchStatus(false)
-                            return
-                        }
+                    // OPTIMIZATION: Batch SSE events for high-throughput scenarios
+                    // Instead of processing each event immediately, accumulate and process in batches
+                    pendingEventsRef.current.push({ type, payload })
 
-                        if (activeTab !== 'main') return
-
-                        const messagesToAdd = payload.messages || (payload.message ? [payload.message] : [])
-                        if (!messagesToAdd.length) {
-                            fetchMessages(true)
-                            return
-                        }
-
-                        const hasRedactedPayload = messagesToAdd.some((m: Message) => m.payload === "[REDACTED]")
-                        if (hasRedactedPayload) {
-                            fetchMessages(true)
-                            return
-                        }
-
-                        setMessagesData(prev => {
-                            const base: MessagesResponse = prev ?? {
-                                messages: [],
-                                pagination: {
-                                    total: 0,
-                                    page: 1,
-                                    limit: Number(pageSize) || 100,
-                                    totalPages: 1
-                                }
-                            }
-
-                            const filteredNew = messagesToAdd.filter((m: Message) => {
-                                if (base.messages.some(existing => existing.id === m.id)) return false
-                                if (filterType && filterType !== 'all') {
-                                    const types = filterType.split(',')
-                                    if (!types.includes(m.type)) return false
-                                }
-                                if (filterPriority && m.priority !== parseInt(filterPriority)) return false
-                                if (filterAttempts && (m.attempt_count || 0) < parseInt(filterAttempts)) return false
-                                if (startDate && m.created_at * 1000 < startDate.getTime()) return false
-                                if (endDate && m.created_at * 1000 > endDate.getTime()) return false
-                                if (search) {
-                                    const searchLower = search.toLowerCase()
-                                    const matchesId = m.id.toLowerCase().includes(searchLower)
-                                    const matchesPayload = m.payload && JSON.stringify(m.payload).toLowerCase().includes(searchLower)
-                                    const matchesError = m.error_message && m.error_message.toLowerCase().includes(searchLower)
-                                    if (!matchesId && !matchesPayload && !matchesError) return false
-                                }
-                                return true
-                            })
-
-                            if (filteredNew.length === 0) return base
-
-                            const newTotal = base.pagination.total + filteredNew.length
-                            const newTotalPages = Math.ceil(newTotal / base.pagination.limit)
-
-                            const compare = (a: Message, b: Message) => {
-                                let valA = (a as any)[sortBy]
-                                let valB = (b as any)[sortBy]
-                                if (sortBy === 'payload') {
-                                    valA = JSON.stringify(valA)
-                                    valB = JSON.stringify(valB)
-                                }
-                                if (valA < valB) return sortOrder === 'asc' ? -1 : 1
-                                if (valA > valB) return sortOrder === 'asc' ? 1 : -1
-                                return 0
-                            }
-
-                            let shouldUpdateRows = false
-                            if (currentPage === 1) {
-                                shouldUpdateRows = true
-                            } else if (base.messages.length > 0) {
-                                const firstMsg = base.messages[0]
-                                const allBelongAfter = filteredNew.every((m: Message) => compare(m, firstMsg) >= 0)
-                                if (allBelongAfter) {
-                                    shouldUpdateRows = true
-                                }
-                            } else {
-                                shouldUpdateRows = true
-                            }
-
-                            const newIds = filteredNew.map((m: Message) => m.id)
-                            setTimeout(() => {
-                                setHighlightedIds(prev => {
-                                    const next = new Set(prev)
-                                    newIds.forEach((id: string) => next.add(id))
-                                    return next
-                                })
-                                setTimeout(() => {
-                                    setHighlightedIds(prev => {
-                                        const next = new Set(prev)
-                                        newIds.forEach((id: string) => next.delete(id))
-                                        return next
-                                    })
-                                }, 2000)
-                            }, 0)
-
-                            if (shouldUpdateRows) {
-                                const combined = [...base.messages, ...filteredNew]
-                                combined.sort(compare)
-                                const updatedList = combined.slice(0, Number(pageSize))
-
-                                return {
-                                    ...base,
-                                    messages: updatedList,
-                                    pagination: {
-                                        ...base.pagination,
-                                        total: newTotal,
-                                        totalPages: newTotalPages
-                                    }
-                                }
-                            } else {
-                                return {
-                                    ...base,
-                                    pagination: {
-                                        ...base.pagination,
-                                        total: newTotal,
-                                        totalPages: newTotalPages
-                                    }
-                                }
-                            }
-                        })
-                    } else if (type === 'acknowledge' || type === 'delete') {
-                        const idsToRemove = payload.ids || (payload.id ? [payload.id] : [])
-                        const affectedQueue = payload.queue
-
-                        if (affectedQueue && affectedQueue !== activeTab) return
-
-                        if (idsToRemove.length > 0) {
-                            setMessagesData(prev => {
-                                if (!prev) return prev
-
-                                const inViewCount = prev.messages.filter(m => idsToRemove.includes(m.id)).length
-
-                                if (inViewCount === 0) {
-                                    const newTotal = Math.max(0, prev.pagination.total - idsToRemove.length)
-                                    const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1
-                                    return {
-                                        ...prev,
-                                        pagination: {
-                                            ...prev.pagination,
-                                            total: newTotal,
-                                            totalPages: newTotalPages
-                                        }
-                                    }
-                                }
-
-                                const newTotal = Math.max(0, prev.pagination.total - inViewCount)
-                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1
-
-                                return {
-                                    ...prev,
-                                    messages: prev.messages.filter(m => !idsToRemove.includes(m.id)),
-                                    pagination: {
-                                        ...prev.pagination,
-                                        total: newTotal,
-                                        totalPages: newTotalPages
-                                    }
-                                }
-                            })
-                        } else {
-                            fetchMessages(true)
-                        }
-                    } else if (type === 'update') {
-                        if (payload.queue && payload.queue !== activeTab) return
-
-                        if (payload.id && payload.updates) {
-                            setMessagesData(prev => {
-                                if (!prev) return prev
-                                if (!prev.messages.some(m => m.id === payload.id)) return prev
-
-                                return {
-                                    ...prev,
-                                    messages: prev.messages.map(m => m.id === payload.id ? { ...m, ...payload.updates } : m)
-                                }
-                            })
-                        } else {
-                            fetchMessages(true)
-                        }
-                    } else if (type === 'move') {
-                        const { from, to, ids } = payload
-
-                        if (from === activeTab && ids && ids.length > 0) {
-                            setMessagesData(prev => {
-                                if (!prev) return prev
-
-                                const idsToRemove = new Set(ids)
-                                const removedCount = prev.messages.filter(m => idsToRemove.has(m.id)).length
-                                const newTotal = Math.max(0, prev.pagination.total - removedCount)
-                                const newTotalPages = Math.ceil(newTotal / prev.pagination.limit) || 1
-
-                                return {
-                                    ...prev,
-                                    messages: prev.messages.filter(m => !idsToRemove.has(m.id)),
-                                    pagination: {
-                                        ...prev.pagination,
-                                        total: newTotal,
-                                        totalPages: newTotalPages
-                                    }
-                                }
-                            })
-                        }
-
-                        if (to === activeTab) {
-                            fetchMessages(true)
-                        }
-                    } else {
-                        fetchMessages(true)
+                    // Schedule batch processing if not already scheduled
+                    if (!batchTimeoutRef.current) {
+                        batchTimeoutRef.current = setTimeout(processBatchedEvents, SSE_BATCH_DELAY_MS)
                     }
                 } catch (e) {
                     console.error("SSE Parse Error", e)
@@ -678,8 +695,12 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
         return () => {
             if (interval) clearInterval(interval)
             if (eventSource) eventSource.close()
+            if (batchTimeoutRef.current) {
+                clearTimeout(batchTimeoutRef.current)
+                batchTimeoutRef.current = null
+            }
         }
-    }, [autoRefresh, fetchAll, apiKey])
+    }, [autoRefresh, fetchAll, apiKey, processBatchedEvents])
 
     // =========================================================================
     // URL Sync - Update search params when filter state changes (not tab changes)

@@ -606,7 +606,7 @@ npx tsx dequeue_messages.ts --count 5 --timeout 60 --ack-timeout 120 --consumer 
 To run the integration tests for the queue API:
 
 ```bash
-npm test src/routes/queue/queue.test.ts
+pnpm test src/routes/queue/queue.test.ts
 ```
 
 This runs the Vitest suite covering:
@@ -614,6 +614,44 @@ This runs the Vitest suite covering:
 - Enqueuing and dequeuing messages
 - Message acknowledgment (with Redis Streams support)
 - Error handling and invalid requests
+
+### Performance Benchmarks
+
+The project includes benchmark tests to measure Redis operation performance and track improvements when making changes to how the library reads and writes to Redis.
+
+**Run the full benchmark suite:**
+```bash
+pnpm test src/lib/queue/queue.benchmark.test.ts -- --run
+```
+
+This benchmark measures:
+- **Latency** (p50, p95, p99, max) for each operation
+- **Redis command counts** (reads, writes, total) per operation
+- **Throughput** (operations/second)
+
+**Example output:**
+```
+╔═══════════════════════════════════════════════════════════════════════════════════════════╗
+║                              BENCHMARK SUMMARY REPORT                                     ║
+╠═══════════════════════════════════════════════════════════════════════════════════════════╣
+║ Operation            │ Avg Latency │ Redis Reads │ Redis Writes │ Total Cmds │ Cmds/Op   ║
+╠═══════════════════════════════════════════════════════════════════════════════════════════╣
+║ enqueue              │     0.58 ms │        1.00 │         7.00 │       8.00 │      8.00 ║
+║ dequeue              │     2.61 ms │       15.22 │        12.22 │      27.44 │     27.44 ║
+║ acknowledge          │     0.74 ms │        3.00 │         9.00 │      12.00 │     12.00 ║
+║ batch_enqueue_100    │    19.64 ms │        0.01 │         5.00 │       5.01 │      5.01 ║
+║ getMetrics           │     0.19 ms │       27.00 │         0.00 │      27.00 │     27.00 ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+The benchmark outputs JSON results that can be saved for comparison before and after refactoring.
+
+**Quick performance regression test (~30 seconds):**
+```bash
+pnpm test src/lib/queue/queue.perf.test.ts -- --run
+```
+
+This is a lighter test for fast CI/CD feedback with baseline thresholds.
 
 ---
 

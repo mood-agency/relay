@@ -1,6 +1,40 @@
 import { logger } from "./utils.js";
 
 /**
+ * Ensures consumer groups exist for streams that have messages.
+ * This reduces NOGROUP errors by proactively creating groups only when needed.
+ * @param {string[]} streams - Array of stream names to check.
+ * @returns {Promise<void>}
+ * @private
+ */
+async function _ensureConsumerGroupsForActiveStreams(queue, streams) {
+  const redis = queue.redisManager.redis;
+
+  // Check which streams have messages but no known consumer group
+  const streamsToCheck = streams.filter(s => !queue.isConsumerGroupKnown(s));
+  if (streamsToCheck.length === 0) return;
+
+  // Check stream lengths to see which ones have messages
+  const pipeline = redis.pipeline();
+  for (const stream of streamsToCheck) {
+    pipeline.xlen(stream);
+  }
+  const results = await pipeline.exec();
+
+  // Create consumer groups only for streams that have messages
+  for (let i = 0; i < streamsToCheck.length; i++) {
+    const len = results[i]?.[1] || 0;
+    if (len > 0) {
+      try {
+        await queue._ensureConsumerGroup(streamsToCheck[i]);
+      } catch (e) {
+        // Ignore errors - the stream might not exist yet
+      }
+    }
+  }
+}
+
+/**
  * Gets metrics for the queue system.
  * @returns {Promise<Object>} The metrics object.
  */
@@ -8,55 +42,70 @@ export async function getMetrics() {
   try {
     const pipeline = this.redisManager.pipeline();
     const priorityStreams = this._getAllPriorityStreams();
-    
+    const priorityCount = priorityStreams.length;
+
     // Queue lengths for all priority streams
     for (const stream of priorityStreams) {
       pipeline.xlen(stream);
     }
-    
+
     // DLQ and Acknowledged queue lengths
     pipeline.xlen(this.config.dead_letter_queue_name);
     pipeline.xlen(this.config.acknowledged_queue_name);
     pipeline.xlen(this.config.archived_queue_name);
-    
+
     // Stats
     pipeline.get(this.config.total_acknowledged_key);
     pipeline.hlen(this.config.metadata_hash_name);
-    
-    // Pending (Processing) Counts for all priority streams
-    for (const stream of priorityStreams) {
-      pipeline.xpending(stream, this.config.consumer_group_name);
+
+    // Only call XPENDING for streams with known consumer groups (optimization)
+    // This avoids NOGROUP errors for streams that haven't been consumed yet
+    const streamsWithGroups = [];
+    const streamIndexMap = new Map(); // Maps stream index to priority
+    for (let i = 0; i < priorityCount; i++) {
+      const stream = priorityStreams[i];
+      if (this.isConsumerGroupKnown(stream)) {
+        streamIndexMap.set(streamsWithGroups.length, i);
+        streamsWithGroups.push(stream);
+        pipeline.xpending(stream, this.config.consumer_group_name);
+      }
     }
 
     const results = await pipeline.exec();
-    
+
     // Parse priority stream lengths
     let totalMainQueueSize = 0;
     let totalProcessingSize = 0;
     const priorityDetails = {};
-    const priorityCount = priorityStreams.length;
-    
+
     for (let i = 0; i < priorityCount; i++) {
       const len = results[i][1] || 0;
       const priority = priorityCount - 1 - i; // Reverse because streams are highest-first
       priorityDetails[`priority_${priority}_queued`] = len;
+      priorityDetails[`priority_${priority}_processing`] = 0; // Default to 0
       totalMainQueueSize += len;
     }
-    
+
     // DLQ and Acknowledged
     const dlqLen = results[priorityCount][1] || 0;
     const ackLen = results[priorityCount + 1][1] || 0;
     const archivedLen = results[priorityCount + 2][1] || 0;
     const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
     const metadataCount = results[priorityCount + 4][1] || 0;
-    
-    // Parse pending counts for all priority streams
-    for (let i = 0; i < priorityCount; i++) {
-      const pendingResult = results[priorityCount + 5 + i][1];
-      const pendingCount = pendingResult ? pendingResult[0] : 0;
-      const priority = priorityCount - 1 - i;
-      priorityDetails[`priority_${priority}_processing`] = pendingCount;
-      totalProcessingSize += pendingCount;
+
+    // Parse pending counts only for streams we queried
+    const pendingStartIdx = priorityCount + 5;
+    for (let j = 0; j < streamsWithGroups.length; j++) {
+      const result = results[pendingStartIdx + j];
+      const originalIndex = streamIndexMap.get(j);
+      const priority = priorityCount - 1 - originalIndex;
+
+      if (result && !result[0]) {
+        const pendingResult = result[1];
+        const pendingCount = pendingResult ? pendingResult[0] : 0;
+        priorityDetails[`priority_${priority}_processing`] = pendingCount;
+        totalProcessingSize += pendingCount;
+      }
     }
 
     const queueMetrics = {
@@ -147,15 +196,21 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
       const archivedLen = results[priorityCount + 2][1] || 0;
       const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
 
-      // Parse pending counts
+      // Parse pending counts (handle NOGROUP errors gracefully)
       let totalProcessingCount = 0;
       const pendingSummaryStartIdx = priorityCount + 4;
       for (let i = 0; i < priorityCount; i++) {
         const pendingSummary = results[pendingSummaryStartIdx + i];
+        // Check for errors (NOGROUP) - first element is error, second is result
         if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
           const pendingCount = Number(pendingSummary[1][0] || 0);
           if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
+          // Mark consumer group as existing if we got a valid response
+          if (pendingSummary[1]) {
+            this.markConsumerGroupExists(priorityStreams[i]);
+          }
         }
+        // If pendingSummary[0] is truthy, there was an error (NOGROUP) - treat as 0
       }
 
       const waitingLength = Math.max(0, totalMainLen - totalProcessingCount);
@@ -235,14 +290,21 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
     const totalAck = parseInt(results[priorityCount + 3][1] || '0', 10);
 
     // Parse pending summary counts (same position for full mode)
+    // Handle NOGROUP errors gracefully
     const pendingSummaryStartIdx = priorityCount + 4;
     let totalProcessingCount = 0;
     for (let i = 0; i < priorityCount; i++) {
       const pendingSummary = results[pendingSummaryStartIdx + i];
+      // Check for errors (NOGROUP) - first element is error, second is result
       if (pendingSummary && !pendingSummary[0] && Array.isArray(pendingSummary[1])) {
         const pendingCount = Number(pendingSummary[1][0] || 0);
         if (!Number.isNaN(pendingCount)) totalProcessingCount += pendingCount;
+        // Mark consumer group as existing if we got a valid response
+        if (pendingSummary[1]) {
+          this.markConsumerGroupExists(priorityStreams[i]);
+        }
       }
+      // If pendingSummary[0] is truthy, there was an error (NOGROUP) - treat as 0
     }
 
     // Parse messages from all priority streams
@@ -296,11 +358,18 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
     const pendingDetailStartIdx = contentStartIdx + priorityCount + 4;
 
     // Processing messages from all priority streams
+    // Handle NOGROUP errors gracefully for detailed pending
     const processingMessages = [];
     const pendingToCheck = [];
 
     for (let i = 0; i < priorityCount; i++) {
-      const pendingResult = results[pendingDetailStartIdx + i][1];
+      const result = results[pendingDetailStartIdx + i];
+      // Check for NOGROUP error - first element is error
+      if (result[0]) {
+        // Error occurred (likely NOGROUP) - skip this stream
+        continue;
+      }
+      const pendingResult = result[1];
       const pending = Array.isArray(pendingResult) ? pendingResult : [];
       const streamName = priorityStreams[i];
       const priority = priorityCount - 1 - i; // Convert index to priority
@@ -391,34 +460,14 @@ export async function getQueueStatus(typeFilter = null, includeMessages = true) 
         if (m.type) availableTypes.add(m.type);
     });
 
-    // Filter out messages from mainQueue that are present in processingQueue
+    // OPTIMIZATION: Filter out messages from mainQueue that are present in processingQueue
+    // Uses pending IDs Set instead of per-message XPENDING calls (N calls → 1 call)
     if (mainMessages.length > 0) {
-      const checkPipeline = redis.pipeline();
-      const checkTargets = [];
-      for (const m of mainMessages) {
-        if (!m?._stream_id || !m?._stream_name) continue;
-        checkTargets.push({ streamName: m._stream_name, streamId: m._stream_id });
-        checkPipeline.xpending(
-          m._stream_name,
-          this.config.consumer_group_name,
-          m._stream_id,
-          m._stream_id,
-          1
-        );
-      }
+      const pendingIdsKey = this._getPendingIdsSetKey();
+      const pendingMessageIds = new Set(await redis.smembers(pendingIdsKey));
 
-      if (checkTargets.length > 0) {
-        const checkResults = await checkPipeline.exec();
-        const pendingStreamIds = new Set();
-        checkTargets.forEach((t, idx) => {
-          const res = checkResults[idx];
-          if (res && !res[0] && Array.isArray(res[1]) && res[1].length > 0) {
-            pendingStreamIds.add(t.streamId);
-          }
-        });
-        if (pendingStreamIds.size > 0) {
-          mainMessages = mainMessages.filter(m => !pendingStreamIds.has(m?._stream_id));
-        }
+      if (pendingMessageIds.size > 0) {
+        mainMessages = mainMessages.filter(m => !pendingMessageIds.has(m?.id));
       }
     }
 

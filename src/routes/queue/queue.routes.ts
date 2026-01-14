@@ -773,9 +773,12 @@ export const getAnomalies = createRoute({
     query: z.object({
       severity: z.enum(["info", "warning", "critical"]).optional().describe("Filter by severity"),
       type: z.string().optional().describe("Filter by anomaly type"),
+      action: z.string().optional().describe("Filter by action(s), comma-separated"),
       start_time: z.string().optional().describe("Start timestamp (Unix seconds)"),
       end_time: z.string().optional().describe("End timestamp (Unix seconds)"),
       limit: z.string().optional().describe("Max entries to return (default: 100)"),
+      sort_by: z.enum(["severity", "type", "action", "timestamp"]).optional().describe("Sort by field (default: timestamp)"),
+      sort_order: z.enum(["asc", "desc"]).optional().describe("Sort order (default: desc)"),
     }),
   },
   responses: {

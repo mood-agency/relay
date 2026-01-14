@@ -2,7 +2,11 @@ import React, { useState } from "react"
 import {
     Loader2,
     Filter,
-    CheckCircle2
+    CheckCircle2,
+    Copy,
+    ArrowUp,
+    ArrowDown,
+    ArrowUpDown
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -33,9 +37,62 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { toast } from "@/components/ui/sonner"
+import { Badge } from "@/components/ui/badge"
 
 import { AnomaliesResponse } from "./types"
 import { getActionBadge, getSeverityBadge } from "./helpers"
+import { syntaxHighlightJson } from "@/components/queue/types"
+
+// ============================================================================
+// Sort Types
+// ============================================================================
+
+type SortColumn = 'severity' | 'type' | 'action' | 'timestamp'
+
+// ============================================================================
+// Sortable Header Component
+// ============================================================================
+
+const SortableHeader = ({
+    column,
+    label,
+    currentSortBy,
+    currentSortOrder,
+    onSort,
+    className
+}: {
+    column: SortColumn
+    label: string
+    currentSortBy: string
+    currentSortOrder: string
+    onSort: (column: SortColumn) => void
+    className?: string
+}) => {
+    const isActive = currentSortBy === column
+    return (
+        <TableHead
+            className={cn(
+                "sticky top-0 z-20 bg-card font-semibold text-foreground text-xs cursor-pointer select-none hover:bg-muted/50 transition-colors",
+                className
+            )}
+            onClick={() => onSort(column)}
+        >
+            <div className="flex items-center gap-1">
+                <span>{label}</span>
+                {isActive ? (
+                    currentSortOrder === 'asc' ? (
+                        <ArrowUp className="h-3 w-3" />
+                    ) : (
+                        <ArrowDown className="h-3 w-3" />
+                    )
+                ) : (
+                    <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
+                )}
+            </div>
+        </TableHead>
+    )
+}
 
 // ============================================================================
 // Anomalies Table Component
@@ -46,6 +103,14 @@ export interface AnomaliesTableProps {
     loading: boolean
     severityFilter: string
     setSeverityFilter: (val: string) => void
+    actionFilter: string
+    setActionFilter: (val: string) => void
+    typeFilter: string
+    setTypeFilter: (val: string) => void
+    sortBy: string
+    setSortBy: (val: string) => void
+    sortOrder: string
+    setSortOrder: (val: string) => void
     onRefresh: () => void
     formatTime: (ts?: number) => string
 }
@@ -55,11 +120,39 @@ export function AnomaliesTable({
     loading,
     severityFilter,
     setSeverityFilter,
+    actionFilter,
+    setActionFilter,
+    typeFilter,
+    setTypeFilter,
+    sortBy,
+    setSortBy,
+    sortOrder,
+    setSortOrder,
     onRefresh,
     formatTime
 }: AnomaliesTableProps) {
     const [filterOpen, setFilterOpen] = useState(false)
-    const isFilterActive = severityFilter !== ''
+    const isFilterActive = severityFilter !== '' || actionFilter !== '' || typeFilter !== ''
+
+    // Derive available anomaly types from the data
+    const availableAnomalyTypes = anomalies?.summary?.by_type
+        ? Object.keys(anomalies.summary.by_type)
+        : []
+
+    const handleClearFilters = () => {
+        setSeverityFilter('')
+        setActionFilter('')
+        setTypeFilter('')
+    }
+
+    const handleSort = (column: SortColumn) => {
+        if (sortBy === column) {
+            setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')
+        } else {
+            setSortBy(column)
+            setSortOrder('desc')
+        }
+    }
 
     return (
         <div className="flex flex-col flex-1 min-h-0">
@@ -72,12 +165,12 @@ export function AnomaliesTable({
                 <Table>
                     <TableHeader>
                         <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[90px]">Severity</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Anomaly Type</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Description</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[90px]">Action</TableHead>
+                            <SortableHeader column="severity" label="Severity" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} className="w-[90px]" />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[120px]">Message ID</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[180px]">Timestamp</TableHead>
+                            <SortableHeader column="type" label="Anomaly Type" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} />
+                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Description</TableHead>
+                            <SortableHeader column="action" label="Action" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} className="w-[90px]" />
+                            <SortableHeader column="timestamp" label="Timestamp" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Payload</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card text-right pr-2">
                                 <Popover open={filterOpen} onOpenChange={setFilterOpen}>
@@ -93,7 +186,7 @@ export function AnomaliesTable({
                                             )}
                                         </Button>
                                     </PopoverTrigger>
-                                    <PopoverContent className="w-56 p-4" align="end">
+                                    <PopoverContent className="w-64 p-4" align="end">
                                         <div className="space-y-4">
                                             <div className="flex items-center justify-between">
                                                 <h4 className="font-medium text-sm">Filters</h4>
@@ -101,10 +194,10 @@ export function AnomaliesTable({
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
-                                                        onClick={() => setSeverityFilter('')}
+                                                        onClick={handleClearFilters}
                                                         className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                                     >
-                                                        Clear
+                                                        Clear all
                                                     </Button>
                                                 )}
                                             </div>
@@ -122,6 +215,50 @@ export function AnomaliesTable({
                                                     </SelectContent>
                                                 </Select>
                                             </div>
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Action</label>
+                                                <Select value={actionFilter || 'all'} onValueChange={(val) => setActionFilter(val === 'all' ? '' : val)}>
+                                                    <SelectTrigger className="w-full h-9">
+                                                        <SelectValue placeholder="All Actions" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="all">All Actions</SelectItem>
+                                                        <SelectItem value="enqueue">Enqueue</SelectItem>
+                                                        <SelectItem value="dequeue">Dequeue</SelectItem>
+                                                        <SelectItem value="ack">Acknowledge</SelectItem>
+                                                        <SelectItem value="nack">Nack</SelectItem>
+                                                        <SelectItem value="requeue">Requeue</SelectItem>
+                                                        <SelectItem value="timeout">Timeout</SelectItem>
+                                                        <SelectItem value="touch">Touch</SelectItem>
+                                                        <SelectItem value="move">Move</SelectItem>
+                                                        <SelectItem value="dlq">Dead Letter</SelectItem>
+                                                        <SelectItem value="delete">Delete</SelectItem>
+                                                        <SelectItem value="clear">Clear</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-medium text-foreground/80">Anomaly Type</label>
+                                                <Select value={typeFilter || 'all'} onValueChange={(val) => setTypeFilter(val === 'all' ? '' : val)}>
+                                                    <SelectTrigger className="w-full h-9">
+                                                        <SelectValue placeholder="All Types" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="all">All Types</SelectItem>
+                                                        <SelectItem value="flash_message">Flash Message</SelectItem>
+                                                        <SelectItem value="zombie_message">Zombie Message</SelectItem>
+                                                        <SelectItem value="near_dlq">Near DLQ</SelectItem>
+                                                        <SelectItem value="dlq_movement">DLQ Movement</SelectItem>
+                                                        <SelectItem value="long_processing">Long Processing</SelectItem>
+                                                        <SelectItem value="lock_stolen">Lock Stolen</SelectItem>
+                                                        <SelectItem value="burst_dequeue">Burst Dequeue</SelectItem>
+                                                        <SelectItem value="bulk_delete">Bulk Delete</SelectItem>
+                                                        <SelectItem value="bulk_move">Bulk Move</SelectItem>
+                                                        <SelectItem value="queue_cleared">Queue Cleared</SelectItem>
+                                                        <SelectItem value="large_payload">Large Payload</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
                                         </div>
                                     </PopoverContent>
                                 </Popover>
@@ -132,48 +269,82 @@ export function AnomaliesTable({
                         {!loading && (!anomalies?.anomalies?.length) ? (
                             <TableRow className="hover:bg-transparent">
                                 <TableCell colSpan={8} className="h-[400px] p-0">
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                                        <CheckCircle2 className="h-12 w-12 mb-3 text-green-500 opacity-30" />
-                                        <p className="font-medium">No anomalies detected</p>
-                                        <p className="text-sm">Your queue is operating normally</p>
+                                    <div className="flex flex-col items-center justify-center h-full text-center animate-in fade-in zoom-in duration-300">
+                                        <div className="bg-green-500/10 p-6 rounded-full mb-6 ring-8 ring-green-500/5">
+                                            <CheckCircle2 className="h-10 w-10 text-green-500" />
+                                        </div>
+                                        <h3 className="text-xl font-bold text-foreground mb-2">No anomalies detected</h3>
+                                        <p className="text-sm text-muted-foreground max-w-[400px] leading-relaxed">Your queue is operating normally</p>
                                     </div>
                                 </TableCell>
                             </TableRow>
                         ) : (
                             anomalies?.anomalies.map((log) => (
                                 <TableRow key={log.log_id} className={cn(
-                                    "hover:bg-muted/50",
+                                    "group transition-colors duration-150 border-muted/30",
                                     log.anomaly?.severity === 'critical' && "bg-destructive/5"
                                 )}>
                                     <TableCell>{getSeverityBadge(log.anomaly?.severity || 'info')}</TableCell>
-                                    <TableCell className="font-medium text-xs">{log.anomaly?.type}</TableCell>
-                                    <TableCell className="text-xs text-muted-foreground max-w-[300px]">
-                                        <span className="line-clamp-2">{log.anomaly?.description}</span>
-                                    </TableCell>
-                                    <TableCell>{getActionBadge(log.action)}</TableCell>
-                                    <TableCell className="font-mono text-xs">
+                                    <TableCell className="font-mono text-xs group/id">
                                         {log.message_id ? (
-                                            <span className="truncate block" title={log.message_id}>
-                                                {log.message_id.substring(0, 10)}
-                                            </span>
+                                            <div className="flex items-center gap-1">
+                                                <span className="truncate" title={log.message_id}>
+                                                    {log.message_id.substring(0, 10)}
+                                                </span>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        e.preventDefault()
+                                                        navigator.clipboard.writeText(log.message_id!)
+                                                        toast.success("ID copied to clipboard")
+                                                    }}
+                                                    className="opacity-0 group-hover/id:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                                    tabIndex={-1}
+                                                    title="Copy ID"
+                                                >
+                                                    <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                                                </button>
+                                            </div>
                                         ) : (
                                             <span className="text-muted-foreground">—</span>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-xs font-mono text-muted-foreground">
+                                    <TableCell className="text-left">
+                                        <Badge variant="outline" className="font-medium whitespace-nowrap">{log.anomaly?.type}</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-xs text-foreground max-w-[300px]">
+                                        <span className="line-clamp-2">{log.anomaly?.description}</span>
+                                    </TableCell>
+                                    <TableCell>{getActionBadge(log.action)}</TableCell>
+                                    <TableCell className="text-xs font-mono text-foreground whitespace-nowrap">
                                         {formatTime(log.timestamp)}
                                     </TableCell>
-                                    <TableCell className="max-w-[200px]">
+                                    <TableCell className="max-w-[200px] cursor-default group/payload">
                                         {log.payload ? (
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                    <span className="text-xs font-mono truncate block cursor-help opacity-70 hover:opacity-100 transition-opacity">
-                                                        {JSON.stringify(log.payload)}
-                                                    </span>
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="text-xs font-mono truncate text-muted-foreground group-hover/payload:text-foreground transition-colors">
+                                                            {JSON.stringify(log.payload)}
+                                                        </span>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                e.preventDefault()
+                                                                navigator.clipboard.writeText(JSON.stringify(log.payload, null, 2))
+                                                                toast.success("Payload copied to clipboard")
+                                                            }}
+                                                            className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                                                            tabIndex={-1}
+                                                            title="Copy payload"
+                                                        >
+                                                            <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                                                        </button>
+                                                    </div>
                                                 </TooltipTrigger>
-                                                <TooltipContent className="max-w-[500px] overflow-auto max-h-[300px]">
-                                                    <pre className="text-[10px] font-mono whitespace-pre-wrap">
-                                                        {JSON.stringify(log.payload, null, 2)}
+                                                <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
+                                                    <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                                                        <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(log.payload, null, 2)) }} />
                                                     </pre>
                                                 </TooltipContent>
                                             </Tooltip>

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Toaster } from '@/components/ui/sonner'
 
 // Layout wrapper that provides common context
 function RootLayout() {
@@ -9,6 +10,7 @@ function RootLayout() {
             <div className="min-h-screen bg-background">
                 <Outlet />
             </div>
+            <Toaster position="bottom-right" />
         </TooltipProvider>
     )
 }

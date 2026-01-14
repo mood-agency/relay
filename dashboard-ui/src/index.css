@@ -97,7 +97,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background-color: hsl(var(--primary));
+  background-color: hsl(45 93% 58%);
   animation: highlight-fade 2s ease-out forwards;
   pointer-events: none;
   z-index: 1;

@@ -43,6 +43,7 @@ export const EnvSchema = z.object({
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),
   MAX_ATTEMPTS: z.coerce.number().default(3),
   REQUEUE_BATCH_SIZE: z.coerce.number().default(100),
+  OVERDUE_CHECK_INTERVAL_MS: z.coerce.number().default(5000),
   MAX_PRIORITY_LEVELS: z.coerce.number().default(10),
   ENABLE_ENCRYPTION: z.string().default("false"),
   SECRET_KEY: z.string().optional().nullable(),

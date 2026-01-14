@@ -170,23 +170,73 @@ export const getEvents: AppRouteHandler<GetEventsRoute> = async (c: any) => {
       if (chan === channel) {
         let dataToSend = message;
 
-        // If not authenticated, strip sensitive payload data from events
+        // OPTIMIZATION: For unauthenticated clients, send lightweight events
+        // This reduces bandwidth for high-throughput scenarios
         if (!isAuthenticated) {
           try {
             const parsed = JSON.parse(message);
-            // Strip payload from individual messages
-            if (parsed.payload?.message) {
-              const { payload: msgPayload, ...rest } = parsed.payload.message;
-              parsed.payload.message = { ...rest, payload: "[REDACTED]" };
+            const { type, timestamp, payload } = parsed;
+
+            // Create lightweight event with minimal data
+            const lightweightEvent: any = {
+              type,
+              timestamp,
+              payload: {}
+            };
+
+            // For enqueue events, only send count and force_refresh flag
+            if (type === 'enqueue') {
+              lightweightEvent.payload = {
+                count: payload.count || 1,
+                force_refresh: payload.force_refresh || false,
+                // Include minimal message info for client-side filtering (but redact payload)
+                messages: payload.messages?.map((m: any) => ({
+                  id: m.id,
+                  type: m.type,
+                  priority: m.priority,
+                  created_at: m.created_at,
+                  payload: "[REDACTED]"
+                })) || (payload.message ? [{
+                  id: payload.message.id,
+                  type: payload.message.type,
+                  priority: payload.message.priority,
+                  created_at: payload.message.created_at,
+                  payload: "[REDACTED]"
+                }] : [])
+              };
             }
-            // Strip payloads from batch messages
-            if (parsed.payload?.messages && Array.isArray(parsed.payload.messages)) {
-              parsed.payload.messages = parsed.payload.messages.map((m: any) => {
-                const { payload: msgPayload, ...rest } = m;
-                return { ...rest, payload: "[REDACTED]" };
-              });
+            // For acknowledge/delete, include IDs and queue info
+            else if (type === 'acknowledge' || type === 'delete') {
+              lightweightEvent.payload = {
+                ids: payload.ids || (payload.id ? [payload.id] : []),
+                id: payload.id,
+                queue: payload.queue,
+                count: payload.count
+              };
             }
-            dataToSend = JSON.stringify(parsed);
+            // For move events, include source/dest and IDs
+            else if (type === 'move') {
+              lightweightEvent.payload = {
+                from: payload.from,
+                to: payload.to,
+                ids: payload.ids,
+                count: payload.count
+              };
+            }
+            // For update events, include ID and updates
+            else if (type === 'update') {
+              lightweightEvent.payload = {
+                id: payload.id,
+                queue: payload.queue,
+                updates: payload.updates
+              };
+            }
+            // For other events, just pass through the type
+            else {
+              lightweightEvent.payload = { type };
+            }
+
+            dataToSend = JSON.stringify(lightweightEvent);
           } catch (e) {
             // If parsing fails, still send the original message
           }
@@ -557,9 +607,12 @@ export const getAnomalies: AppRouteHandler<any> = async (c: any) => {
     const filters = {
       severity: query.severity,
       type: query.type,
+      action: query.action,
       start_time: query.start_time ? parseFloat(query.start_time) : undefined,
       end_time: query.end_time ? parseFloat(query.end_time) : undefined,
       limit: query.limit ? parseInt(query.limit, 10) : 100,
+      sort_by: query.sort_by || "timestamp",
+      sort_order: query.sort_order || "desc",
     };
 
     const result = await queue.getAnomalies(filters);
