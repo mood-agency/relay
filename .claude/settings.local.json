@@ -13,7 +13,21 @@
       "Bash(findstr:*)",
       "Bash(pnpm add:*)",
       "Bash(curl:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(pnpm dashboard:build:*)",
+      "Bash(git stash:*)",
+      "Bash(pnpm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq *node*\" /T)",
+      "Bash(taskkill:*)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(npx vitest:*)",
+      "Bash(tasklist:*)",
+      "Bash(ss:*)",
+      "Bash(pnpm exec tsc:*)",
+      "Bash(npx vite build)",
+      "Bash(git add:*)"
     ]
   }
 }

@@ -1,80 +1,61 @@
 import { generateId } from "./utils.js";
 
 /**
- * Configuration class for the Redis Queue.
+ * Configuration class for the PostgreSQL Queue.
  * Validates and stores configuration settings.
  */
 export class QueueConfig {
   /**
    * Creates a new QueueConfig instance.
    * @param {Object} config - Configuration object.
-   * @param {string} [config.redis_host="localhost"] - Redis host.
-   * @param {string|number} [config.redis_port="6379"] - Redis port.
-   * @param {string|number} [config.redis_db="0"] - Redis database index.
-   * @param {string} [config.redis_password=null] - Redis password.
-   * @param {string} [config.redis_tls="false"] - Enable TLS for Redis connection.
+   * @param {string} [config.postgres_host="localhost"] - PostgreSQL host.
+   * @param {string|number} [config.postgres_port="5432"] - PostgreSQL port.
+   * @param {string} [config.postgres_database="relay"] - PostgreSQL database name.
+   * @param {string} [config.postgres_user="postgres"] - PostgreSQL user.
+   * @param {string} [config.postgres_password=""] - PostgreSQL password.
+   * @param {string|number} [config.postgres_pool_size="10"] - Connection pool size.
+   * @param {boolean} [config.postgres_ssl=false] - Enable SSL for PostgreSQL connection.
    * @param {string} [config.queue_name="queue"] - Base name for the queue.
-   * @param {string} [config.processing_queue_name="queue_processing"] - Name for processing queue (legacy/virtual).
-   * @param {string} [config.dead_letter_queue_name="queue_dlq"] - Name for dead letter queue.
-   * @param {string} [config.archived_queue_name="queue_archived"] - Name for archived queue.
-   * @param {string} [config.acknowledged_queue_name="queue_acknowledged"] - Name for acknowledged queue.
-   * @param {string} [config.total_acknowledged_key="queue:stats:total_acknowledged"] - Redis key for total ack stats.
-   * @param {string} [config.metadata_hash_name="queue_metadata"] - Redis hash name for metadata.
-   * @param {string} [config.consumer_group_name="queue_group"] - Redis stream consumer group name.
-   * @param {string} [config.consumer_name] - Unique consumer name. Defaults to generated ID.
    * @param {string|number} [config.ack_timeout_seconds="30"] - Acknowledgment timeout in seconds.
    * @param {string|number} [config.max_attempts="3"] - Maximum retry attempts.
    * @param {string|number} [config.requeue_batch_size="100"] - Batch size for requeue operations.
-   * @param {string|number} [config.max_acknowledged_history="100"] - Max history size for acknowledged messages.
-   * @param {string|number} [config.redis_pool_size="10"] - Redis connection pool size (informational).
    * @param {string|number} [config.max_priority_levels="10"] - Number of priority levels (0-9).
-   * @param {string} [config.enable_message_encryption="false"] - Enable encryption ("true"/"false").
-   * @param {string} [config.secret_key] - Secret key for encryption (required if enabled).
-   * @param {string} [config.events_channel="queue_events"] - Redis channel for events.
+   * @param {string} [config.events_channel="queue_events"] - PostgreSQL NOTIFY channel for events.
    */
   constructor(config) {
-    this.redis_host = config.redis_host || "localhost";
-    this.redis_port = parseInt(config.redis_port || "6379", 10);
-    this.redis_db = parseInt(config.redis_db || "0", 10);
-    this.redis_password = config.redis_password || null;
-    this.redis_tls = (config.redis_tls || "false").toLowerCase() === "true";
+    // PostgreSQL connection settings
+    this.postgres_host = config.postgres_host || "localhost";
+    this.postgres_port = parseInt(config.postgres_port || "5432", 10);
+    this.postgres_database = config.postgres_database || "relay";
+    this.postgres_user = config.postgres_user || "postgres";
+    this.postgres_password = config.postgres_password || "";
+    this.postgres_pool_size = parseInt(config.postgres_pool_size || "10", 10);
+    this.postgres_ssl = config.postgres_ssl === true || config.postgres_ssl === "true";
 
+    // Queue settings
     this.queue_name = config.queue_name || "queue";
-    this.processing_queue_name = config.processing_queue_name || "queue_processing";
-    this.dead_letter_queue_name = config.dead_letter_queue_name || "queue_dlq";
-    this.archived_queue_name = config.archived_queue_name || "queue_archived";
-    this.acknowledged_queue_name = config.acknowledged_queue_name || "queue_acknowledged";
-    this.total_acknowledged_key = config.total_acknowledged_key || "queue:stats:total_acknowledged";
-    this.metadata_hash_name = config.metadata_hash_name || "queue_metadata";
-    
-    // Stream-specific configuration
-    this.consumer_group_name = config.consumer_group_name || "queue_group";
-    this.consumer_name = config.consumer_name || `relay`;
-
     this.ack_timeout_seconds = parseInt(config.ack_timeout_seconds || "30", 10);
     this.max_attempts = parseInt(config.max_attempts || "3", 10);
     this.requeue_batch_size = parseInt(config.requeue_batch_size || "100", 10);
-    this.max_acknowledged_history = parseInt(config.max_acknowledged_history || "100", 10);
-    this.connection_pool_size = parseInt(config.redis_pool_size || "10", 10);
-    
+
     // Priority configuration (0-9 = 10 levels, higher number = higher priority)
     this.max_priority_levels = parseInt(config.max_priority_levels || "10", 10);
 
-    this.enable_message_encryption =
-      (config.enable_message_encryption || "false").toLowerCase() === "true";
-    this.secret_key = config.secret_key || null;
-
+    // Events channel for LISTEN/NOTIFY
     this.events_channel = config.events_channel || "queue_events";
+
+    // Actor name for system/automated operations (timeouts, requeue, etc.)
+    this.relay_actor = config.relay_actor || "relay-actor";
+
+    // Actor name for manual user operations (via dashboard/API)
+    this.manual_operation_actor = config.manual_operation_actor || "user-manual-operation";
 
     // Activity Log Configuration
     this.activity_log_enabled =
-      (config.activity_log_enabled || "true").toLowerCase() === "true";
-    this.activity_log_stream_name =
-      config.activity_log_stream_name || `${this.queue_name}_activity`;
-    this.activity_log_max_entries = parseInt(
-      config.activity_log_max_entries || "50000",
-      10
-    );
+      config.activity_log_enabled === true ||
+      (typeof config.activity_log_enabled === "string" &&
+        config.activity_log_enabled.toLowerCase() === "true") ||
+      config.activity_log_enabled === undefined;
     this.activity_log_retention_hours = parseInt(
       config.activity_log_retention_hours || "24",
       10
@@ -82,7 +63,7 @@ export class QueueConfig {
 
     // Anomaly Detection Thresholds
     this.activity_burst_threshold_count = parseInt(
-      config.activity_burst_threshold_count || "10",
+      config.activity_burst_threshold_count || "50",
       10
     );
     this.activity_burst_threshold_seconds = parseInt(
@@ -90,34 +71,42 @@ export class QueueConfig {
       10
     );
     this.activity_flash_message_threshold_ms = parseInt(
-      config.activity_flash_message_threshold_ms || "2000",
+      config.activity_flash_message_threshold_ms || "500",
       10
     );
-    this.activity_zombie_message_threshold_hours = parseInt(
-      config.activity_zombie_message_threshold_hours || "1",
+    this.activity_long_processing_threshold_ms = parseInt(
+      config.activity_long_processing_threshold_ms || "10000",
       10
     );
-    this.activity_long_processing_multiplier = parseFloat(
-      config.activity_long_processing_multiplier || "2"
+    this.activity_bulk_operation_threshold = parseInt(
+      config.activity_bulk_operation_threshold || "5",
+      10
+    );
+    this.activity_large_payload_threshold_bytes = parseInt(
+      config.activity_large_payload_threshold_bytes || "5000",
+      10
+    );
+
+    // Additional Anomaly Detection Thresholds
+    this.activity_zombie_threshold_multiplier = parseInt(
+      config.activity_zombie_threshold_multiplier || "2",
+      10
     );
     this.activity_near_dlq_threshold = parseInt(
       config.activity_near_dlq_threshold || "1",
       10
     );
-    this.activity_bulk_operation_threshold = parseInt(
-      config.activity_bulk_operation_threshold || "50",
+
+    // Enqueue Buffering Configuration
+    this.enqueue_buffer_enabled =
+      config.enqueue_buffer_enabled === true ||
+      config.enqueue_buffer_enabled === "true";
+    this.enqueue_buffer_max_size = parseInt(
+      config.enqueue_buffer_max_size || "50",
       10
     );
-    this.activity_large_payload_bytes = parseInt(
-      config.activity_large_payload_bytes || "1048576",
-      10
-    ); // 1MB
-    this.activity_queue_growth_threshold = parseInt(
-      config.activity_queue_growth_threshold || "100",
-      10
-    );
-    this.activity_dlq_spike_threshold = parseInt(
-      config.activity_dlq_spike_threshold || "10",
+    this.enqueue_buffer_max_wait_ms = parseInt(
+      config.enqueue_buffer_max_wait_ms || "100",
       10
     );
 
@@ -130,19 +119,14 @@ export class QueueConfig {
    * @throws {Error} If validation fails.
    */
   _validate() {
-    if (this.enable_message_encryption && !this.secret_key) {
-      throw new Error("SECRET_KEY is required when encryption is enabled");
-    }
     if (this.ack_timeout_seconds <= 0) {
       throw new Error("ACK_TIMEOUT_SECONDS must be greater than 0");
     }
     if (this.max_attempts <= 0) {
       throw new Error("MAX_ATTEMPTS must be greater than 0");
     }
-    // Max safe priority levels to prevent score overflow in type index
-    // 900 * 10^13 < MAX_SAFE_INTEGER
-    if (this.max_priority_levels > 900) {
-      throw new Error("MAX_PRIORITY_LEVELS must be 900 or less to ensure index stability");
+    if (this.max_priority_levels < 1 || this.max_priority_levels > 10) {
+      throw new Error("MAX_PRIORITY_LEVELS must be between 1 and 10");
     }
   }
 }

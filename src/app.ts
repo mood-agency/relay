@@ -26,6 +26,7 @@ apiApp.use("*", async (c, next) => {
     return next();
   }
   return apiKeyAuth()(c, next);
+  // return next();
 });
 
 const routes = [queue];

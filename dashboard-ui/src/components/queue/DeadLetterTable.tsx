@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react"
-import { Pencil, Copy, Search, XCircle, Filter } from "lucide-react"
+import { Search, XCircle, Filter } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -16,11 +16,6 @@ import {
 } from "@/components/ui/select"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
 import MultipleSelector, { Option } from "@/components/ui/multi-select"
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from "@/components/ui/tooltip"
 import {
     SortableHeader,
     PaginationFooter,
@@ -39,9 +34,10 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+import * as tableStyles from "@/components/ui/table-styles"
 
-import { Message, QueueConfig, syntaxHighlightJson } from "./types"
-import { IdCell } from "./QueueTableBase"
+import { Message, QueueConfig } from "./types"
+import { IdCell, PayloadCell, HighlightableTableRow } from "./QueueTableBase"
 
 // ============================================================================
 // Dead Letter Row Component
@@ -70,14 +66,13 @@ export const DeadLetterRow = React.memo(({
     getPriorityBadge: (p: number) => React.ReactNode,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => {
-    const payloadText = JSON.stringify(msg.payload)
     const errorText = msg.error_message || msg.last_error || "Unknown error"
     return (
-        <TableRow key={msg.id} className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight", isSelected && "bg-primary/10")}>
+        <HighlightableTableRow isHighlighted={isHighlighted} isSelected={isSelected}>
             <TableCell>
                 <input
                     type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                    className={tableStyles.INPUT_CHECKBOX}
                     checked={isSelected}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                         e.stopPropagation()
@@ -86,38 +81,11 @@ export const DeadLetterRow = React.memo(({
                 />
             </TableCell>
             <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
-            <TableCell><Badge variant="outline" className="font-medium whitespace-nowrap">{msg.type}</Badge></TableCell>
+            <TableCell><Badge variant="outline" className={tableStyles.BADGE_TYPE}>{msg.type}</Badge></TableCell>
             <TableCell className="text-left">{getPriorityBadge(msg.priority)}</TableCell>
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <TableCell className="max-w-[150px] cursor-default group/payload">
-                        <div className="flex items-center gap-1">
-                            <div className="truncate text-xs font-mono text-muted-foreground group-hover/payload:text-foreground transition-colors">
-                                {payloadText}
-                            </div>
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    navigator.clipboard.writeText(JSON.stringify(msg.payload, null, 2));
-                                    (e.target as HTMLElement).closest('button')?.blur();
-                                }}
-                                className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
-                                tabIndex={-1}
-                            >
-                                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                            </button>
-                        </div>
-                    </TableCell>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                    <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
-                        <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(msg.payload, null, 2)) }} />
-                    </pre>
-                </TooltipContent>
-            </Tooltip>
-            <TableCell className="text-xs text-foreground whitespace-nowrap">
-                {formatTime(msg.failed_at || msg.processing_started_at)}
+            <PayloadCell payload={msg.payload} />
+            <TableCell className={tableStyles.TABLE_CELL_TIME}>
+                {formatTime(msg.dequeued_at || msg.created_at)}
             </TableCell>
             <TableCell>
                 <div className="text-xs font-medium max-w-[300px] truncate" title={errorText}>
@@ -125,16 +93,15 @@ export const DeadLetterRow = React.memo(({
                 </div>
             </TableCell>
             <TableCell>
-                <span className="text-xs text-foreground pl-4 block">
+                <span className={cn(tableStyles.TEXT_PRIMARY, "pl-4 block")}>
                     {msg.attempt_count || 1}
                     {config?.max_attempts && <span className="text-muted-foreground"> / {config.max_attempts}</span>}
                 </span>
             </TableCell>
-            <TableCell className="text-xs text-foreground whitespace-nowrap">
+            <TableCell className={tableStyles.TABLE_CELL_TIME}>
                 {msg.custom_ack_timeout ?? config?.ack_timeout_seconds ?? 60}s
             </TableCell>
-
-        </TableRow>
+        </HighlightableTableRow>
     )
 })
 
@@ -228,7 +195,7 @@ export const DeadLetterTable = React.memo(({
     const hasFilterProps = setSearch !== undefined && setFilterType !== undefined
 
     const getPriorityBadge = useCallback((p: number) => (
-        <span className="text-xs text-foreground">
+        <span className={tableStyles.TEXT_PRIMARY}>
             {p ?? 0}
         </span>
     ), [])
@@ -255,12 +222,12 @@ export const DeadLetterTable = React.memo(({
     const colSpan = hasFilterProps ? 10 : 9
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className={tableStyles.TABLE_CONTAINER}>
             <ScrollArea
                 viewportRef={scrollContainerRef}
-                className="relative flex-1 min-h-0"
-                viewportClassName="bg-card"
-                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
+                className={tableStyles.SCROLL_AREA}
+                viewportClassName={tableStyles.SCROLL_AREA_VIEWPORT}
+                scrollBarClassName={tableStyles.SCROLL_BAR}
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <div
@@ -268,11 +235,11 @@ export const DeadLetterTable = React.memo(({
                 >
                     <Table>
                     <TableHeader>
-                        <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
+                        <TableRow className={tableStyles.TABLE_ROW_HEADER}>
+                            <TableHead className={tableStyles.TABLE_HEADER_CHECKBOX}>
                                 <input
                                     type="checkbox"
-                                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                    className={tableStyles.INPUT_CHECKBOX}
                                     checked={allSelected}
                                     onChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                 />
@@ -281,27 +248,27 @@ export const DeadLetterTable = React.memo(({
                             <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <SortableHeader label="Failed At" field="failed_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
+                            <SortableHeader label="Failed At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
+                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack Timeout</TableHead>
                             {hasFilterProps && (
-                                <TableHead className="sticky top-0 z-20 bg-card text-right pr-2 w-[50px]">
+                                <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
                                     <Popover open={filterOpen} onOpenChange={setFilterOpen}>
                                         <PopoverTrigger asChild>
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
-                                                className={cn("h-7 w-7 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                                className={cn(tableStyles.BUTTON_FILTER, isFilterActive && tableStyles.BUTTON_FILTER_ACTIVE)}
                                                 aria-label="Message Filters"
                                             >
                                                 <Filter className="h-3.5 w-3.5" />
                                                 {isFilterActive && (
-                                                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                                    <span className={tableStyles.FILTER_INDICATOR_DOT} />
                                                 )}
                                             </Button>
                                         </PopoverTrigger>
-                                        <PopoverContent className="w-72 p-4" align="end">
+                                        <PopoverContent className={tableStyles.FILTER_POPOVER} align="end">
                                             <div className="space-y-4">
                                                 <div className="flex items-center justify-between">
                                                     <h4 className="font-medium text-sm">Message Filters</h4>
@@ -317,7 +284,7 @@ export const DeadLetterTable = React.memo(({
                                                                 setStartDate!(undefined)
                                                                 setEndDate!(undefined)
                                                             }}
-                                                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                            className={tableStyles.FILTER_CLEAR_BUTTON}
                                                         >
                                                             Clear all
                                                         </Button>
@@ -325,20 +292,20 @@ export const DeadLetterTable = React.memo(({
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-medium text-foreground/80">Search</label>
+                                                    <label className={tableStyles.FILTER_LABEL}>Search</label>
                                                     <div className="relative">
                                                         <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                                                         <input
                                                             placeholder="Search ID, payload..."
                                                             value={search}
                                                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
-                                                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                            className={tableStyles.FILTER_INPUT}
                                                         />
                                                     </div>
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-medium text-foreground/80">Message Type</label>
+                                                    <label className={tableStyles.FILTER_LABEL}>Message Type</label>
                                                     <MultipleSelector
                                                         defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
                                                         value={
@@ -362,7 +329,7 @@ export const DeadLetterTable = React.memo(({
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-medium text-foreground/80">Priority</label>
+                                                    <label className={tableStyles.FILTER_LABEL}>Priority</label>
                                                     <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
                                                         <SelectTrigger className="w-full">
                                                             <SelectValue placeholder="Any" />
@@ -377,7 +344,7 @@ export const DeadLetterTable = React.memo(({
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
+                                                    <label className={tableStyles.FILTER_LABEL}>Min Attempts</label>
                                                     <input
                                                         type="number"
                                                         min="0"
@@ -395,7 +362,7 @@ export const DeadLetterTable = React.memo(({
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <label className="text-xs font-medium text-foreground/80">Failed At</label>
+                                                    <label className={tableStyles.FILTER_LABEL}>Failed At</label>
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-muted-foreground">From</label>
@@ -425,8 +392,8 @@ export const DeadLetterTable = React.memo(({
                     <TableBody>
                         {messages.length === 0 ? (
                             !isLoading && (
-                                <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={colSpan} className="h-[400px] p-0">
+                                <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+                                    <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_EMPTY}>
                                         <EmptyState
                                             icon={isFilterActive ? Search : XCircle}
                                             title="No failed messages found"
@@ -440,8 +407,8 @@ export const DeadLetterTable = React.memo(({
                         ) : shouldVirtualize && virtual ? (
                             <>
                                 {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.topSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleItems.map((msg: Message) => (
@@ -460,8 +427,8 @@ export const DeadLetterTable = React.memo(({
                                     />
                                 ))}
                                 {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.bottomSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                     </TableRow>
                                 )}
                             </>

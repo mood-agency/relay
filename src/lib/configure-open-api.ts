@@ -6,7 +6,7 @@ export default function configureOpenApi(app: AppOpenAPI) {
   const openApiSpec = {
     openapi: "3.1.0",
     info: {
-      title: "Redis Queue API",
+      title: "Relay Queue API",
       version: "1.0.0",
     },
   };
@@ -27,7 +27,7 @@ export default function configureOpenApi(app: AppOpenAPI) {
       url: "/api/doc",
       theme: "kepler",
       metaData: {
-        title: "Redis Queue API",
+        title: "Relay Queue API",
         version: "1.0.0",
       },
       defaultHttpClient: {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { Pencil, Copy, Search, Inbox } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
+import * as tableStyles from "@/components/ui/table-styles"
 
 import { Message, QueueConfig, syntaxHighlightJson } from "./types"
 
@@ -95,10 +97,87 @@ export function useTableVirtualization(
 }
 
 export const getPriorityBadge = (p: number) => (
-    <span className="text-xs text-foreground">
+    <span className={tableStyles.TEXT_PRIMARY}>
         {p ?? 0}
     </span>
 )
+
+// ============================================================================
+// Cursor-Following Tooltip Hook
+// ============================================================================
+
+export function useCursorTooltip(delay: number = 200) {
+    const [isHovered, setIsHovered] = useState(false)
+    const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+    const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const handleMouseEnter = useCallback(() => {
+        hoverTimeoutRef.current = setTimeout(() => {
+            setIsHovered(true)
+        }, delay)
+    }, [delay])
+
+    const handleMouseLeave = useCallback(() => {
+        if (hoverTimeoutRef.current) {
+            clearTimeout(hoverTimeoutRef.current)
+            hoverTimeoutRef.current = null
+        }
+        setIsHovered(false)
+    }, [])
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        setMousePos({ x: e.clientX, y: e.clientY })
+    }, [])
+
+    useEffect(() => {
+        return () => {
+            if (hoverTimeoutRef.current) {
+                clearTimeout(hoverTimeoutRef.current)
+            }
+        }
+    }, [])
+
+    return {
+        isHovered,
+        mousePos,
+        handlers: {
+            onMouseEnter: handleMouseEnter,
+            onMouseLeave: handleMouseLeave,
+            onMouseMove: handleMouseMove,
+        }
+    }
+}
+
+// ============================================================================
+// Cursor-Following Tooltip Component
+// ============================================================================
+
+export const CursorTooltip = ({
+    isVisible,
+    mousePos,
+    children
+}: {
+    isVisible: boolean
+    mousePos: { x: number; y: number }
+    children: React.ReactNode
+}) => {
+    if (!isVisible) return null
+
+    return createPortal(
+        <div
+            className="fixed z-[100] overflow-hidden rounded-md border bg-popover shadow-md pointer-events-none"
+            style={{
+                left: mousePos.x + 12,
+                top: mousePos.y + 12,
+                maxWidth: 400,
+                maxHeight: 300,
+            }}
+        >
+            {children}
+        </div>,
+        document.body
+    )
+}
 
 // ============================================================================
 // Shared Components
@@ -106,35 +185,38 @@ export const getPriorityBadge = (p: number) => (
 
 export const PayloadCell = React.memo(({ payload }: { payload: any }) => {
     const payloadText = JSON.stringify(payload)
+    const { isHovered, mousePos, handlers } = useCursorTooltip()
+
     return (
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <TableCell className="max-w-[150px] cursor-default group/payload">
-                    <div className="flex items-center gap-1">
-                        <div className="truncate text-xs font-mono text-muted-foreground group-hover/payload:text-foreground transition-colors">
-                            {payloadText}
-                        </div>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-                                (e.target as HTMLElement).closest('button')?.blur();
-                            }}
-                            className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
-                            tabIndex={-1}
-                        >
-                            <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                        </button>
+        <>
+            <TableCell
+                className={tableStyles.TABLE_CELL_PAYLOAD}
+                {...handlers}
+            >
+                <div className={tableStyles.FLEX_INLINE}>
+                    <div className={cn("truncate", tableStyles.TEXT_PAYLOAD)}>
+                        {payloadText}
                     </div>
-                </TableCell>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+                            (e.target as HTMLElement).closest('button')?.blur();
+                        }}
+                        className={tableStyles.BUTTON_COPY_PAYLOAD}
+                        tabIndex={-1}
+                    >
+                        <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </button>
+                </div>
+            </TableCell>
+            <CursorTooltip isVisible={isHovered} mousePos={mousePos}>
+                <pre className={tableStyles.TOOLTIP_CODE}>
                     <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(payload, null, 2)) }} />
                 </pre>
-            </TooltipContent>
-        </Tooltip>
+            </CursorTooltip>
+        </>
     )
 })
 
@@ -145,8 +227,8 @@ export const ActionsCell = React.memo(({
     msg: Message,
     onEdit?: (message: Message) => void
 }) => (
-    <TableCell className="text-right pr-6">
-        <div className="flex justify-end gap-1">
+    <TableCell className={tableStyles.TABLE_CELL_ACTIONS}>
+        <div className={tableStyles.FLEX_ACTIONS}>
             {onEdit && (
                 <Button
                     type="button"
@@ -156,7 +238,7 @@ export const ActionsCell = React.memo(({
                         e.stopPropagation()
                         onEdit(msg)
                     }}
-                    className="text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all rounded-full h-8 w-8"
+                    className={tableStyles.BUTTON_ACTION}
                     title="Edit Message"
                 >
                     <Pencil className="h-4 w-4" />
@@ -178,7 +260,7 @@ export const SelectCell = React.memo(({
     <TableCell>
         <input
             type="checkbox"
-            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+            className={tableStyles.INPUT_CHECKBOX}
             checked={isSelected}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                 e.stopPropagation()
@@ -197,21 +279,21 @@ export const IdCell = React.memo(({
     msg?: Message,
     onEdit?: (message: Message) => void
 }) => (
-    <TableCell className="group/id">
-        <div className="flex items-center gap-1">
+    <TableCell className={tableStyles.TABLE_CELL_ID}>
+        <div className={tableStyles.FLEX_INLINE}>
             {onEdit && msg ? (
                 <button
                     onClick={(e) => {
                         e.stopPropagation()
                         onEdit(msg)
                     }}
-                    className="text-xs text-foreground font-mono hover:underline hover:text-primary focus:outline-none text-left truncate"
+                    className={tableStyles.TEXT_ID_LINK}
                     title={`Edit ${id}`}
                 >
                     {id}
                 </button>
             ) : (
-                <span className="text-xs text-foreground font-mono truncate" title={id}>
+                <span className={cn(tableStyles.TEXT_MONO, "text-foreground truncate")} title={id}>
                     {id}
                 </span>
             )}
@@ -222,7 +304,7 @@ export const IdCell = React.memo(({
                     navigator.clipboard.writeText(id)
                     toast.success("ID copied to clipboard")
                 }}
-                className="opacity-0 group-hover/id:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                className={tableStyles.BUTTON_COPY_ID}
                 tabIndex={-1}
                 title="Copy ID"
             >
@@ -234,7 +316,7 @@ export const IdCell = React.memo(({
 
 export const TypeCell = React.memo(({ type }: { type: string }) => (
     <TableCell className="text-left">
-        <Badge variant="outline" className="font-medium whitespace-nowrap">{type}</Badge>
+        <Badge variant="outline" className={tableStyles.BADGE_TYPE}>{type}</Badge>
     </TableCell>
 ))
 
@@ -252,7 +334,7 @@ export const AttemptsCell = React.memo(({
     defaultAttempts?: number
 }) => (
     <TableCell>
-        <span className="text-xs text-foreground pl-4 block">
+        <span className={cn(tableStyles.TEXT_PRIMARY, "pl-4 block")}>
             {attemptCount || defaultAttempts}
             {maxAttempts && (
                 <span className="text-muted-foreground"> / {maxAttempts}</span>
@@ -268,7 +350,7 @@ export const AckTimeoutCell = React.memo(({
     customTimeout?: number,
     configTimeout?: number
 }) => (
-    <TableCell className="text-xs text-foreground whitespace-nowrap">
+    <TableCell className={tableStyles.TABLE_CELL_TIME}>
         {customTimeout ?? configTimeout ?? 60}s
     </TableCell>
 ))
@@ -280,7 +362,7 @@ export const TimeCell = React.memo(({
     timestamp?: number,
     formatTime: (ts?: number) => string
 }) => (
-    <TableCell className="text-xs text-foreground whitespace-nowrap">
+    <TableCell className={tableStyles.TABLE_CELL_TIME}>
         {formatTime(timestamp)}
     </TableCell>
 ))
@@ -314,8 +396,8 @@ export const TableWrapper = ({
 }: TableWrapperProps) => (
     <ScrollArea
         viewportRef={scrollContainerRef}
-        className="relative flex-1 min-h-0"
-        scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
+        className={tableStyles.SCROLL_AREA}
+        scrollBarClassName={tableStyles.SCROLL_BAR}
         onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
     >
         <Table>
@@ -338,8 +420,8 @@ export const EmptyTableBody = ({
     activeFiltersDescription
 }: EmptyTableBodyProps) => (
     !isLoading ? (
-        <TableRow className="hover:bg-transparent">
-            <TableCell colSpan={colSpan} className="h-[400px] p-0">
+        <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+            <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_EMPTY}>
                 <EmptyState
                     icon={isFilterActive ? Search : Inbox}
                     title="No messages found"
@@ -354,10 +436,44 @@ export const EmptyTableBody = ({
 
 // Filler row to fill remaining space at the bottom of the table
 export const TableFillerRow = ({ colSpan }: { colSpan: number }) => (
-    <TableRow className="hover:bg-transparent border-0">
-        <TableCell colSpan={colSpan} className="p-0 h-full" style={{ height: '100%' }} />
+    <TableRow className={tableStyles.TABLE_ROW_FILLER}>
+        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_FILLER} style={{ height: '100%' }} />
     </TableRow>
 )
+
+// ============================================================================
+// Highlightable Table Row - Wrapper that applies highlight animation
+// ============================================================================
+
+export interface HighlightableTableRowProps extends React.HTMLAttributes<HTMLTableRowElement> {
+    isHighlighted?: boolean
+    isSelected?: boolean
+    isCritical?: boolean
+    children: React.ReactNode
+}
+
+export const HighlightableTableRow = React.memo(React.forwardRef<HTMLTableRowElement, HighlightableTableRowProps>(({
+    isHighlighted = false,
+    isSelected = false,
+    isCritical = false,
+    className,
+    children,
+    ...props
+}, ref) => (
+    <TableRow
+        ref={ref}
+        className={cn(
+            tableStyles.TABLE_ROW_BASE,
+            isHighlighted && tableStyles.TABLE_ROW_HIGHLIGHTED,
+            isSelected && tableStyles.TABLE_ROW_SELECTED,
+            isCritical && tableStyles.TABLE_ROW_CRITICAL,
+            className
+        )}
+        {...props}
+    >
+        {children}
+    </TableRow>
+)))
 
 // Re-export commonly used components
 export {
@@ -382,3 +498,6 @@ export {
 }
 
 export type { Message, QueueConfig }
+
+// Re-export table styles for use in other components
+export { tableStyles }

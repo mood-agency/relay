@@ -24,7 +24,7 @@ class DequeueTool {
     }
 
     async dequeueMessages(count: number = 3, consumerId?: string, ack: boolean = false, timeout: number = 30, ackTimeout: number = 30) {
-        const consumerName = consumerId || `worker-${Math.random().toString(36).substring(7)}`;
+        const consumerName = consumerId || `consumer-script-test`;
         console.log(`⚡ Dequeuing ${count} messages as consumer "${consumerName}" (timeout: ${timeout}s, ackTimeout: ${ackTimeout}s)...`);
 
         let dequeuedCount = 0;

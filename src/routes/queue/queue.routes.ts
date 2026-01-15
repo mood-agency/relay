@@ -25,6 +25,8 @@ export const QueueMessageSchema = z.object({
   priority: z.number().optional(),
   ackTimeout: z.number().optional(),
   maxAttempts: z.number().int().positive().optional(),
+  queue: z.string().optional().describe("Target queue name (defaults to 'default')"),
+  consumerId: z.string().optional().describe("Consumer/producer identifier for activity logging"),
 });
 
 export type QueueMessage = z.infer<typeof QueueMessageSchema>;
@@ -50,14 +52,10 @@ export const DequeuedMessageSchema = z.object({
 
 export type DequeuedMessage = z.infer<typeof DequeuedMessageSchema>;
 
-export const AcknowledgedMessageSchema =
-  DequeuedMessageSchema.partial().required({
-    id: true,
-    _stream_id: true,
-    _stream_name: true,
-  }).extend({
-    lock_token: z.string().optional().describe("Fencing token - if provided, ACK will be rejected if it doesn't match (prevents stale ACKs after re-queue)"),
-  });
+export const AcknowledgedMessageSchema = z.object({
+  id: z.string().describe("Message ID"),
+  lock_token: z.string().optional().describe("Fencing token - if provided, ACK will be rejected if it doesn't match (prevents stale ACKs after re-queue)"),
+});
 
 export type AcknowledgedMessage = z.infer<typeof AcknowledgedMessageSchema>;
 
@@ -112,7 +110,8 @@ export const getMessage = createRoute({
       timeout: z.string().pipe(z.coerce.number()).optional(),
       ackTimeout: z.string().pipe(z.coerce.number()).optional(),
       type: z.string().optional(),
-      consumerId: z.string().optional()
+      consumerId: z.string().optional(),
+      queue: z.string().optional().describe("Target queue name (defaults to 'default')"),
     }),
   },
   responses: {
@@ -307,6 +306,7 @@ export const getQueueStatus = createRoute({
   request: {
     query: z.object({
       include_messages: z.enum(["true", "false"]).optional(),
+      queueName: z.string().optional().describe("Filter by queue name"),
     }),
   },
   responses: {
@@ -369,6 +369,7 @@ export const getMessages = createRoute({
       startDate: z.string().optional(),
       endDate: z.string().optional(),
       search: z.string().optional(),
+      queueName: z.string().optional().describe("Filter by queue name (defaults to all queues)"),
     }),
   },
   responses: {
@@ -843,3 +844,197 @@ export type GetActivityLogsRoute = typeof getActivityLogs;
 export type GetMessageHistoryRoute = typeof getMessageHistory;
 export type GetAnomaliesRoute = typeof getAnomalies;
 export type GetConsumerStatsRoute = typeof getConsumerStats;
+
+// ==================== QUEUE MANAGEMENT ROUTES ====================
+
+const queueManagementTags = ["Queue Management"];
+
+export const QueueSchema = z.object({
+  name: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/, "Queue name can only contain alphanumeric characters, underscores, and hyphens"),
+  queue_type: z.enum(["standard", "unlogged", "partitioned"]).default("standard"),
+  ack_timeout_seconds: z.number().int().positive().default(30),
+  max_attempts: z.number().int().positive().default(3),
+  partition_interval: z.string().optional().describe("For partitioned queues: 'daily', 'hourly', 'weekly'"),
+  retention_interval: z.string().optional().describe("For partitioned queues: e.g., '7 days', '30 days'"),
+  description: z.string().max(500).optional(),
+});
+
+export const QueueInfoSchema = z.object({
+  name: z.string(),
+  queue_type: z.enum(["standard", "unlogged", "partitioned"]),
+  ack_timeout_seconds: z.number(),
+  max_attempts: z.number(),
+  partition_interval: z.string().nullable(),
+  retention_interval: z.string().nullable(),
+  description: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  message_count: z.number(),
+  processing_count: z.number(),
+  dead_count: z.number(),
+});
+
+export type QueueInput = z.infer<typeof QueueSchema>;
+export type QueueInfo = z.infer<typeof QueueInfoSchema>;
+
+export const createQueue = createRoute({
+  path: "/queues",
+  method: "post",
+  tags: queueManagementTags,
+  description: `Create a new queue with the specified type.
+
+**Queue Types:**
+- **standard**: High durability. Messages stored in logged PostgreSQL tables. Best for general use where message loss is unacceptable.
+- **unlogged**: Low durability, high performance. 2-3x faster writes. Data lost on crash. Best for transient/ephemeral data.
+- **partitioned**: High durability and scalability. Uses table partitioning for very high throughput. Requires partition_interval and retention_interval.`,
+  request: {
+    body: jsonContentRequired(QueueSchema, "Queue Configuration"),
+  },
+  responses: {
+    201: jsonContent(
+      z.object({
+        message: z.string(),
+        queue: QueueInfoSchema,
+      }),
+      "Queue Created Successfully"
+    ),
+    400: jsonContent(
+      z.object({ message: z.string() }),
+      "Invalid queue configuration"
+    ),
+    409: jsonContent(
+      z.object({ message: z.string() }),
+      "Queue already exists"
+    ),
+    422: jsonContent(createErrorSchema(QueueSchema), "Validation Error"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const listQueues = createRoute({
+  path: "/queues",
+  method: "get",
+  tags: queueManagementTags,
+  description: "List all created queues with their configurations and statistics",
+  responses: {
+    200: jsonContent(
+      z.object({
+        queues: z.array(QueueInfoSchema),
+        total: z.number(),
+      }),
+      "List of Queues"
+    ),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const getQueue = createRoute({
+  path: "/queues/:queueName",
+  method: "get",
+  tags: queueManagementTags,
+  description: "Get details of a specific queue",
+  request: {
+    params: z.object({
+      queueName: z.string(),
+    }),
+  },
+  responses: {
+    200: jsonContent(QueueInfoSchema, "Queue Details"),
+    404: jsonContent(z.object({ message: z.string() }), "Queue not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const updateQueue = createRoute({
+  path: "/queues/:queueName",
+  method: "patch",
+  tags: queueManagementTags,
+  description: "Update queue configuration (ack_timeout, max_attempts, description only)",
+  request: {
+    params: z.object({
+      queueName: z.string(),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        ack_timeout_seconds: z.number().int().positive().optional(),
+        max_attempts: z.number().int().positive().optional(),
+        description: z.string().max(500).optional(),
+      }),
+      "Queue Update"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        queue: QueueInfoSchema,
+      }),
+      "Queue Updated"
+    ),
+    404: jsonContent(z.object({ message: z.string() }), "Queue not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const deleteQueue = createRoute({
+  path: "/queues/:queueName",
+  method: "delete",
+  tags: queueManagementTags,
+  description: "Delete a queue and all its messages. This action is irreversible.",
+  request: {
+    params: z.object({
+      queueName: z.string(),
+    }),
+    query: z.object({
+      force: z.enum(["true", "false"]).optional().describe("Force delete even if queue has messages"),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        deleted_messages: z.number(),
+      }),
+      "Queue Deleted"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Cannot delete queue with messages (use force=true)"),
+    404: jsonContent(z.object({ message: z.string() }), "Queue not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export const purgeQueue = createRoute({
+  path: "/queues/:queueName/purge",
+  method: "post",
+  tags: queueManagementTags,
+  description: "Delete all messages from a queue without deleting the queue itself",
+  request: {
+    params: z.object({
+      queueName: z.string(),
+    }),
+    body: jsonContent(
+      z.object({
+        status: z.enum(["queued", "processing", "dead", "acknowledged", "archived", "all"]).optional().default("all"),
+      }),
+      "Purge Options"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        deleted_count: z.number(),
+      }),
+      "Queue Purged"
+    ),
+    404: jsonContent(z.object({ message: z.string() }), "Queue not found"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
+export type CreateQueueRoute = typeof createQueue;
+export type ListQueuesRoute = typeof listQueues;
+export type GetQueueRoute = typeof getQueue;
+export type UpdateQueueRoute = typeof updateQueue;
+export type DeleteQueueRoute = typeof deleteQueue;
+export type PurgeQueueRoute = typeof purgeQueue;

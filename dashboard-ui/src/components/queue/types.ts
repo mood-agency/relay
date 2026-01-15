@@ -61,7 +61,7 @@ export interface QueueConfig {
     max_attempts: number
 }
 
-export type DashboardView = 'queues' | 'activity'
+export type DashboardView = 'queues' | 'activity' | 'queue-management'
 
 export const QUEUE_TABS = ["main", "processing", "dead", "acknowledged", "archived"] as const
 export type QueueTab = (typeof QUEUE_TABS)[number]
@@ -92,10 +92,11 @@ export type DashboardState = {
 
 export const getDefaultSortBy = (queue: QueueTab): string => {
     switch (queue) {
-        case "processing": return "processing_started_at"
-        case "dead": return "failed_at"
-        case "archived": return "archived_at"
+        case "processing": return "dequeued_at"
         case "acknowledged": return "acknowledged_at"
+        // dead and archived don't have dedicated timestamp columns, use created_at
+        case "dead": return "created_at"
+        case "archived": return "created_at"
         default: return "created_at"
     }
 }

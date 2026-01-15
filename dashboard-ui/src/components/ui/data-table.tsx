@@ -27,6 +27,7 @@ import {
     Inbox
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import * as tableStyles from "@/components/ui/table-styles"
 
 // ============================================================================
 // Types
@@ -116,18 +117,15 @@ export function SortableHeader({
 }) {
     return (
         <TableHead
-            className={cn(
-                "sticky top-0 z-20 bg-card font-semibold text-foreground cursor-pointer hover:bg-muted/50 transition-colors text-xs",
-                className
-            )}
+            className={cn(tableStyles.TABLE_HEADER_SORTABLE, className)}
             onClick={() => onSort(field)}
         >
-            <div className="flex items-center gap-1">
+            <div className={tableStyles.FLEX_INLINE}>
                 {label}
                 {currentSort === field ? (
-                    currentOrder === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                    currentOrder === 'asc' ? <ArrowUp className={tableStyles.SORT_ICON} /> : <ArrowDown className={tableStyles.SORT_ICON} />
                 ) : (
-                    <ArrowUpDown className="h-3 w-3 text-muted-foreground opacity-50" />
+                    <ArrowUpDown className={tableStyles.SORT_ICON_INACTIVE} />
                 )}
             </div>
         </TableHead>
@@ -143,10 +141,7 @@ export function StaticHeader({
 }) {
     return (
         <TableHead
-            className={cn(
-                "sticky top-0 z-20 bg-card font-semibold text-foreground text-xs",
-                className
-            )}
+            className={cn(tableStyles.TABLE_HEADER_BASE, className)}
         >
             {label}
         </TableHead>
@@ -171,9 +166,9 @@ export function PaginationFooter({
     pageSizeOptions?: number[]
 }) {
     return (
-        <div className="shrink-0 flex items-center justify-between px-4 py-4 border-t bg-muted/5">
+        <div className={tableStyles.PAGINATION_FOOTER}>
             <div className="flex items-center space-x-2">
-                <p className="text-sm font-medium text-muted-foreground">Rows per page</p>
+                <p className={tableStyles.PAGINATION_LABEL}>Rows per page</p>
                 <Select value={pageSize} onValueChange={setPageSize}>
                     <SelectTrigger className="h-8 w-[85px]">
                         <SelectValue placeholder={pageSize} />
@@ -189,13 +184,13 @@ export function PaginationFooter({
             </div>
 
             <div className="flex items-center space-x-6 lg:space-x-8">
-                <div className="flex w-[200px] items-center justify-center text-sm font-medium">
+                <div className={cn("flex w-[200px] items-center justify-center", tableStyles.PAGINATION_INFO)}>
                     Page {currentPage.toLocaleString()} of {totalPages.toLocaleString()} ({totalItems.toLocaleString()} items)
                 </div>
                 <div className="flex items-center space-x-2">
                     <Button
                         variant="outline"
-                        className="h-8 w-8 p-0 lg:flex"
+                        className={cn(tableStyles.PAGINATION_BUTTON, "lg:flex")}
                         onClick={() => setCurrentPage(1)}
                         disabled={currentPage === 1}
                     >
@@ -204,7 +199,7 @@ export function PaginationFooter({
                     </Button>
                     <Button
                         variant="outline"
-                        className="h-8 w-8 p-0"
+                        className={tableStyles.PAGINATION_BUTTON}
                         onClick={() => setCurrentPage(currentPage - 1)}
                         disabled={currentPage === 1}
                     >
@@ -213,7 +208,7 @@ export function PaginationFooter({
                     </Button>
                     <Button
                         variant="outline"
-                        className="h-8 w-8 p-0"
+                        className={tableStyles.PAGINATION_BUTTON}
                         onClick={() => setCurrentPage(currentPage + 1)}
                         disabled={currentPage === totalPages}
                     >
@@ -222,7 +217,7 @@ export function PaginationFooter({
                     </Button>
                     <Button
                         variant="outline"
-                        className="h-8 w-8 p-0 lg:flex"
+                        className={cn(tableStyles.PAGINATION_BUTTON, "lg:flex")}
                         onClick={() => setCurrentPage(totalPages)}
                         disabled={currentPage === totalPages}
                     >
@@ -251,20 +246,20 @@ export function EmptyState({
     activeFiltersDescription
 }: EmptyStateProps) {
     return (
-        <div className="flex flex-col items-center justify-center py-20 px-4 text-center animate-in fade-in zoom-in duration-300">
-            <div className="bg-muted/30 p-6 rounded-full mb-6 ring-8 ring-muted/10">
-                <Icon className="h-10 w-10" />
+        <div className={tableStyles.EMPTY_STATE_CONTAINER}>
+            <div className={tableStyles.EMPTY_STATE_ICON_CONTAINER}>
+                <Icon className={tableStyles.EMPTY_STATE_ICON} />
             </div>
-            <h3 className="text-xl font-bold text-foreground mb-2">{title}</h3>
-            <p className="text-sm text-muted-foreground max-w-[400px] mb-8 leading-relaxed">
+            <h3 className={tableStyles.EMPTY_STATE_TITLE}>{title}</h3>
+            <p className={tableStyles.EMPTY_STATE_DESCRIPTION}>
                 {isFilterActive
                     ? "We couldn't find any items matching your current filters. Try adjusting your search or filters to see more results."
                     : description || "There are no items to display at the moment."}
             </p>
             {isFilterActive && activeFiltersDescription && (
                 <div className="flex flex-col items-center gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Active Filters</span>
-                    <span className="font-mono text-[11px] px-3 py-1 rounded-md border bg-muted/20 border-border/50 text-muted-foreground">
+                    <span className={tableStyles.EMPTY_STATE_FILTERS_LABEL}>Active Filters</span>
+                    <span className={tableStyles.EMPTY_STATE_FILTERS_VALUE}>
                         {activeFiltersDescription}
                     </span>
                 </div>
@@ -446,21 +441,21 @@ export function DataTable<T extends Record<string, any>>({
     }, [sortBy, sortOrder, onSort])
 
     return (
-        <div className={cn("flex flex-col flex-1 min-h-0", className)}>
+        <div className={cn(tableStyles.TABLE_CONTAINER, className)}>
             <ScrollArea
                 viewportRef={scrollContainerRef}
-                className={cn("relative flex-1 min-h-0", scrollAreaClassName)}
-                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
+                className={cn(tableStyles.SCROLL_AREA, scrollAreaClassName)}
+                scrollBarClassName={tableStyles.SCROLL_BAR}
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <Table>
                     <TableHeader>
-                        <TableRow className="hover:bg-transparent border-b border-border/50">
+                        <TableRow className={tableStyles.TABLE_ROW_HEADER}>
                             {selectable && (
-                                <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
+                                <TableHead className={tableStyles.TABLE_HEADER_CHECKBOX}>
                                     <input
                                         type="checkbox"
-                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                        className={tableStyles.INPUT_CHECKBOX}
                                         checked={allSelected}
                                         onChange={() => onToggleSelectAll?.(data.map(item => String(item[keyField])))}
                                     />
@@ -472,8 +467,8 @@ export function DataTable<T extends Record<string, any>>({
                     <TableBody>
                         {data.length === 0 ? (
                             !isLoading && (
-                                <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={colSpan} className="h-[400px] p-0">
+                                <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+                                    <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_EMPTY}>
                                         <EmptyState
                                             icon={emptyState?.icon}
                                             title={emptyState?.title}
@@ -486,14 +481,14 @@ export function DataTable<T extends Record<string, any>>({
                         ) : shouldVirtualize && virtual ? (
                             <>
                                 {virtual.topSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.topSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                     </TableRow>
                                 )}
                                 {virtual.visibleItems.map((item, index) => renderRow(item, virtual.startIndex + index))}
                                 {virtual.bottomSpacerHeight > 0 && (
-                                    <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                        <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                    <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.bottomSpacerHeight }}>
+                                        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                     </TableRow>
                                 )}
                             </>
@@ -522,3 +517,6 @@ export function DataTable<T extends Record<string, any>>({
 // ============================================================================
 
 export { TableRow, TableCell } from "@/components/ui/table"
+
+// Re-export table styles for convenient access
+export { tableStyles }

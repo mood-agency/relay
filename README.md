@@ -1,8 +1,8 @@
 # Relay
 
-> **A lightweight, language-agnostic message broker built on native Redis Streams.**
+> **A lightweight, language-agnostic message broker built on PostgreSQL.**
 
-Most queue libraries lock you into a specific language ecosystem. Relay provides a standard protocol over Redis Streams, allowing you to produce messages in one language (e.g., Node.js API) and consume them in another (e.g., Python/Go Worker) with zero friction. It handles the heavy lifting of Consumer Groups, Acknowledgments, and Dead Letter Queues (DLQ) without the bloat.
+Most queue libraries lock you into a specific language ecosystem. Relay provides a standard protocol over PostgreSQL, allowing you to produce messages in one language (e.g., Node.js API) and consume them in another (e.g., Python/Go Worker) via HTTP. It handles the heavy lifting of message lifecycle management, acknowledgments, and Dead Letter Queues (DLQ) without the bloat.
 
 ---
 
@@ -10,65 +10,43 @@ Most queue libraries lock you into a specific language ecosystem. Relay provides
 
 **The Problem:** Existing queue libraries are excellent within their own language (BullMQ for Node, Celery for Python, Sidekiq for Ruby), but they make it very hard to mix languages. If you want a Node.js API to send jobs to a Python AI worker, those libraries are painful.
 
-**This Solution:** Relay provides a **REST API** built on Native Redis Streams. Any language that can make HTTP requests can produce or consume messages—no language-specific SDKs required. Your Node.js API sends messages via HTTP, your Python worker consumes via HTTP, your Go service monitors via HTTP. Simple, standard, and truly polyglot.
+**This Solution:** Relay provides a **REST API** backed by PostgreSQL. Any language that can make HTTP requests can produce or consume messages—no language-specific SDKs required. Your Node.js API sends messages via HTTP, your Python worker consumes via HTTP, your Go service monitors via HTTP. Simple, standard, and truly polyglot.
 
 ---
 
 ## 📊 How It Compares
 
-| Feature | Relay | BullMQ / Sidekiq / Celery | Raw Redis Lists (RPOP) |
-|---------|-------------|---------------------------|------------------------|
+| Feature | Relay | BullMQ / Sidekiq / Celery | Raw Database Polling |
+|---------|-------|---------------------------|----------------------|
 | **Primary Goal** | Polyglot Compatibility | Language-Specific Features | Basic FIFO Queue |
-| **Architecture** | Redis Streams (Consumer Groups) | Proprietary Lua Scripts / Lists | Simple Lists |
+| **Architecture** | PostgreSQL (SKIP LOCKED) | Redis + Lua Scripts | Simple Table Scans |
 | **Worker Language** | **Any** (Python, Go, Node, etc.) | Locked (Node only, or Ruby only) | Any |
-| **Reliability** | High (Atomic "Pending" state) | High | Low (Lost if worker crashes) |
-| **Complexity** | Low (Thin Wrapper) | High (Heavy dependencies) | High (Manual safety logic) |
+| **Reliability** | High (ACID transactions) | High | Medium |
+| **Complexity** | Low (Simple SQL) | High (Heavy dependencies) | High (Manual safety logic) |
 | **DLQ Logic** | Built-in | Built-in | Manual Implementation |
-| **Infrastructure** | Redis (you probably have it) | Redis + Framework | Redis only |
-
----
-
-## 🔍 Detailed Comparisons
-
-### vs. BullMQ / Celery / Sidekiq
-
-**The Problem with them:** These are "heavy" frameworks. If you use BullMQ, your workers must be Node.js. If you want a Python worker, you have to find a Python port of BullMQ (which might be outdated) or rewrite your worker.
-
-**This Solution:** Relay uses Native Redis Streams under the hood. It doesn't use custom Lua scripts that hide logic. This means a producer in Go and a worker in Python see the exact same standard Redis data, accessed through a simple REST API.
-
-### vs. RabbitMQ / Kafka
-
-**The Problem with them:** They require setting up entirely new infrastructure. They are complex to maintain and often overkill for simple use cases.
-
-**This Solution:** You probably already have Redis. Relay gives you Kafka-like reliability (Consumer Groups, Replay, Acknowledgements) using your existing Redis instance.
-
-### vs. Raw Redis (LPUSH/RPOP)
-
-**The Problem with them:** The naive approach (RPOPLPUSH) is dangerous. If a worker takes a job and crashes before finishing, that message is gone forever.
-
-**This Solution:** We use Consumer Groups. When a worker takes a job, it enters a "Pending" state in Redis. If the worker crashes, the job is not lost—it sits there waiting to be reclaimed by another worker.
+| **Infrastructure** | PostgreSQL (you probably have it) | Redis + Framework | Database only |
 
 ---
 
 ## ✨ Key Features
 
-✅ **Atomic Locking**: Uses `XREADGROUP` to ensure a message is processed by only one worker at a time.
+✅ **Atomic Locking**: Uses `SELECT FOR UPDATE SKIP LOCKED` to ensure a message is processed by only one worker at a time.
 
-✅ **Crash Proof**: Messages are not removed until explicitly Acknowledged (`XACK`). If a worker crashes, messages automatically return to the queue.
+✅ **ACID Compliant**: Leverages PostgreSQL transactions for data safety.
 
-✅ **Dead Letter Queue (DLQ)**: Automatically moves "poison pill" messages to a separate stream after N failures.
-
-✅ **Zero-Config Persistence**: Leverages Redis AOF/RDB for data safety.
+✅ **Dead Letter Queue (DLQ)**: Automatically moves "poison pill" messages to dead status after N failures.
 
 ✅ **Priority Queues**: Support for 10 priority levels (0-9). Higher priority messages are processed first.
 
 ✅ **Built-in Retry Logic**: Failed messages are automatically retried with configurable attempts.
 
-✅ **Split Brain Prevention**: Heartbeat/Touch endpoint prevents duplicate processing when workers are slow but not dead. Lock validation ensures stale ACKs are rejected.
+✅ **Split Brain Prevention**: Lock tokens (fencing tokens) prevent duplicate processing when workers are slow.
 
-✅ **Mission Control Dashboard**: Read/write GUI for inspecting and fixing live jobs.
+✅ **Real-time Updates**: LISTEN/NOTIFY for instant dashboard updates via Server-Sent Events.
 
-✅ **Standard Protocol**: Any Redis GUI (like RedisInsight) can visualize your queues instantly because they are just standard Streams.
+✅ **Mission Control Dashboard**: Read/write GUI for inspecting and managing live jobs.
+
+✅ **Activity Logging**: Track message lifecycle with anomaly detection.
 
 ---
 
@@ -78,16 +56,16 @@ Most queue libraries lock you into a specific language ecosystem. Relay provides
 
 ```javascript
 // Node.js API Server
-const response = await fetch('http://localhost:3000/api/queue/message', {
+const response = await fetch('http://localhost:3001/api/queue/message', {
   method: 'POST',
-  headers: { 
+  headers: {
     'Content-Type': 'application/json',
-    'X-API-KEY': process.env.SECRET_KEY  // Required if SECRET_KEY is set on server
+    'X-API-KEY': process.env.SECRET_KEY
   },
   body: JSON.stringify({
     type: 'video_transcode',
     payload: { file: 'movie.mp4', quality: '1080p' },
-    priority: 1
+    priority: 5
   })
 });
 ```
@@ -99,28 +77,26 @@ const response = await fetch('http://localhost:3000/api/queue/message', {
 import requests
 import os
 
-API_URL = 'http://localhost:3000/api/queue'
+API_URL = 'http://localhost:3001/api/queue'
 HEADERS = {'X-API-KEY': os.environ.get('SECRET_KEY', '')}
 
 while True:
     # Get a message (blocks for up to 30 seconds)
     response = requests.get(f'{API_URL}/message', params={'timeout': 30}, headers=HEADERS)
-    
+
     if response.status_code == 200:
         message = response.json()
         print(f"Processing: {message['payload']['file']}")
-        
+
         # Process video...
         process_video(message['payload'])
-        
-        # Acknowledge
+
+        # Acknowledge with lock token
         requests.post(f'{API_URL}/ack', headers=HEADERS, json={
             'id': message['id'],
-            '_stream_id': message['_stream_id'],
-            '_stream_name': message['_stream_name']
+            'lock_token': message['lock_token']
         })
     elif response.status_code == 404:
-        # No messages available
         continue
 ```
 
@@ -136,45 +112,38 @@ import (
     "io"
     "net/http"
     "os"
-    "time"
 )
 
 func main() {
-    apiURL := "http://localhost:3000/api/queue"
+    apiURL := "http://localhost:3001/api/queue"
     apiKey := os.Getenv("SECRET_KEY")
-    
+
     for {
-        // Get a message
         req, _ := http.NewRequest("GET", apiURL+"/message?timeout=30", nil)
         req.Header.Set("X-API-KEY", apiKey)
         resp, _ := http.DefaultClient.Do(req)
-        
+
         if resp.StatusCode == 200 {
             body, _ := io.ReadAll(resp.Body)
             var message map[string]interface{}
             json.Unmarshal(body, &message)
-            
+
             // Process...
             processVideo(message["payload"])
-            
+
             // Acknowledge
             ackData, _ := json.Marshal(map[string]interface{}{
-                "id":          message["id"],
-                "_stream_id":   message["_stream_id"],
-                "_stream_name": message["_stream_name"],
+                "id":         message["id"],
+                "lock_token": message["lock_token"],
             })
             ackReq, _ := http.NewRequest("POST", apiURL+"/ack", bytes.NewBuffer(ackData))
             ackReq.Header.Set("Content-Type", "application/json")
             ackReq.Header.Set("X-API-KEY", apiKey)
             http.DefaultClient.Do(ackReq)
         }
-        
-        time.Sleep(1 * time.Second)
     }
 }
 ```
-
-**The Magic:** All three languages use the same REST API. No language-specific SDKs, no direct Redis connections—just standard HTTP requests that any language can make.
 
 ---
 
@@ -191,29 +160,36 @@ cd relay
 
 ```bash
 pnpm install
-# or
-bun install
 ```
 
-3. Start a Redis instance (Docker recommended):
+3. Start a PostgreSQL instance (Docker recommended):
 
 ```bash
-docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest
+docker run -d --name postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=relay \
+  -p 5432:5432 \
+  postgres:16
 ```
-
-This starts Redis on port 6379 and RedisInsight on port 8001 (optional, for viewing data).
 
 4. Configure environment variables:
 
 Create a `.env` file:
 
 ```ini
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-QUEUE_NAME=queue
+# PostgreSQL Connection
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=relay
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+
+# Queue Configuration
 ACK_TIMEOUT_SECONDS=30
 MAX_ATTEMPTS=3
+
+# Optional: API Security
+SECRET_KEY=your-secret-key-here
 ```
 
 5. Run the application:
@@ -229,6 +205,8 @@ pnpm start
 
 The API will be available at `http://localhost:3001` and the Dashboard at `http://localhost:3001/dashboard`.
 
+**Note:** The PostgreSQL schema is automatically created on first startup.
+
 ---
 
 ## 🎮 Quick Start
@@ -238,7 +216,7 @@ The API will be available at `http://localhost:3001` and the Dashboard at `http:
 **Add a message:**
 
 ```bash
-curl -X POST http://localhost:3000/api/queue/message \
+curl -X POST http://localhost:3001/api/queue/message \
   -H "Content-Type: application/json" \
   -d '{
     "type": "email_send",
@@ -253,18 +231,17 @@ curl -X POST http://localhost:3000/api/queue/message \
 **Get a message:**
 
 ```bash
-curl "http://localhost:3000/api/queue/message?timeout=30"
+curl "http://localhost:3001/api/queue/message?timeout=30"
 ```
 
 **Acknowledge a message:**
 
 ```bash
-curl -X POST http://localhost:3000/api/queue/ack \
+curl -X POST http://localhost:3001/api/queue/ack \
   -H "Content-Type: application/json" \
   -d '{
     "id": "message-id-here",
-    "_stream_id": "stream-id-here",
-    "_stream_name": "queue"
+    "lock_token": "lock-token-here"
   }'
 ```
 
@@ -272,177 +249,90 @@ curl -X POST http://localhost:3000/api/queue/ack \
 
 ## 🏗️ Architecture Overview
 
-Relay implements a **reliable message queue system** using **Redis Streams** to ensure message durability, at-least-once delivery, and consumer groups for scaling.
+Relay implements a **reliable message queue system** using **PostgreSQL** to ensure message durability, ACID compliance, and atomic operations.
 
-### Redis Data Structures
+### Database Schema
 
-The queue uses Redis Streams and Hash structures consistently across all queues:
+All messages are stored in a single `messages` table with a `status` column tracking lifecycle:
 
-1. **`queue`**, **`queue_p1`** ... **`queue_p9`** - **Priority Streams (10 levels)**
-   - Stores messages with unique IDs generated by Redis
-   - Supports Consumer Groups for parallel processing
-   - Messages are added via `XADD` to the appropriate priority stream
-   - Messages are read via `XREADGROUP` (highest priority streams checked first)
-   - Priority 0 = `queue` (lowest), Priority 9 = `queue_p9` (highest)
-   - Processing messages are tracked in the Pending Entries List (PEL) of these streams
+```sql
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    type TEXT,
+    payload JSONB NOT NULL,
+    priority INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'queued',  -- queued, processing, acknowledged, dead, archived
+    attempt_count INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    ack_timeout_seconds INTEGER DEFAULT 30,
+    lock_token TEXT,
+    locked_until TIMESTAMPTZ,
+    consumer_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    dequeued_at TIMESTAMPTZ,
+    acknowledged_at TIMESTAMPTZ,
+    last_error TEXT
+);
+```
 
-2. **`queue_dlq`** - **Dead Letter Queue (Stream)**
-   - Stores messages that failed after maximum retry attempts
-   - Useful for debugging and manual intervention
+### Message States
 
-3. **`queue_acknowledged`** - **Acknowledged Queue (Stream)**
-   - Stores successfully processed messages for history/audit
-   - Uses `XTRIM` with `MAXLEN` for automatic size limiting
-   - Consistent with other queues for easier querying and management
-
-4. **`queue_metadata`** - **Metadata Hash**
-   - Stores additional message metadata (attempt counts, errors) not directly stored in the stream message body
-   - Key-value pairs with message ID as key
+| Status | Description |
+|--------|-------------|
+| `queued` | Waiting to be processed (main queue) |
+| `processing` | Currently being handled by a consumer |
+| `acknowledged` | Successfully processed |
+| `dead` | Failed after max retry attempts (DLQ) |
+| `archived` | Long-term retention |
 
 ### Message Lifecycle
 
 ```mermaid
 flowchart TD
     Client[Client] -->|POST /api/queue/message| API[REST API]
-    API -->|XADD| Stream[Redis Stream]
-    Stream -->|XREADGROUP| Consumer[Consumer Group]
-    Consumer -->|GET /api/queue/message| Worker[Worker]
+    API -->|INSERT| DB[(PostgreSQL)]
+    DB -->|SELECT FOR UPDATE SKIP LOCKED| Worker[Worker]
     Worker -->|Process| Worker
     Worker -->|POST /api/queue/ack| API
-    API -->|XACK| Stream
-    Worker -.->|Fail / Retry| Stream
-    Stream -.->|Max Retries| DLQ[Dead Letter Queue]
+    API -->|UPDATE status='acknowledged'| DB
+    Worker -.->|Fail / Retry| DB
+    DB -.->|Max Retries| DLQ[status='dead']
 ```
 
-### Message Format
+### Why PostgreSQL?
 
-```json
-{
-  "id": "uuid-here",           // Auto-generated if not provided
-  "type": "string",            // Required: Message type identifier
-  "payload": {},               // Optional: Message data (any JSON)
-  "priority": 0,              // Optional: Priority level 0-9 (higher = processed first)
-  "created_at": 1234567890    // Auto-generated timestamp
-}
+| Aspect | PostgreSQL | Redis Streams |
+|--------|------------|---------------|
+| **Atomicity** | Native ACID transactions | Requires Lua scripts |
+| **Indexing** | Built-in (type, priority, status) | Manual sorted sets |
+| **Querying** | Full SQL support | Limited |
+| **Durability** | WAL by default | Configurable (RDB/AOF) |
+| **Complexity** | Simple SQL queries | Multiple data structures |
+
+### Atomic Dequeue
+
+PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED` provides atomic, non-blocking dequeue:
+
+```sql
+UPDATE messages SET
+  status = 'processing',
+  lock_token = $1,
+  locked_until = NOW() + INTERVAL '30 seconds',
+  dequeued_at = NOW(),
+  attempt_count = attempt_count + 1
+WHERE id = (
+  SELECT id FROM messages
+  WHERE status = 'queued'
+  ORDER BY priority DESC, created_at ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+RETURNING *;
 ```
 
-**Priority Levels:**
-- `0` = Lowest priority (default)
-- `1-8` = Intermediate priorities
-- `9` = Highest priority (processed first)
+### Split Brain Prevention
 
-### Visibility Timeout & Split Brain Prevention
-
-**The Problem: "Slow Worker" vs "Dead Worker"**
-
-Consider this scenario with a 30-second ACK timeout:
-
-1. Worker A takes Message #1 and starts processing
-2. The task is heavy and takes 40 seconds (longer than timeout)
-3. At 30s, the system thinks Worker A is dead and re-queues Message #1
-4. Worker B sees Message #1 in the queue and takes it
-5. **Result**: Both A and B are now processing the same message (Split Brain)
-6. At 40s, Worker A finishes and sends ACK
-7. **Danger**: If the ACK is accepted, it could corrupt data or cause duplicate side effects
-
-**The Solution: Touch Endpoint + Lock Validation**
-
-Relay provides two mechanisms to prevent this:
-
-1. **Touch/Heartbeat Endpoint** (`PUT /queue/message/:id/touch`)
-   - Workers can extend their lock before timeout expires
-   - Resets the visibility timeout without releasing the message
-
-2. **Lock Validation (Fencing Token)**
-   - Each dequeue generates a unique `lock_token` (random string)
-   - ACK and touch requests must include `lock_token` for validation
-   - If the message was re-queued and picked up by another worker, `lock_token` won't match → Request rejected with 409
-   - `attempt_count` is kept separate for retry tracking (business logic)
-
-**Example: Safe Processing of Heavy Tasks**
-
-```python
-import requests
-import time
-import threading
-
-API_URL = 'http://localhost:3000/api/queue'
-HEADERS = {'X-API-KEY': 'your-key'}
-
-def process_with_heartbeat(message):
-    """Process a message with periodic heartbeats to prevent timeout."""
-    message_id = message['id']
-    lock_token = message['lock_token']  # Unique token for this dequeue
-    stop_heartbeat = threading.Event()
-    lock_lost = threading.Event()
-    
-    def send_heartbeats():
-        """Send touch requests every 20 seconds to extend the lock."""
-        while not stop_heartbeat.is_set():
-            time.sleep(20)  # Send heartbeat before 30s timeout
-            if stop_heartbeat.is_set():
-                break
-            response = requests.put(
-                f'{API_URL}/message/{message_id}/touch',
-                headers=HEADERS,
-                json={'lock_token': lock_token}
-            )
-            if response.status_code == 409:
-                print(f"Lock lost for {message_id}! Another worker took over.")
-                lock_lost.set()
-                stop_heartbeat.set()
-                return
-            print(f"Lock extended for {message_id}")
-    
-    # Start heartbeat thread
-    heartbeat_thread = threading.Thread(target=send_heartbeats)
-    heartbeat_thread.start()
-    
-    try:
-        # Simulate heavy processing (e.g., video transcoding, ML inference)
-        result = process_heavy_task(message['payload'])  # Takes 2 minutes
-        
-        # Check if lock was lost during processing
-        if lock_lost.is_set():
-            print(f"Lock was lost - discarding work for {message_id}")
-            return
-        
-        # Acknowledge with lock token validation
-        response = requests.post(
-            f'{API_URL}/ack',
-            headers=HEADERS,
-            json={
-                'id': message_id,
-                '_stream_id': message['_stream_id'],
-                '_stream_name': message['_stream_name'],
-                'lock_token': lock_token  # Fencing token validation
-            }
-        )
-        
-        if response.status_code == 409:
-            print(f"ACK rejected - lock was lost. Work discarded.")
-        else:
-            print(f"Message {message_id} processed successfully!")
-            
-    finally:
-        stop_heartbeat.set()
-        heartbeat_thread.join()
-```
-
-**Why This Matters**
-
-| Scenario | Without Protection | With Touch + Lock Validation |
-|----------|-------------------|------------------------------|
-| Worker slow but alive | Duplicate processing | Worker extends lock via touch |
-| Worker crashed | Message re-queued ✓ | Message re-queued ✓ |
-| Stale ACK from revived worker | Accepted (data corruption!) | Rejected with 409 |
-
-### Configuration
-
-- **ACK_TIMEOUT_SECONDS**: `30` - Time before a message in the Pending Entries List (PEL) is considered stalled
-- **MAX_ATTEMPTS**: `3` - Maximum retry attempts before moving to dead letter queue
-- **BATCH_SIZE**: `100` - Maximum messages processed in batch operations
-- **MAX_PRIORITY_LEVELS**: `10` - Number of priority levels (0 to N-1, default 10 = priorities 0-9)
+Each dequeue generates a unique `lock_token`. ACK requests must include the matching token—if the message was re-queued due to timeout, the token won't match and the request is rejected with 409 Conflict.
 
 ---
 
@@ -450,10 +340,8 @@ def process_with_heartbeat(message):
 
 ### 📖 API Documentation
 
-This API includes a fully interactive documentation UI (Scalar) and a raw OpenAPI specification.
-
-- **Interactive UI**: `http://localhost:3000/api/reference`
-- **OpenAPI Spec (JSON)**: `http://localhost:3000/api/doc`
+- **Interactive UI**: `http://localhost:3001/api/reference`
+- **OpenAPI Spec (JSON)**: `http://localhost:3001/api/doc`
 
 ### Queue Operations
 
@@ -461,351 +349,279 @@ This API includes a fully interactive documentation UI (Scalar) and a raw OpenAP
 - `GET /api/queue/message?timeout=30` - Get a message from the queue
 - `POST /api/queue/ack` - Acknowledge message processing
 - `POST /api/queue/batch` - Add multiple messages at once
-- `PUT /api/queue/message/:id/touch` - Extend message lock (heartbeat/keep-alive)
-- `POST /api/queue/message/:id/nack` - Negative acknowledge (reject and requeue message)
+- `PUT /api/queue/message/:id/touch` - Extend message lock (heartbeat)
+- `POST /api/queue/message/:id/nack` - Negative acknowledge (reject and requeue)
 
 ### Monitoring
 
 - `GET /api/health` - Health check endpoint
-- `GET /api/queue/metrics` - Queue statistics and metrics
-- `GET /api/queue/status` - Get detailed status of all queues with messages
-- `GET /api/queue/messages?startTimestamp&endTimestamp` - Get messages by date range
-- `DELETE /api/queue/messages?startTimestamp&endTimestamp` - Remove messages by date range
+- `GET /api/queue/metrics` - Queue statistics
+- `GET /api/queue/status` - Detailed status of all queues
+- `GET /api/queue/events` - Server-Sent Events for real-time updates
 
 ---
 
 ## 🎛️ Mission Control Dashboard
 
-Don't just watch your queue. Manage it.
+Access at `http://localhost:3001/dashboard`
 
-Most queues are "black boxes": you push a message and hope it works. This API ships with an integrated dashboard that gives you observability and control over your Redis Streams in real time, so Ops can fix stuck jobs without writing one-off scripts.
-
-### Accessing the Dashboard
-
-- **URL**: `http://localhost:3000/dashboard`
-- **Root redirect**: `http://localhost:3000/` automatically redirects to dashboard
-
-### The Debugging Superpowers
-
-#### 🔍 Deep Filtering (Find the needle in the haystack)
-
-- Filter by stage: queued (main), processing, dead (DLQ), acknowledged
-- Filter by priority and attempts to find starving or repeatedly failing jobs
-- Search by ID and filter by date range to locate specific transactions fast
-
-#### 🔄 State Management (Force transitions)
-
-- Edit the payload data inline.
-- Move the message to a different stage (main, processing, dead, acknowledged).
-- Create a new message with payload, type, priority and attempts number.
-- Adjust the priority of a message.
-
-### Dashboard Features
+### Features
 
 - **📊 Real-time statistics**: queued, processing, dead, acknowledged, archived
-- **🧭 Server-side pagination & sorting**: browse large queues without loading everything
-- **🧪 Safe operations via API**: actions go through validation instead of raw Redis edits
-- **🔄 Real-time updates**: instant refreshes via Server-Sent Events (SSE)
+- **🧭 Pagination & sorting**: Browse large queues efficiently
+- **🔍 Deep filtering**: By status, type, priority, date range
+- **🔄 State management**: Move messages between queues, edit payloads
+- **🚨 Anomaly detection**: Flash messages, zombies, near-DLQ warnings
+- **📝 Activity logs**: Full message lifecycle tracking
 
-### Why this beats generic Redis tools
+---
 
-| Feature | Mission Control Dashboard | RedisInsight (generic) | BullMQ / Sidekiq UI |
-|---|---|---|---|
-| Context | Job lifecycle, retries, errors | Raw keys/streams | Good, but language-locked |
-| Editing | JSON + state transitions | Raw string edits | Often read-only or paid features |
-| Search | Multi-criteria (stage + type + date + attempts) | Key scanning | Limited filtering |
-| Safety | API-validated actions | No validation | Safe |
-
-### Powered by the Node.js API (not direct Redis access)
-
-The dashboard talks to the Node.js API; it does not connect to Redis directly. Redis credentials stay on the server, and the UI uses the same endpoints your workers use.
-
-### 🚨 Anomaly Detection
-
-The activity log automatically detects and flags unusual patterns in your queue operations. Anomalies are classified by severity:
-
-| Anomaly | Severity | Description |
-|---------|----------|-------------|
-| **flash_message** | `info` | Message was dequeued extremely quickly (< 2s by default). May indicate a hot loop or test traffic. |
-| **zombie_message** | `warning` | Message sat in the queue for hours before being picked up. May indicate consumer scaling issues. |
-| **near_dlq** | `warning` | Message has only 1-2 attempts remaining before moving to the Dead Letter Queue. |
-| **dlq_movement** | `critical` | Message was moved to the Dead Letter Queue after exhausting all retry attempts. |
-| **long_processing** | `warning` | Message processing took significantly longer than the average (2x the expected time). |
-| **lock_stolen** | `critical` | A message's lock token changed mid-processing, indicating another worker took over (split-brain scenario). |
-| **burst_dequeue** | `warning` | A single consumer dequeued 10+ messages within 5 seconds. May indicate runaway consumer or hot partition. |
-| **bulk_delete** | `warning` | A bulk delete operation removed many messages at once. |
-| **bulk_move** | `info` | A bulk move operation transferred many messages between queues. |
-| **queue_cleared** | `critical` | An entire queue was cleared. This is a destructive operation that should be audited. |
-| **large_payload** | `warning` | Message payload exceeds the size threshold (100KB by default). Large payloads can impact performance. |
-
-#### Configuring Anomaly Thresholds
-
-You can tune anomaly detection via environment variables:
+## ⚙️ Environment Variables
 
 ```bash
-# Activity Log Settings
-ACTIVITY_LOG_ENABLED=true              # Enable/disable activity logging
-ACTIVITY_LOG_MAX_ENTRIES=50000         # Max entries before trimming
-ACTIVITY_LOG_RETENTION_HOURS=24        # How long to keep logs
+# PostgreSQL Connection
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=relay
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=
+POSTGRES_POOL_SIZE=10
+POSTGRES_SSL=false
 
-# Anomaly Thresholds
-ACTIVITY_FLASH_MESSAGE_THRESHOLD_MS=2000       # Flash message threshold (ms)
-ACTIVITY_ZOMBIE_MESSAGE_THRESHOLD_HOURS=1      # Zombie message threshold (hours)
-ACTIVITY_BURST_THRESHOLD_COUNT=10              # Burst detection count
-ACTIVITY_BURST_THRESHOLD_SECONDS=5             # Burst detection window (seconds)
-ACTIVITY_LONG_PROCESSING_MULTIPLIER=2          # Multiplier for long processing detection
-ACTIVITY_LARGE_PAYLOAD_BYTES=102400            # Large payload threshold (bytes)
-ACTIVITY_BULK_OPERATION_THRESHOLD=10           # Bulk operation threshold
-```
+# Queue Configuration
+QUEUE_NAME=queue
+ACK_TIMEOUT_SECONDS=30
+MAX_ATTEMPTS=3
+REQUEUE_BATCH_SIZE=100
+OVERDUE_CHECK_INTERVAL_MS=5000
+MAX_PRIORITY_LEVELS=10
 
-#### Using Anomaly Data
+# API Security (optional)
+SECRET_KEY=your-secret-key-here
 
-**Via Dashboard:** The Anomalies tab shows all detected anomalies with filtering by severity.
-
-**Via API:**
-```bash
-# Get all anomalies
-curl "http://localhost:3000/api/queue/activity/anomalies"
-
-# Filter by severity
-curl "http://localhost:3000/api/queue/activity/anomalies?severity=critical"
-
-# Get full message history including anomalies
-curl "http://localhost:3000/api/queue/activity/message/{messageId}"
-```
-
-### Helper Scripts
-
-Use the included TypeScript scripts to populate the queue with sample data or test dequeuing:
-
-#### Enqueue Tool
-```bash
-# Add sample messages (uses SECRET_KEY from environment)
-SECRET_KEY=your-key npx tsx enqueue_messages.ts
-
-# Add custom number of messages and batch size
-npx tsx enqueue_messages.ts --api-key your-key --messages 100 --batch-size 20
-
-# Use different server URL
-npx tsx enqueue_messages.ts --url http://localhost:8080 --messages 10
-```
-
-#### Dequeue Tool
-```bash
-# Dequeue some messages (uses SECRET_KEY from environment)
-SECRET_KEY=your-key npx tsx dequeue_messages.ts
-
-# Dequeue 5 messages, wait up to 60s for each, and set 120s processing timeout
-npx tsx dequeue_messages.ts --count 5 --timeout 60 --ack-timeout 120 --consumer my-worker
+# Activity Logging
+ACTIVITY_LOG_ENABLED=true
+ACTIVITY_LOG_RETENTION_HOURS=24
 ```
 
 ---
 
 ## 🧪 Running Tests
 
-To run the integration tests for the queue API:
+```bash
+# Run all queue tests
+pnpm test src/routes/queue/__tests__/ -- --run
+
+# Run a specific test file
+pnpm test src/routes/queue/__tests__/queue.health.test.ts -- --run
+
+# Run tests in watch mode
+pnpm test src/routes/queue/__tests__/
+```
+
+Requires a running PostgreSQL instance.
+
+### Load Testing / Benchmarking
+
+Run the benchmark script to measure queue throughput:
 
 ```bash
-pnpm test src/routes/queue/queue.test.ts
+npx tsx benchmark.ts
 ```
 
-This runs the Vitest suite covering:
-- Health checks
-- Enqueuing and dequeuing messages
-- Message acknowledgment (with Redis Streams support)
-- Error handling and invalid requests
+**Options:**
 
-### Performance Benchmarks
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--duration <seconds>` | Test duration per operation | `5` |
+| `--batch-size <size>` | Messages per batch | `100` |
+| `--workers <count>` | Concurrent workers | `5` |
+| `--test <type>` | Test type: `enqueue`, `batch`, `dequeue`, `cycle`, `concurrent`, `all` | `all` |
+| `--logging` | Enable activity logging (slower) | disabled |
 
-The project includes benchmark tests to measure Redis operation performance and track improvements when making changes to how the library reads and writes to Redis.
-
-**Run the full benchmark suite:**
-```bash
-pnpm test src/lib/queue/queue.benchmark.test.ts -- --run
-```
-
-This benchmark measures:
-- **Latency** (p50, p95, p99, max) for each operation
-- **Redis command counts** (reads, writes, total) per operation
-- **Throughput** (operations/second)
-
-**Example output:**
-```
-╔═══════════════════════════════════════════════════════════════════════════════════════════╗
-║                              BENCHMARK SUMMARY REPORT                                     ║
-╠═══════════════════════════════════════════════════════════════════════════════════════════╣
-║ Operation            │ Avg Latency │ Redis Reads │ Redis Writes │ Total Cmds │ Cmds/Op   ║
-╠═══════════════════════════════════════════════════════════════════════════════════════════╣
-║ enqueue              │     0.58 ms │        1.00 │         7.00 │       8.00 │      8.00 ║
-║ dequeue              │     2.61 ms │       15.22 │        12.22 │      27.44 │     27.44 ║
-║ acknowledge          │     0.74 ms │        3.00 │         9.00 │      12.00 │     12.00 ║
-║ batch_enqueue_100    │    19.64 ms │        0.01 │         5.00 │       5.01 │      5.01 ║
-║ getMetrics           │     0.19 ms │       27.00 │         0.00 │      27.00 │     27.00 ║
-╚═══════════════════════════════════════════════════════════════════════════════════════════╝
-```
-
-The benchmark outputs JSON results that can be saved for comparison before and after refactoring.
-
-**Quick performance regression test (~30 seconds):**
-```bash
-pnpm test src/lib/queue/queue.perf.test.ts -- --run
-```
-
-This is a lighter test for fast CI/CD feedback with baseline thresholds.
-
----
-
-## ⚙️ Environment Variables
-
-You can customize queue behavior via environment variables:
+**Examples:**
 
 ```bash
-# Redis Connection
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-REDIS_DB=0
+# Run all benchmarks for 10 seconds each
+npx tsx benchmark.ts --duration 10
 
-# Queue Names (optional - defaults provided)
-QUEUE_NAME=queue
-PROCESSING_QUEUE_NAME=queue_processing
-DEAD_LETTER_QUEUE_NAME=queue_dlq
-METADATA_HASH_NAME=queue_metadata
+# Test only batch enqueue with 200 messages per batch
+npx tsx benchmark.ts --test batch --batch-size 200
 
-# Queue Configuration
-ACK_TIMEOUT_SECONDS=30
-MAX_ATTEMPTS=3
-BATCH_SIZE=100
-MAX_PRIORITY_LEVELS=10  # Number of priority levels (0 to N-1)
-
-# API Security (optional)
-SECRET_KEY=your-secret-key-here  # If set, all API requests require X-API-KEY header
-
-# Activity Log & Anomaly Detection (optional)
-ACTIVITY_LOG_ENABLED=true
-ACTIVITY_LOG_MAX_ENTRIES=50000
-ACTIVITY_LOG_RETENTION_HOURS=24
+# Test concurrent enqueue with 10 workers
+npx tsx benchmark.ts --test concurrent --workers 10
 ```
 
-### Dashboard Environment Variables
+**Output:**
 
-For the dashboard UI, create a `.env` file in the `dashboard-ui/` directory:
-
-```bash
-# Dashboard API Key (for authenticating with the backend)
-VITE_API_KEY=your-secret-key-here
 ```
-
-This key should match the `SECRET_KEY` configured on the server.
-
-### Infisical Integration
-
-Relay supports loading environment variables from [Infisical](https://infisical.com) for secure secret management. To use Infisical:
-
-1. **Set up Infisical credentials** (one of the following):
-   - Set environment variables:
-     ```bash
-     INFISICAL_TOKEN=your-service-token
-     INFISICAL_PROJECT_ID=your-project-id
-     INFISICAL_ENVIRONMENT=dev  # Optional, defaults to "dev"
-     ```
-   - Or use a `.env` file for local development (Infisical will override these values if configured)
-
-2. **Configure secrets in Infisical Cloud**:
-   - Add all your environment variables as secrets in your Infisical project
-   - Use the same variable names as listed in the Environment Variables section above
-   - Set the appropriate environment (dev, staging, production, etc.)
-
-3. **How it works**:
-   - If `INFISICAL_TOKEN` and `INFISICAL_PROJECT_ID` are set, the application will load secrets from Infisical at startup
-   - Infisical secrets take precedence over local `.env` files or system environment variables
-   - If Infisical is not configured, the application falls back to using `.env` files (via dotenv) or system environment variables
-   - All secrets are validated using the same Zod schema regardless of source
-
-**Example Infisical setup:**
-```bash
-# Local .env file (for Infisical credentials only)
-INFISICAL_TOKEN=st.xxxxx.yyyyy
-INFISICAL_PROJECT_ID=12345678-1234-1234-1234-123456789012
-INFISICAL_ENVIRONMENT=production
+┌────────────────────────────────────┬────────────┬───────────┬───────────┐
+│ Operation                          │   Ops/Sec  │  Avg (ms) │  P99 (ms) │
+├────────────────────────────────────┼────────────┼───────────┼───────────┤
+│ Single Enqueue                     │        847 │      1.18 │      2.45 │
+│ Batch Enqueue (100/batch)          │      12453 │      8.03 │     15.21 │
+│ Single Dequeue                     │        623 │      1.60 │      3.12 │
+│ Full Cycle (enqueue→dequeue→ack)   │        312 │      3.20 │      6.54 │
+│ Concurrent Enqueue (5 workers)     │       2134 │      2.34 │      4.89 │
+└────────────────────────────────────┴────────────┴───────────┴───────────┘
 ```
-
-**Note**: The Infisical service token should have read permissions for the secrets you need. The application will automatically load all secrets from the root path (`/`) of your specified environment.
-
----
-
-## 🔐 API Authentication
-
-When `SECRET_KEY` is set, all API endpoints (except `/health` and `/queue/events`) require authentication via the `X-API-KEY` header.
-
-### Authenticated Requests
-
-```bash
-# Add a message with authentication
-curl -X POST http://localhost:3000/api/queue/message \
-  -H "Content-Type: application/json" \
-  -H "X-API-KEY: your-secret-key-here" \
-  -d '{
-    "type": "email_send",
-    "payload": { "to": "user@example.com" }
-  }'
-```
-
-### Python Example with Auth
-
-```python
-import requests
-
-API_URL = 'http://localhost:3000/api/queue'
-API_KEY = 'your-secret-key-here'
-
-headers = {
-    'Content-Type': 'application/json',
-    'X-API-KEY': API_KEY
-}
-
-# Get a message
-response = requests.get(f'{API_URL}/message', headers=headers)
-```
-
-### Dashboard Authentication
-
-The dashboard supports two ways to configure the API key:
-
-1. **Environment Variable (Build-time)**: Set `VITE_API_KEY` in `dashboard-ui/.env`
-2. **Runtime Configuration**: Click the 🔑 key icon in the dashboard toolbar to enter the API key (stored in localStorage)
 
 ---
 
 ## 📝 Available Scripts
 
-- `pnpm run dev` - Starts the application in development mode with hot-reloading
-- `bun run dev:bun` - Starts the application with Bun (development mode)
-- `pnpm run build` - Compiles the TypeScript code
-- `pnpm start` - Builds and starts the application in production mode
-- `bun run start:bun` - Starts the application with Bun (production mode)
-- `pnpm test` - Runs the test suite
-- `bun run test:bun` - Runs tests with Bun
-- `pnpm dashboard:dev` - Starts the dashboard UI in development mode
-- `bun run dashboard:dev:bun` - Starts the dashboard UI with Bun
-- `pnpm dashboard:build` - Builds the dashboard UI for production
-- `bun run dashboard:build:bun` - Builds the dashboard UI with Bun
+- `pnpm run dev` - Start in development mode with hot-reloading
+- `pnpm run dev:all` - Start API + Dashboard together
+- `pnpm run build` - Build for production
+- `pnpm start` - Start production build
+- `pnpm test` - Run tests
+- `pnpm dashboard:dev` - Dashboard dev server only
+- `pnpm dashboard:build` - Build dashboard
 
 ---
 
-## 🎓 Why This Approach?
+## 🛠️ Testing Tools
 
-### Don't Compete on Features
+Two CLI tools are included for testing and populating the queue:
 
-We won't beat BullMQ on plugins. We won't beat Kafka on throughput. We won't beat RabbitMQ on routing complexity.
+### Enqueue Messages
 
-### Compete on Flexibility
+Bulk-add sample messages to the queue for testing:
 
-We are the **bridge between languages**. Your Node.js API can send messages to Python AI workers, Go image processors, or Ruby email senders—all using the same REST API.
+```bash
+npx tsx enqueue_messages.ts [options]
+```
 
-### Compete on Simplicity
+Example
+```bash
+npx tsx enqueue_messages.ts --api-key GR+pRF8Utzqkd9IF4lzkdEZ0nEPQ4IyyXRZaskpGEWg= --messages 100 --batch-size 1
+```
 
-We are **closer to the metal** (Redis Streams) than the heavy frameworks. No hidden Lua scripts, no magic—just standard Redis Streams accessed through a simple REST API that any developer can understand and debug.
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--url <url>` | Base URL of the queue API | `http://localhost:3000` |
+| `--messages <count>` | Total number of messages to add | `500` |
+| `--batch-size <size>` | Messages per batch request | `50` |
+| `--api-key <key>` | API key for authentication | `$SECRET_KEY` env var |
+
+**Examples:**
+
+```bash
+# Add 1000 messages in batches of 100
+npx tsx enqueue_messages.ts --messages 1000 --batch-size 100
+
+# Use a custom API URL with authentication
+npx tsx enqueue_messages.ts --url http://localhost:8080 --api-key mykey
+```
+
+Messages are created with random types (`email_send`, `image_process`, `data_sync`, `notification`, `backup`) and priorities (0-9).
+
+### Dequeue Messages
+
+Consume messages from the queue for testing:
+
+```bash
+npx tsx dequeue_messages.ts [options]
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--url <url>` | Base URL of the queue API | `http://localhost:3000` |
+| `--count <number>` | Number of messages to dequeue | `10` |
+| `--timeout <seconds>` | Wait timeout if queue is empty | `30` |
+| `--ack-timeout <seconds>` | Processing timeout before requeue | `30` |
+| `--consumer <name>` | Custom consumer ID | Random ID |
+| `--ack` | Automatically acknowledge messages | `false` |
+| `--api-key <key>` | API key for authentication | `$SECRET_KEY` env var |
+
+**Examples:**
+
+```bash
+# Dequeue 5 messages without acknowledging (they'll return to queue)
+npx tsx dequeue_messages.ts --count 5
+
+# Dequeue and acknowledge messages as a named worker
+npx tsx dequeue_messages.ts --ack --consumer my-worker
+
+# Long-running worker with extended timeouts
+npx tsx dequeue_messages.ts --timeout 60 --ack-timeout 120 --ack
+```
+
+---
+
+## 🔍 Custom Anomaly Detectors
+
+Relay includes a pluggable anomaly detection system. You can create custom detectors to monitor queue-specific patterns.
+
+### Built-in Detectors
+
+| Detector | Event | Description |
+|----------|-------|-------------|
+| `flash_message` | dequeue | Messages dequeued within milliseconds of enqueue |
+| `large_payload` | enqueue | Payload size exceeds threshold |
+| `long_processing` | ack | Processing time exceeds threshold |
+| `lock_stolen` | ack | Lock token mismatch (split-brain) |
+| `near_dlq` | nack | Message approaching max retry attempts |
+| `dlq_movement` | nack | Message moved to dead letter queue |
+| `zombie_message` | timeout | Message stuck in processing beyond timeout |
+| `burst_dequeue` | dequeue | High rate of dequeue operations |
+| `bulk_enqueue` | bulk | Large batch enqueue operation |
+| `bulk_delete` | bulk | Large batch delete operation |
+| `bulk_move` | bulk | Large batch move operation |
+| `queue_cleared` | bulk | Queue was cleared |
+
+### Creating a Custom Detector
+
+```typescript
+import { AnomalyDetector } from './src/lib/queue/services/anomaly-detectors/types';
+
+const myDetector: AnomalyDetector = {
+  name: 'high_priority_flood',
+  description: 'Detects excessive high-priority messages',
+  events: ['enqueue'],  // 'enqueue' | 'dequeue' | 'ack' | 'nack' | 'bulk_operation' | 'periodic'
+  enabledByDefault: true,
+
+  async detect(context) {
+    const { message, queueName, config } = context;
+
+    if (message && message.priority >= 5) {
+      return {
+        type: 'high_priority_flood',
+        severity: 'warning',  // 'info' | 'warning' | 'critical'
+        messageId: message.id,
+        consumerId: null,
+        details: {
+          queue_name: queueName,
+          priority: message.priority,
+        },
+      };
+    }
+    return null;
+  },
+};
+```
+
+### Registering Custom Detectors
+
+```typescript
+import { PostgresQueue } from './src/lib/queue';
+
+const queue = new PostgresQueue(config);
+const registry = queue.getAnomalyDetectorRegistry();
+
+// Register your detector
+registry.register(myDetector);
+
+// Disable a built-in detector
+registry.setEnabled('flash_message', false);
+
+// Check registered detectors
+console.log(registry.getDetectors());
+```
 
 ---
 
@@ -825,16 +641,13 @@ MIT
 
 Built with:
 - [Hono](https://hono.dev/) - Fast web framework
-- [ioredis](https://github.com/redis/ioredis) - Redis client
-- [Redis Streams](https://redis.io/docs/data-types/streams/) - Native Redis data structure
+- [PostgreSQL](https://www.postgresql.org/) - Reliable database
+- [pg](https://node-postgres.com/) - PostgreSQL client for Node.js
 - [Scalar](https://scalar.com/) - Beautiful API documentation
-- [zod-openapi](https://github.com/honojs/middleware/tree/main/packages/zod-openapi) - OpenAPI generator
-- [Shadcn UI](https://ui.shadcn.com/) - Beautiful UI components
-- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Shadcn UI](https://ui.shadcn.com/) - UI components
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS
 - [Vite](https://vite.dev/) - Fast development tool
 - [TypeScript](https://www.typescriptlang.org/) - Typed JavaScript
-- [pnpm](https://pnpm.io/) - Fast, disk space efficient package manager
-- [Bun](https://bun.sh/) - Fast, all-in-one JavaScript runtime
 
 ---
 

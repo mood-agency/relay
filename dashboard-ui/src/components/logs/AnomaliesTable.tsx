@@ -31,24 +31,20 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
+import { useCursorTooltip, CursorTooltip, tableStyles } from "@/components/queue/QueueTableBase"
 
 import { AnomaliesResponse } from "./types"
-import { getActionBadge, getSeverityBadge } from "./helpers"
+import { getSeverityBadge } from "./helpers"
 import { syntaxHighlightJson } from "@/components/queue/types"
 
 // ============================================================================
 // Sort Types
 // ============================================================================
 
-type SortColumn = 'severity' | 'type' | 'action' | 'timestamp'
+type SortColumn = 'severity' | 'type' | 'timestamp'
 
 // ============================================================================
 // Sortable Header Component
@@ -95,6 +91,44 @@ const SortableHeader = ({
 }
 
 // ============================================================================
+// Payload Cell with Cursor Tooltip for Anomalies
+// ============================================================================
+
+const AnomalyPayloadCell = React.memo(({ payload }: { payload: any }) => {
+    const { isHovered, mousePos, handlers } = useCursorTooltip()
+
+    return (
+        <>
+            <TableCell className="max-w-[200px] cursor-default group/payload" {...handlers}>
+                <div className="flex items-center gap-1">
+                    <span className="text-xs font-mono truncate text-muted-foreground group-hover/payload:text-foreground transition-colors">
+                        {JSON.stringify(payload)}
+                    </span>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+                            toast.success("Payload copied to clipboard")
+                        }}
+                        className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                        tabIndex={-1}
+                        title="Copy payload"
+                    >
+                        <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </button>
+                </div>
+            </TableCell>
+            <CursorTooltip isVisible={isHovered} mousePos={mousePos}>
+                <pre className={tableStyles.TOOLTIP_CODE}>
+                    <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(payload, null, 2)) }} />
+                </pre>
+            </CursorTooltip>
+        </>
+    )
+})
+
+// ============================================================================
 // Anomalies Table Component
 // ============================================================================
 
@@ -103,8 +137,6 @@ export interface AnomaliesTableProps {
     loading: boolean
     severityFilter: string
     setSeverityFilter: (val: string) => void
-    actionFilter: string
-    setActionFilter: (val: string) => void
     typeFilter: string
     setTypeFilter: (val: string) => void
     sortBy: string
@@ -120,8 +152,6 @@ export function AnomaliesTable({
     loading,
     severityFilter,
     setSeverityFilter,
-    actionFilter,
-    setActionFilter,
     typeFilter,
     setTypeFilter,
     sortBy,
@@ -132,7 +162,7 @@ export function AnomaliesTable({
     formatTime
 }: AnomaliesTableProps) {
     const [filterOpen, setFilterOpen] = useState(false)
-    const isFilterActive = severityFilter !== '' || actionFilter !== '' || typeFilter !== ''
+    const isFilterActive = severityFilter !== '' || typeFilter !== ''
 
     // Derive available anomaly types from the data
     const availableAnomalyTypes = anomalies?.summary?.by_type
@@ -141,7 +171,6 @@ export function AnomaliesTable({
 
     const handleClearFilters = () => {
         setSeverityFilter('')
-        setActionFilter('')
         setTypeFilter('')
     }
 
@@ -169,7 +198,6 @@ export function AnomaliesTable({
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[120px]">Message ID</TableHead>
                             <SortableHeader column="type" label="Anomaly Type" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Description</TableHead>
-                            <SortableHeader column="action" label="Action" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} className="w-[90px]" />
                             <SortableHeader column="timestamp" label="Timestamp" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
                             <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Payload</TableHead>
                             <TableHead className="sticky top-0 z-20 bg-card text-right pr-2">
@@ -212,28 +240,6 @@ export function AnomaliesTable({
                                                         <SelectItem value="critical">Critical</SelectItem>
                                                         <SelectItem value="warning">Warning</SelectItem>
                                                         <SelectItem value="info">Info</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-                                            <div className="space-y-2">
-                                                <label className="text-xs font-medium text-foreground/80">Action</label>
-                                                <Select value={actionFilter || 'all'} onValueChange={(val) => setActionFilter(val === 'all' ? '' : val)}>
-                                                    <SelectTrigger className="w-full h-9">
-                                                        <SelectValue placeholder="All Actions" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="all">All Actions</SelectItem>
-                                                        <SelectItem value="enqueue">Enqueue</SelectItem>
-                                                        <SelectItem value="dequeue">Dequeue</SelectItem>
-                                                        <SelectItem value="ack">Acknowledge</SelectItem>
-                                                        <SelectItem value="nack">Nack</SelectItem>
-                                                        <SelectItem value="requeue">Requeue</SelectItem>
-                                                        <SelectItem value="timeout">Timeout</SelectItem>
-                                                        <SelectItem value="touch">Touch</SelectItem>
-                                                        <SelectItem value="move">Move</SelectItem>
-                                                        <SelectItem value="dlq">Dead Letter</SelectItem>
-                                                        <SelectItem value="delete">Delete</SelectItem>
-                                                        <SelectItem value="clear">Clear</SelectItem>
                                                     </SelectContent>
                                                 </Select>
                                             </div>
@@ -315,43 +321,16 @@ export function AnomaliesTable({
                                     <TableCell className="text-xs text-foreground max-w-[300px]">
                                         <span className="line-clamp-2">{log.anomaly?.description}</span>
                                     </TableCell>
-                                    <TableCell>{getActionBadge(log.action)}</TableCell>
                                     <TableCell className="text-xs font-mono text-foreground whitespace-nowrap">
                                         {formatTime(log.timestamp)}
                                     </TableCell>
-                                    <TableCell className="max-w-[200px] cursor-default group/payload">
-                                        {log.payload ? (
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <div className="flex items-center gap-1">
-                                                        <span className="text-xs font-mono truncate text-muted-foreground group-hover/payload:text-foreground transition-colors">
-                                                            {JSON.stringify(log.payload)}
-                                                        </span>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                e.preventDefault()
-                                                                navigator.clipboard.writeText(JSON.stringify(log.payload, null, 2))
-                                                                toast.success("Payload copied to clipboard")
-                                                            }}
-                                                            className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
-                                                            tabIndex={-1}
-                                                            title="Copy payload"
-                                                        >
-                                                            <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                                                        </button>
-                                                    </div>
-                                                </TooltipTrigger>
-                                                <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                                                    <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
-                                                        <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(log.payload, null, 2)) }} />
-                                                    </pre>
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        ) : (
+                                    {log.payload ? (
+                                        <AnomalyPayloadCell payload={log.payload} />
+                                    ) : (
+                                        <TableCell className="max-w-[200px] cursor-default">
                                             <span className="text-muted-foreground text-xs">—</span>
-                                        )}
-                                    </TableCell>
+                                        </TableCell>
+                                    )}
                                     <TableCell />
                                 </TableRow>
                             ))

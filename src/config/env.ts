@@ -18,36 +18,51 @@ export const EnvSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace"])
     .default("info"),
 
+  // PostgreSQL
+  POSTGRES_HOST: z.string().default("localhost"),
+  POSTGRES_PORT: z.coerce.number().default(5432),
+  POSTGRES_DATABASE: z.string().default("relay"),
+  POSTGRES_USER: z.string().default("postgres"),
+  POSTGRES_PASSWORD: z.string().default(""),
+  POSTGRES_POOL_SIZE: z.coerce.number().default(10),
+  POSTGRES_SSL: z.string().default("false"),
 
-  // Redis
-  REDIS_HOST: z.string().default("localhost"),
-  REDIS_PORT: z.coerce.number().default(6379),
-  REDIS_PASSWORD: z.string().optional().nullable(),
-  REDIS_DB: z.coerce.number().default(0),
-  REDIS_POOL_SIZE: z.coerce.number().default(10),
-  REDIS_TLS: z.string().default("false"),
-
-  // Postgres
-  DATABASE_URL: z.string().default("postgresql://postgres:postgres@localhost:5432/queue_db"),
-  PG_POOL_SIZE: z.coerce.number().default(10),
-
-  
   // Queue Configuration
   QUEUE_NAME: z.string().default("queue"),
-  // These names might be less relevant with a single table, but useful for filtering/logic compatibility
-  PROCESSING_QUEUE_NAME: z.string().default("queue_processing"),
-  DEAD_LETTER_QUEUE_NAME: z.string().default("queue_dlq"),
-  ARCHIVED_QUEUE_NAME: z.string().default("queue_archived"),
-  METADATA_HASH_NAME: z.string().default("queue_metadata"),
-  
   ACK_TIMEOUT_SECONDS: z.coerce.number().default(30),
   MAX_ATTEMPTS: z.coerce.number().default(3),
   REQUEUE_BATCH_SIZE: z.coerce.number().default(100),
   OVERDUE_CHECK_INTERVAL_MS: z.coerce.number().default(5000),
   MAX_PRIORITY_LEVELS: z.coerce.number().default(10),
-  ENABLE_ENCRYPTION: z.string().default("false"),
+
+  // Security
   SECRET_KEY: z.string().optional().nullable(),
+
+  // Dashboard
+  RELAY_ACTOR: z.string().default("relay-actor"),
+  MANUAL_OPERATION_ACTOR: z.string().default("user-manual-operation"),
+
+  // Activity Logging
+  ACTIVITY_LOG_ENABLED: z.string().default("true"),
+  ACTIVITY_LOG_RETENTION_HOURS: z.coerce.number().default(24),
+  ACTIVITY_LARGE_PAYLOAD_THRESHOLD_BYTES: z.coerce.number().default(5000),
+  ACTIVITY_BULK_OPERATION_THRESHOLD: z.coerce.number().default(5),
+  ACTIVITY_FLASH_MESSAGE_THRESHOLD_MS: z.coerce.number().default(500),
+  ACTIVITY_LONG_PROCESSING_THRESHOLD_MS: z.coerce.number().default(10000),
+
+  // Additional Anomaly Detection Thresholds
+  ACTIVITY_ZOMBIE_THRESHOLD_MULTIPLIER: z.coerce.number().default(2), // Message processing > N * ack_timeout
+  ACTIVITY_NEAR_DLQ_THRESHOLD: z.coerce.number().default(1), // Alert when attempts_remaining <= N
+  ACTIVITY_BURST_THRESHOLD_COUNT: z.coerce.number().default(50), // N dequeues within burst window
+  ACTIVITY_BURST_THRESHOLD_SECONDS: z.coerce.number().default(5), // Time window for burst detection
+
+  // SSE Events
   EVENTS_CHANNEL: z.string().default("queue_events"),
+
+  // Enqueue Buffering
+  ENQUEUE_BUFFER_ENABLED: z.string().default("false"),
+  ENQUEUE_BUFFER_MAX_SIZE: z.coerce.number().default(50),
+  ENQUEUE_BUFFER_MAX_WAIT_MS: z.coerce.number().default(100),
 });
 
 export type env = z.infer<typeof EnvSchema>;

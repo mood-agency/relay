@@ -3,6 +3,14 @@ import * as handlers from "./queue.handlers";
 import * as routes from "./queue.routes";
 
 const router = createRouter()
+  // Queue Management Routes (must be before specific queue routes)
+  .openapi(routes.createQueue, handlers.createQueueHandler)
+  .openapi(routes.listQueues, handlers.listQueuesHandler)
+  .openapi(routes.getQueue, handlers.getQueueHandler)
+  .openapi(routes.updateQueue, handlers.updateQueueHandler)
+  .openapi(routes.deleteQueue, handlers.deleteQueueHandler)
+  .openapi(routes.purgeQueue, handlers.purgeQueueHandler)
+  // Message Routes
   .openapi(routes.addMessage, handlers.addMessage)
   .openapi(routes.addBatch, handlers.addBatch)
   .openapi(routes.getMessage, handlers.getMessage)
@@ -35,7 +43,6 @@ const router = createRouter()
   // Activity Log Routes
   .openapi(routes.getActivityLogs, handlers.getActivityLogs)
   .openapi(routes.getMessageHistory, handlers.getMessageHistory)
-  .openapi(routes.getAnomalies, handlers.getAnomalies)
   .openapi(routes.getAnomalies, handlers.getAnomalies)
   .openapi(routes.getConsumerStats, handlers.getConsumerStats);
 

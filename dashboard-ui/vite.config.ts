@@ -11,7 +11,24 @@ export default defineConfig({
     },
     server: {
         proxy: {
-            '/api': 'http://localhost:3000'
+            // Separate SSE endpoint with specific settings
+            '/api/queue/events': {
+                target: 'http://localhost:3000',
+                changeOrigin: true,
+                // Disable buffering for SSE to stream properly
+                configure: (proxy) => {
+                    proxy.on('proxyRes', (proxyRes) => {
+                        // Ensure response is not buffered
+                        proxyRes.headers['cache-control'] = 'no-cache';
+                        proxyRes.headers['x-accel-buffering'] = 'no';
+                    });
+                }
+            },
+            // Regular API requests
+            '/api': {
+                target: 'http://localhost:3000',
+                changeOrigin: true,
+            }
         }
     },
     build: {

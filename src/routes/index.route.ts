@@ -5,7 +5,7 @@ import { jsonContent } from "stoker/openapi/helpers";
 const router = createRouter().openapi(
   createRoute({
     tags: ["index"],
-    description: "Redis Queue API Index",
+    description: "Relay Queue API Index",
     method: "get",
     path: "/",
     responses: {
@@ -13,13 +13,13 @@ const router = createRouter().openapi(
         z.object({
           message: z.string(),
         }),
-        "Redis Queue API Index"
+        "Relay Queue API Index"
       ),
     },
   }),
   (c) => {
     return c.json({
-      message: "Redis Queue API Index",
+      message: "Relay Queue API Index",
     });
   }
 );

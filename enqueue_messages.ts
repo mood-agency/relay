@@ -54,6 +54,7 @@ class QueueTester {
                         timestamp: Date.now() / 1000,
                     },
                     priority: priorities[Math.floor(Math.random() * priorities.length)],
+                    consumerId: 'producer-script-test',
                 });
             }
 

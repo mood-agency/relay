@@ -21,7 +21,8 @@ import {
     Pickaxe,
     XCircle,
     Check,
-    Archive
+    Archive,
+    Database,
 } from "lucide-react"
 
 import { format } from "date-fns"
@@ -60,6 +61,14 @@ import {
     TabsList,
     TabsTrigger,
 } from "@/components/ui/tabs"
+import {
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbLink,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
 
 // Activity Logs components
 import {
@@ -89,6 +98,9 @@ import {
     AcknowledgedQueueTable,
     ArchivedQueueTable,
 } from "@/components/queue"
+
+// Queue Management
+import { QueueManagement } from "@/components/queues"
 
 // ============================================================================
 // API Key Helpers
@@ -128,18 +140,30 @@ const parseQueueTab = (value: string | undefined): QueueTab => {
 
 export default function Dashboard() {
     // Router hooks
-    const params = useParams<{ tab?: string; messageId?: string }>()
+    const params = useParams<{ tab?: string; queueName?: string; messageId?: string }>()
     const navigate = useNavigate()
     const location = useLocation()
 
+    // Get current queue name from URL (null means we're on the queue list page)
+    const currentQueueName = params.queueName || null
+
     // Derive current view from URL path
-    const isLogsView = location.pathname.startsWith('/logs')
-    const currentView: DashboardView = isLogsView ? 'activity' : 'queues'
+    // /queues = queue list, /queues/:queueName/:tab = queue detail with messages or activity
+    // Activity tabs: activity, anomalies, consumers
+    const isQueueList = location.pathname === '/queues'
+    const isActivityView = ACTIVITY_TABS.includes(params.tab as ActivityTab)
+    const currentView: DashboardView = isQueueList ? 'queue-management' : (isActivityView ? 'activity' : 'queues')
 
     // Parse tabs from URL params
     const queueTab = parseQueueTab(params.tab)
     const activityTab = parseActivityTab(params.tab)
     // const messageIdFromUrl = params.messageId // Unused for now as we moved to dialog
+
+    // Refs for stable access in callbacks (must be defined before useQueueMessages)
+    const currentViewRef = useRef(currentView)
+    const activityTabRef = useRef(activityTab)
+    currentViewRef.current = currentView
+    activityTabRef.current = activityTab
 
     // API Key state
     const [apiKey, setApiKey] = useState<string>(getStoredApiKey)
@@ -154,21 +178,36 @@ export default function Dashboard() {
         return fetch(url, { ...options, headers })
     }, [apiKey])
 
+    // Refs for fetch functions (to avoid stale closures in onEvent callback)
+    const fetchActivityLogsRef = useRef<(silent?: boolean) => Promise<void>>()
+    const fetchAnomaliesRef = useRef<(silent?: boolean) => Promise<void>>()
+    const fetchConsumerStatsRef = useRef<() => Promise<void>>()
+
     // Use the queue messages hook with current queue tab
     const queue = useQueueMessages({
         authFetch,
         apiKey,
         queueTab,
+        queueName: currentQueueName || 'default',
         navigate,
-        onEvent: (type) => {
+        onEvent: () => {
             // Refresh activity logs on relevant events if we are on the activity view
-            // We refresh on 'requeue' (timeout movement) and other major events
+            // Use refs to avoid stale closure issues with currentView/activityTab
             // Use silent=true to avoid showing loading spinner on SSE-triggered updates
-            if (currentView === 'activity') {
-                if (activityTab === 'activity') fetchActivityLogs()
-                else if (activityTab === 'anomalies') fetchAnomalies(true)
-                else if (activityTab === 'consumers') fetchConsumerStats()
+            if (currentViewRef.current === 'activity') {
+                if (activityTabRef.current === 'activity') fetchActivityLogsRef.current?.(true)
+                else if (activityTabRef.current === 'anomalies') fetchAnomaliesRef.current?.(true)
+                else if (activityTabRef.current === 'consumers') fetchConsumerStatsRef.current?.()
             }
+        },
+        onActivityCleared: () => {
+            // Refresh activity data after clearing logs
+            setActivityLogs(null)
+            setAnomalies(null)
+            setConsumerStats(null)
+            fetchActivityLogsRef.current?.()
+            fetchAnomaliesRef.current?.()
+            fetchConsumerStatsRef.current?.()
         }
     })
 
@@ -207,7 +246,6 @@ export default function Dashboard() {
     const [anomalies, setAnomalies] = useState<AnomaliesResponse | null>(null)
     const [loadingAnomalies, setLoadingAnomalies] = useState(false)
     const [anomalySeverityFilter, setAnomalySeverityFilter] = useState<string>('')
-    const [anomalyActionFilter, setAnomalyActionFilter] = useState<string>('')
     const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<string>('')
     const [anomalySortBy, setAnomalySortBy] = useState<string>('timestamp')
     const [anomalySortOrder, setAnomalySortOrder] = useState<string>('desc')
@@ -221,18 +259,29 @@ export default function Dashboard() {
         messageId: null
     })
 
+    // Highlighted log IDs for activity logs (for animation on new entries)
+    const [highlightedLogIds, setHighlightedLogIds] = useState<Set<string>>(new Set())
 
+    // Ref for activity logs (for detecting new entries)
+    const activityLogsRef = useRef(activityLogs)
+
+    useEffect(() => {
+        activityLogsRef.current = activityLogs
+    }, [activityLogs])
 
     // Navigation helpers using react-router
     const navigateToActivityTab = useCallback((tab: ActivityTab) => {
-        navigate(`/logs/${tab}`)
-    }, [navigate])
+        // Activity sub-tabs are within the queue context
+        const queueName = currentQueueName || 'default'
+        navigate(`/queues/${queueName}/${tab}`)
+    }, [navigate, currentQueueName])
 
     // Activity Log fetch functions
-    const fetchActivityLogs = useCallback(async () => {
-        setLoadingActivity(true)
+    const fetchActivityLogs = useCallback(async (silent = false) => {
+        if (!silent) setLoadingActivity(true)
         try {
             const params = new URLSearchParams()
+            if (currentQueueName) params.append('queue_name', currentQueueName)
             if (activityFilter.action) params.append('action', activityFilter.action)
             if (activityFilter.message_id) params.append('message_id', activityFilter.message_id)
             if (activityFilter.has_anomaly !== null) params.append('has_anomaly', String(activityFilter.has_anomaly))
@@ -242,21 +291,47 @@ export default function Dashboard() {
             const response = await authFetch(`/api/queue/activity?${params.toString()}`)
             if (response.ok) {
                 const data = await response.json()
+
+                // Detect new logs for highlighting (only on silent/SSE updates)
+                if (silent && activityLogsRef.current?.logs) {
+                    const existingIds = new Set(activityLogsRef.current.logs.map((l: { log_id: string }) => l.log_id))
+                    const newLogIds = data.logs
+                        .filter((l: { log_id: string }) => !existingIds.has(l.log_id))
+                        .map((l: { log_id: string }) => l.log_id)
+
+                    if (newLogIds.length > 0) {
+                        // Add to highlighted set
+                        setHighlightedLogIds(prev => {
+                            const next = new Set(prev)
+                            newLogIds.forEach((id: string) => next.add(id))
+                            return next
+                        })
+                        // Remove highlight after animation
+                        setTimeout(() => {
+                            setHighlightedLogIds(prev => {
+                                const next = new Set(prev)
+                                newLogIds.forEach((id: string) => next.delete(id))
+                                return next
+                            })
+                        }, 2000)
+                    }
+                }
+
                 setActivityLogs(data)
             }
         } catch (err) {
             console.error('Failed to fetch activity logs:', err)
         } finally {
-            setLoadingActivity(false)
+            if (!silent) setLoadingActivity(false)
         }
-    }, [authFetch, activityFilter])
+    }, [authFetch, activityFilter, currentQueueName])
 
     const fetchAnomalies = useCallback(async (silent = false) => {
         if (!silent) setLoadingAnomalies(true)
         try {
             const params = new URLSearchParams()
+            if (currentQueueName) params.append('queue_name', currentQueueName)
             if (anomalySeverityFilter) params.append('severity', anomalySeverityFilter)
-            if (anomalyActionFilter) params.append('action', anomalyActionFilter)
             if (anomalyTypeFilter) params.append('type', anomalyTypeFilter)
             params.append('sort_by', anomalySortBy)
             params.append('sort_order', anomalySortOrder)
@@ -275,7 +350,7 @@ export default function Dashboard() {
         } finally {
             if (!silent) setLoadingAnomalies(false)
         }
-    }, [authFetch, anomalySeverityFilter, anomalyActionFilter, anomalyTypeFilter, anomalySortBy, anomalySortOrder])
+    }, [authFetch, anomalySeverityFilter, anomalyTypeFilter, anomalySortBy, anomalySortOrder, currentQueueName])
 
     const fetchMessageHistory = useCallback(async (messageId: string) => {
         if (!messageId) {
@@ -311,6 +386,19 @@ export default function Dashboard() {
         }
     }, [authFetch])
 
+    // Update refs for fetch functions (used in onEvent callback to avoid stale closures)
+    useEffect(() => {
+        fetchActivityLogsRef.current = fetchActivityLogs
+    }, [fetchActivityLogs])
+
+    useEffect(() => {
+        fetchAnomaliesRef.current = fetchAnomalies
+    }, [fetchAnomalies])
+
+    useEffect(() => {
+        fetchConsumerStatsRef.current = fetchConsumerStats
+    }, [fetchConsumerStats])
+
     // Effect to fetch activity data when view/tab changes
     useEffect(() => {
         if (currentView === 'activity') {
@@ -340,7 +428,7 @@ export default function Dashboard() {
         if (currentView === 'activity' && activityTab === 'anomalies') {
             fetchAnomalies()
         }
-    }, [anomalySortBy, anomalySortOrder, anomalySeverityFilter, anomalyActionFilter, anomalyTypeFilter, currentView, activityTab, fetchAnomalies])
+    }, [anomalySortBy, anomalySortOrder, anomalySeverityFilter, anomalyTypeFilter, currentView, activityTab, fetchAnomalies])
 
     // Move messages handler (wraps the hook's handler with dialog state)
     const handleMoveMessages = useCallback(async () => {
@@ -382,58 +470,85 @@ export default function Dashboard() {
 
                 {/* Header with Title and Actions */}
                 <Tabs
-                    value={currentView}
+                    value={currentView === 'queue-management' ? 'queue-management' : (isActivityView ? 'activity' : 'queues')}
                     onValueChange={(v) => {
-                        if (v === 'queues') {
-                            navigate(`/queue/${queueTab}`)
-                        } else {
-                            navigate('/logs/activity')
+                        if (currentQueueName) {
+                            // We're viewing a specific queue - switch between messages and activity
+                            if (v === 'queues') {
+                                navigate(`/queues/${currentQueueName}/main`)
+                            } else if (v === 'activity') {
+                                navigate(`/queues/${currentQueueName}/activity`)
+                            }
                         }
                     }}
                     className="flex flex-col flex-1 min-h-0 gap-4"
                 >
                     <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-1 w-[300px]">
-                            <h1 className="text-lg font-bold tracking-tight text-foreground mr-1">Relay</h1>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        onClick={() => {
-                                            queue.handleRefresh()
-                                            if (currentView === 'activity') {
-                                                if (activityTab === 'activity') fetchActivityLogs()
-                                                else if (activityTab === 'anomalies') fetchAnomalies()
-                                                else if (activityTab === 'consumers') fetchConsumerStats()
-                                            }
-                                        }}
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="Refresh"
-                                    >
-                                        <RefreshCw className={cn("h-3.5 w-3.5", (queue.loadingMessages || queue.loadingStatus || loadingActivity || loadingAnomalies || loadingConsumerStats) && "animate-spin")} />
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Refresh</p>
-                                </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        onClick={queue.handleToggleAutoRefresh}
-                                        variant="ghost"
-                                        size="icon"
-                                        className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
-                                        aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
-                                    >
-                                        {queue.autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
-                                </TooltipContent>
-                            </Tooltip>
+                            <Breadcrumb>
+                                <BreadcrumbList className="text-sm flex-nowrap">
+                                    <BreadcrumbItem>
+                                        <BreadcrumbLink
+                                            onClick={() => navigate('/queues')}
+                                            className={cn(
+                                                "font-medium cursor-pointer",
+                                                !currentQueueName && "text-foreground pointer-events-none"
+                                            )}
+                                        >
+                                            Relay
+                                        </BreadcrumbLink>
+                                    </BreadcrumbItem>
+                                    <BreadcrumbSeparator className={cn(!currentQueueName && "hidden")} />
+                                    <BreadcrumbItem className={cn(!currentQueueName && "hidden")}>
+                                        <BreadcrumbPage>
+                                            {currentQueueName}
+                                        </BreadcrumbPage>
+                                    </BreadcrumbItem>
+                                </BreadcrumbList>
+                            </Breadcrumb>
+                            {!isQueueList && (
+                                <>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                onClick={() => {
+                                                    queue.handleRefresh()
+                                                    if (currentView === 'activity') {
+                                                        if (activityTab === 'activity') fetchActivityLogs()
+                                                        else if (activityTab === 'anomalies') fetchAnomalies()
+                                                        else if (activityTab === 'consumers') fetchConsumerStats()
+                                                    }
+                                                }}
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                aria-label="Refresh"
+                                            >
+                                                <RefreshCw className={cn("h-3.5 w-3.5", (queue.loadingMessages || queue.loadingStatus || loadingActivity || loadingAnomalies || loadingConsumerStats) && "animate-spin")} />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>Refresh</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                onClick={queue.handleToggleAutoRefresh}
+                                                variant="ghost"
+                                                size="icon"
+                                                className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
+                                                aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
+                                            >
+                                                {queue.autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </>
+                            )}
                             {queue.selectedIds.size > 0 && (
                                 <>
                                     <div className="w-px h-5 bg-border/50 mx-1" />
@@ -478,19 +593,23 @@ export default function Dashboard() {
                             )}
                         </div>
 
-                        {/* Center Tabs */}
+                        {/* Center Tabs - only show when viewing a specific queue */}
                         <div className="flex-1 flex justify-center">
-                            <TabsList className="grid w-[400px] grid-cols-2">
-                                <TabsTrigger value="queues">
-                                    Messages
-                                </TabsTrigger>
-                                <TabsTrigger value="activity" className="flex items-center gap-2">
-                                    Activity
-                                    {anomalies && anomalies.summary.by_severity.critical > 0 && (
-                                        <span className="h-2 w-2 bg-destructive rounded-full animate-pulse" />
-                                    )}
-                                </TabsTrigger>
-                            </TabsList>
+                            {currentQueueName ? (
+                                <TabsList className="grid w-[300px] grid-cols-2">
+                                    <TabsTrigger value="queues">
+                                        Messages
+                                    </TabsTrigger>
+                                    <TabsTrigger value="activity" className="flex items-center gap-2">
+                                        Activity
+                                        {(anomalies?.summary?.by_severity?.critical ?? 0) > 0 && (
+                                            <span className="h-2 w-2 bg-destructive rounded-full animate-pulse" />
+                                        )}
+                                    </TabsTrigger>
+                                </TabsList>
+                            ) : (
+                                <h2 className="text-lg font-semibold">Queues</h2>
+                            )}
                         </div>
 
                         <div className="flex items-center justify-end gap-1 w-[300px]">
@@ -817,8 +936,8 @@ export default function Dashboard() {
                         {/* Activity Sub-tabs */}
                         <div className="flex items-center border-b bg-muted/20">
                             {[
-                                { id: 'activity' as const, icon: FileText, label: 'All Logs' },
-                                { id: 'anomalies' as const, icon: AlertCircle, label: 'Anomalies', count: anomalies?.summary.total },
+                                { id: 'activity' as const, icon: FileText, label: 'All Logs', count: activityLogs?.pagination?.total },
+                                { id: 'anomalies' as const, icon: AlertCircle, label: 'Anomalies', count: anomalies?.summary?.total },
                                 { id: 'consumers' as const, icon: User, label: 'Consumers', count: consumerStats ? Object.keys(consumerStats.stats).length : undefined },
                             ].map((tab) => {
                                 const Icon = tab.icon
@@ -837,13 +956,13 @@ export default function Dashboard() {
                                     >
                                         <Icon className={cn(
                                             "h-3.5 w-3.5",
-                                            tab.id === 'anomalies' && anomalies && anomalies.summary.by_severity.critical > 0 && "text-destructive"
+                                            tab.id === 'anomalies' && (anomalies?.summary?.by_severity?.critical ?? 0) > 0 && "text-destructive"
                                         )} />
                                         {tab.label}
                                         {typeof tab.count === 'number' && tab.count > 0 && (
                                             <span className={cn(
                                                 "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
-                                                tab.id === 'anomalies' && anomalies && anomalies.summary.by_severity.critical > 0
+                                                tab.id === 'anomalies' && (anomalies?.summary?.by_severity?.critical ?? 0) > 0
                                                     ? "bg-destructive/10 text-destructive"
                                                     : "bg-muted text-muted-foreground"
                                             )}>
@@ -877,6 +996,7 @@ export default function Dashboard() {
                                         fetchMessageHistory(msgId)
                                         setHistoryDialog({ isOpen: true, messageId: msgId })
                                     }}
+                                    highlightedIds={highlightedLogIds}
                                     // Filter props
                                     filterAction={activityFilter.action}
                                     setFilterAction={(value) => setActivityFilter(prev => ({ ...prev, action: value, offset: 0 }))}
@@ -892,8 +1012,6 @@ export default function Dashboard() {
                                     loading={loadingAnomalies}
                                     severityFilter={anomalySeverityFilter}
                                     setSeverityFilter={setAnomalySeverityFilter}
-                                    actionFilter={anomalyActionFilter}
-                                    setActionFilter={setAnomalyActionFilter}
                                     typeFilter={anomalyTypeFilter}
                                     setTypeFilter={setAnomalyTypeFilter}
                                     sortBy={anomalySortBy}
@@ -914,6 +1032,15 @@ export default function Dashboard() {
                             )}
                         </div>
                     </TabsContent>
+
+                    {isQueueList && (
+                        <div className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col">
+                            <QueueManagement
+                                authFetch={authFetch}
+                                onQueueSelect={(queueName) => navigate(`/queues/${queueName}/main`)}
+                            />
+                        </div>
+                    )}
                 </Tabs >
             </div >
 

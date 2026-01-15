@@ -22,8 +22,10 @@ export interface UseQueueMessagesOptions {
     authFetch: (url: string, options?: RequestInit) => Promise<Response>
     apiKey: string
     queueTab: QueueTab
+    queueName?: string // The queue name from URL (e.g., "default", "orders", etc.)
     navigate: NavigateFunction
     onEvent?: (type: string, payload: any) => void
+    onActivityCleared?: () => void
 }
 
 export interface UseQueueMessagesReturn {
@@ -206,7 +208,7 @@ const buildSearchParams = (state: Omit<DashboardState, 'queue'>, queueTab: Queue
 // Main Hook
 // ============================================================================
 
-export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEvent }: UseQueueMessagesOptions): UseQueueMessagesReturn {
+export function useQueueMessages({ authFetch, apiKey, queueTab, queueName = 'default', navigate, onEvent, onActivityCleared }: UseQueueMessagesOptions): UseQueueMessagesReturn {
     // Use search params and location from react-router
     const [searchParams] = useSearchParams()
     const location = useLocation()
@@ -285,6 +287,8 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
 
     // Highlight State
     const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set())
+    const highlightRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const HIGHLIGHT_DURATION_MS = 2000
 
     // Throttling Ref
     const lastStatusFetchRef = useRef(0)
@@ -335,7 +339,11 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
 
     const fetchStatus = useCallback(async (includeMessages = true) => {
         try {
-            const response = await authFetch(`/api/queue/status${!includeMessages ? '?include_messages=false' : ''}`)
+            const params = new URLSearchParams()
+            if (!includeMessages) params.append('include_messages', 'false')
+            if (queueName) params.append('queueName', queueName)
+            const queryString = params.toString()
+            const response = await authFetch(`/api/queue/status${queryString ? '?' + queryString : ''}`)
             if (!response.ok) {
                 let errorMsg = `HTTP ${response.status}: ${response.statusText}`
                 try {
@@ -370,7 +378,7 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
         } finally {
             setLoadingStatus(false)
         }
-    }, [authFetch])
+    }, [authFetch, queueName])
 
     const fetchMessages = useCallback(async (silent = false) => {
         const currentTab = activeTab
@@ -390,6 +398,9 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
             if (startDate) params.append('startDate', startDate.toISOString())
             if (endDate) params.append('endDate', endDate.toISOString())
             if (search) params.append('search', search)
+            if (queueName) params.append('queueName', queueName)
+
+            console.log('DEBUG fetchMessages: queueName=', queueName, 'params=', params.toString())
 
             const response = await authFetch(`/api/queue/${currentTab}/messages?${params.toString()}`)
             if (!response.ok) {
@@ -416,7 +427,7 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
             if (currentTab !== activeTabRef.current) return
             if (!silent) setLoadingMessages(false)
         }
-    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search, authFetch])
+    }, [activeTab, currentPage, pageSize, sortBy, sortOrder, filterType, filterPriority, filterAttempts, startDate, endDate, search, queueName, authFetch])
 
     const fetchAll = useCallback((silent = false) => {
         fetchStatus()
@@ -552,21 +563,23 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
                     }
                 })
 
-                // Batch highlight animation
-                setTimeout(() => {
-                    setHighlightedIds(prev => {
-                        const next = new Set(prev)
-                        allNewIds.forEach(id => next.add(id))
-                        return next
-                    })
-                    setTimeout(() => {
-                        setHighlightedIds(prev => {
-                            const next = new Set(prev)
-                            allNewIds.forEach(id => next.delete(id))
-                            return next
-                        })
-                    }, 2000)
-                }, 0)
+                // Debounced highlight animation:
+                // Add new IDs immediately, but debounce the removal so all highlights
+                // clear together after the last batch arrives
+                setHighlightedIds(prev => {
+                    const next = new Set(prev)
+                    allNewIds.forEach(id => next.add(id))
+                    return next
+                })
+
+                // Cancel any pending removal and schedule a new one
+                if (highlightRemovalTimeoutRef.current) {
+                    clearTimeout(highlightRemovalTimeoutRef.current)
+                }
+                highlightRemovalTimeoutRef.current = setTimeout(() => {
+                    setHighlightedIds(new Set()) // Clear all highlights at once
+                    highlightRemovalTimeoutRef.current = null
+                }, HIGHLIGHT_DURATION_MS)
             }
         }
 
@@ -699,6 +712,10 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
                 clearTimeout(batchTimeoutRef.current)
                 batchTimeoutRef.current = null
             }
+            if (highlightRemovalTimeoutRef.current) {
+                clearTimeout(highlightRemovalTimeoutRef.current)
+                highlightRemovalTimeoutRef.current = null
+            }
         }
     }, [autoRefresh, fetchAll, apiKey, processBatchedEvents])
 
@@ -803,13 +820,13 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
             search,
         }, tab)
 
-        navigate(`/queue/${tab}${searchStr}`)
+        navigate(`/queues/${queueName}/${tab}${searchStr}`)
 
         // Clear flag after navigation (use setTimeout to ensure it happens after React batches updates)
         setTimeout(() => {
             isNavigatingRef.current = false
         }, 0)
-    }, [navigate, endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate])
+    }, [navigate, queueName, endDate, filterAttempts, filterPriority, filterType, pageSize, search, startDate])
 
     const handleRefresh = useCallback(() => {
         fetchAll()
@@ -883,14 +900,13 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
         setConfirmDialog({
             isOpen: true,
             title: "Clear Activity Logs",
-            description: "Are you sure you want to clear the activity logs? This action cannot be undone.",
+            description: "Are you sure you want to clear the activity logs and anomalies? This action cannot be undone.",
             action: async () => {
                 try {
                     const response = await authFetch('/api/queue/activity/clear', { method: 'DELETE' })
                     if (response.ok) {
-                        // If we are on Activity tab, we might want to refresh. 
-                        // But fetchAll refreshes everything so it's fine.
                         fetchAll()
+                        onActivityCleared?.()
                     }
                     else {
                         const err = await response.json()
@@ -901,7 +917,7 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
                 }
             }
         })
-    }, [authFetch, fetchAll])
+    }, [authFetch, fetchAll, onActivityCleared])
 
     const handleSaveEdit = useCallback(async (id: string, queueType: string, updates: any) => {
         try {
@@ -1137,8 +1153,10 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, navigate, onEven
     }, [activeTab])
 
     const formatTimestamp = useCallback((ts?: number) => {
-        if (!ts) return "N/A"
-        return format(new Date(ts * 1000), "dd MMM, yyyy HH:mm:ss.SSS")
+        if (!ts || !Number.isFinite(ts)) return "N/A"
+        const date = new Date(ts * 1000)
+        if (isNaN(date.getTime())) return "N/A"
+        return format(date, "dd MMM, yyyy HH:mm:ss.SSS")
     }, [])
 
     // =========================================================================

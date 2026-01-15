@@ -15,7 +15,11 @@ import {
     TooltipContent,
     TooltipTrigger,
     Badge,
-    cn
+    cn,
+    tableStyles,
+    useCursorTooltip,
+    CursorTooltip,
+    HighlightableTableRow
 } from "@/components/queue/QueueTableBase"
 import {
     useElementHeight,
@@ -68,27 +72,62 @@ const SortableHeader = ({
     const isActive = currentSort.column === column
     return (
         <TableHead
-            className={cn(
-                "sticky top-0 z-20 bg-card font-semibold text-foreground text-xs cursor-pointer select-none hover:bg-muted/50 transition-colors",
-                className
-            )}
+            className={cn(tableStyles.TABLE_HEADER_SORTABLE, className)}
             onClick={() => onSort(column)}
         >
-            <div className="flex items-center gap-1">
+            <div className={tableStyles.FLEX_INLINE}>
                 <span>{label}</span>
                 {isActive ? (
                     currentSort.direction === 'asc' ? (
-                        <ArrowUp className="h-3 w-3" />
+                        <ArrowUp className={tableStyles.SORT_ICON} />
                     ) : (
-                        <ArrowDown className="h-3 w-3" />
+                        <ArrowDown className={tableStyles.SORT_ICON} />
                     )
                 ) : (
-                    <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
+                    <ArrowUpDown className={tableStyles.SORT_ICON_INACTIVE} />
                 )}
             </div>
         </TableHead>
     )
 }
+
+// ============================================================================
+// Payload Cell with Cursor Tooltip for Activity Logs
+// ============================================================================
+
+const ActivityPayloadCell = React.memo(({ payload }: { payload: any }) => {
+    const { isHovered, mousePos, handlers } = useCursorTooltip()
+
+    return (
+        <>
+            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD)} {...handlers}>
+                <div className={tableStyles.FLEX_INLINE}>
+                    <span className={cn("truncate", tableStyles.TEXT_PAYLOAD)}>
+                        {JSON.stringify(payload)}
+                    </span>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+                            toast.success("Payload copied to clipboard")
+                        }}
+                        className={tableStyles.BUTTON_COPY_PAYLOAD}
+                        tabIndex={-1}
+                        title="Copy payload"
+                    >
+                        <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </button>
+                </div>
+            </TableCell>
+            <CursorTooltip isVisible={isHovered} mousePos={mousePos}>
+                <pre className={tableStyles.TOOLTIP_CODE}>
+                    <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(payload, null, 2)) }} />
+                </pre>
+            </CursorTooltip>
+        </>
+    )
+})
 
 // ============================================================================
 // Activity Log Row Component
@@ -97,24 +136,26 @@ const SortableHeader = ({
 const ActivityLogRow = React.memo(({
     log,
     formatTime,
-    onViewMessageHistory
+    onViewMessageHistory,
+    isHighlighted = false
 }: {
     log: ActivityLogEntry,
     formatTime: (ts?: number) => string,
-    onViewMessageHistory?: (messageId: string) => void
+    onViewMessageHistory?: (messageId: string) => void,
+    isHighlighted?: boolean
 }) => (
-    <TableRow className={cn(
-        "group transition-colors duration-150 border-muted/30",
-        log.anomaly && log.anomaly.severity === 'critical' && "bg-destructive/5"
-    )}>
-        <TableCell className="max-w-[120px] group/id">
+    <HighlightableTableRow
+        isHighlighted={isHighlighted}
+        isCritical={log.anomaly?.severity === 'critical'}
+    >
+        <TableCell className={cn("max-w-[120px]", tableStyles.TABLE_CELL_ID)}>
             {log.message_id ? (
-                <div className="flex items-center gap-1">
+                <div className={tableStyles.FLEX_INLINE}>
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <button
                                 onClick={() => onViewMessageHistory?.(log.message_id!)}
-                                className="text-xs text-foreground font-mono hover:text-primary hover:underline cursor-pointer truncate"
+                                className={tableStyles.TEXT_ID_LINK}
                                 title={log.message_id}
                             >
                                 {log.message_id}
@@ -132,7 +173,7 @@ const ActivityLogRow = React.memo(({
                             navigator.clipboard.writeText(log.message_id!)
                             toast.success("ID copied to clipboard")
                         }}
-                        className="opacity-0 group-hover/id:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
+                        className={tableStyles.BUTTON_COPY_ID}
                         tabIndex={-1}
                         title="Copy ID"
                     >
@@ -140,14 +181,14 @@ const ActivityLogRow = React.memo(({
                     </button>
                 </div>
             ) : (
-                <span className="text-muted-foreground text-xs">—</span>
+                <span className={tableStyles.TEXT_MUTED}>—</span>
             )}
         </TableCell>
-        <TableCell className="text-xs text-foreground whitespace-nowrap">
+        <TableCell className={tableStyles.TABLE_CELL_TIME}>
             {formatTime(log.timestamp)}
         </TableCell>
         <TableCell>{getActionBadge(log.action)}</TableCell>
-        <TableCell className="text-xs text-foreground">
+        <TableCell className={tableStyles.TEXT_PRIMARY}>
             {log.source_queue && log.dest_queue ? (
                 <span className="flex items-center gap-1">
                     <span>{log.source_queue}</span>
@@ -158,43 +199,17 @@ const ActivityLogRow = React.memo(({
                 log.queue
             )}
         </TableCell>
-        <TableCell className="text-xs font-mono text-foreground" title={log.consumer_id || ''}>
+        <TableCell className={cn(tableStyles.TEXT_MONO, "text-foreground")} title={log.consumer_id || ''}>
             {log.consumer_id || '—'}
         </TableCell>
-        <TableCell className="max-w-[200px] cursor-default group/payload">
-            {log.payload ? (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1">
-                            <span className="text-xs font-mono truncate text-muted-foreground group-hover/payload:text-foreground transition-colors">
-                                {JSON.stringify(log.payload)}
-                            </span>
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    e.preventDefault()
-                                    navigator.clipboard.writeText(JSON.stringify(log.payload, null, 2))
-                                    toast.success("Payload copied to clipboard")
-                                }}
-                                className="opacity-0 group-hover/payload:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"
-                                tabIndex={-1}
-                                title="Copy payload"
-                            >
-                                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                            </button>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[400px] max-h-[300px] overflow-auto p-0">
-                        <pre className="text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto">
-                            <code dangerouslySetInnerHTML={{ __html: syntaxHighlightJson(JSON.stringify(log.payload, null, 2)) }} />
-                        </pre>
-                    </TooltipContent>
-                </Tooltip>
-            ) : (
-                <span className="text-muted-foreground text-xs">—</span>
-            )}
-        </TableCell>
-    </TableRow>
+        {log.payload ? (
+            <ActivityPayloadCell payload={log.payload} />
+        ) : (
+            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD)}>
+                <span className={tableStyles.TEXT_MUTED}>—</span>
+            </TableCell>
+        )}
+    </HighlightableTableRow>
 ))
 
 // ============================================================================
@@ -215,6 +230,7 @@ export interface ActivityLogsTableProps {
     isFilterActive?: boolean
     activeFiltersDescription?: string
     onViewMessageHistory?: (messageId: string) => void
+    highlightedIds?: Set<string>
     // Filter props
     filterAction?: string
     setFilterAction?: (value: string) => void
@@ -238,6 +254,7 @@ export const ActivityLogsTable = React.memo(({
     isFilterActive,
     activeFiltersDescription,
     onViewMessageHistory,
+    highlightedIds,
     // Filter props
     filterAction,
     setFilterAction,
@@ -317,16 +334,17 @@ export const ActivityLogsTable = React.memo(({
             log={log}
             formatTime={formatTime}
             onViewMessageHistory={onViewMessageHistory}
+            isHighlighted={highlightedIds?.has(log.log_id) ?? false}
         />
     )
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className={tableStyles.TABLE_CONTAINER}>
             <ScrollArea
                 viewportRef={scrollContainerRef}
-                className="relative flex-1 min-h-0"
-                viewportClassName="bg-card"
-                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
+                className={tableStyles.SCROLL_AREA}
+                viewportClassName={tableStyles.SCROLL_AREA_VIEWPORT}
+                scrollBarClassName={tableStyles.SCROLL_BAR}
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <div
@@ -334,30 +352,30 @@ export const ActivityLogsTable = React.memo(({
                 >
                     <Table>
                         <TableHeader>
-                            <TableRow className="hover:bg-transparent border-b border-border/50">
+                            <TableRow className={tableStyles.TABLE_ROW_HEADER}>
                                 <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className="w-[120px]" />
                                 <SortableHeader column="timestamp" label="Timestamp" currentSort={sort} onSort={handleSort} className="w-[180px]" />
                                 <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[90px]" />
                                 <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                                <SortableHeader column="consumer_id" label="Consumer" currentSort={sort} onSort={handleSort} className="w-[180px]" />
+                                <SortableHeader column="consumer_id" label="Actor" currentSort={sort} onSort={handleSort} className="w-[180px]" />
                                 <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
                                 {hasFilterProps && (
-                                    <TableHead className="sticky top-0 z-20 bg-card text-right pr-2 w-[50px]">
+                                    <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
                                         <Popover open={filterOpen} onOpenChange={setFilterOpen}>
                                             <PopoverTrigger asChild>
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    className={cn("h-7 w-7 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                                    className={cn(tableStyles.BUTTON_FILTER, isFilterActive && tableStyles.BUTTON_FILTER_ACTIVE)}
                                                     aria-label="Log Filters"
                                                 >
                                                     <Filter className="h-3.5 w-3.5" />
                                                     {isFilterActive && (
-                                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                                        <span className={tableStyles.FILTER_INDICATOR_DOT} />
                                                     )}
                                                 </Button>
                                             </PopoverTrigger>
-                                            <PopoverContent className="w-72 p-4" align="end">
+                                            <PopoverContent className={tableStyles.FILTER_POPOVER} align="end">
                                                 <div className="space-y-4">
                                                     <div className="flex items-center justify-between">
                                                         <h4 className="font-medium text-sm">Log Filters</h4>
@@ -370,7 +388,7 @@ export const ActivityLogsTable = React.memo(({
                                                                     setFilterMessageId!("")
                                                                     setFilterHasAnomaly!(null)
                                                                 }}
-                                                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                                className={tableStyles.FILTER_CLEAR_BUTTON}
                                                             >
                                                                 Clear all
                                                             </Button>
@@ -378,20 +396,20 @@ export const ActivityLogsTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Message ID</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Message ID</label>
                                                         <div className="relative">
                                                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                                                             <input
                                                                 placeholder="Search by message ID..."
                                                                 value={filterMessageId || ''}
                                                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterMessageId!(e.target.value)}
-                                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                                className={tableStyles.FILTER_INPUT}
                                                             />
                                                         </div>
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Action</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Action</label>
                                                         <Select value={filterAction || "any"} onValueChange={(val: string) => setFilterAction!(val === "any" ? "" : val)}>
                                                             <SelectTrigger className="w-full">
                                                                 <SelectValue placeholder="Any" />
@@ -410,7 +428,7 @@ export const ActivityLogsTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Has Anomaly</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Has Anomaly</label>
                                                         <Select
                                                             value={filterHasAnomaly === null ? "any" : filterHasAnomaly ? "yes" : "no"}
                                                             onValueChange={(val: string) => setFilterHasAnomaly!(val === "any" ? null : val === "yes")}
@@ -435,8 +453,8 @@ export const ActivityLogsTable = React.memo(({
                         <TableBody>
                             {sortedLogs.length === 0 ? (
                                 !loading && (
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableCell colSpan={colSpan} className="h-[400px] p-0">
+                                    <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+                                        <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_EMPTY}>
                                             <EmptyState
                                                 icon={isFilterActive ? Search : FileText}
                                                 title="No activity logs found"
@@ -450,14 +468,14 @@ export const ActivityLogsTable = React.memo(({
                             ) : shouldVirtualize && virtual ? (
                                 <>
                                     {virtual.topSpacerHeight > 0 && (
-                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.topSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                         </TableRow>
                                     )}
                                     {virtual.visibleItems.map(renderRow)}
                                     {virtual.bottomSpacerHeight > 0 && (
-                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.bottomSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                         </TableRow>
                                     )}
                                 </>

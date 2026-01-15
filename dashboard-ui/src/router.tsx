@@ -20,20 +20,23 @@ export const router = createBrowserRouter([
         path: '/',
         element: <RootLayout />,
         children: [
-            // Redirect root to /queue/main
-            { index: true, element: <Navigate to="/queue/main" replace /> },
-            
-            // Queue routes
-            { path: 'queue/:tab', element: <Dashboard /> },
-            
-            // Log routes
-            { path: 'logs/:tab', element: <Dashboard /> },
-            
-            // Message history with specific ID
-            { path: 'logs/history/:messageId', element: <Dashboard /> },
-            
-            // Catch-all redirect to queue/main
-            { path: '*', element: <Navigate to="/queue/main" replace /> },
+            // Redirect root to /queues (queue list)
+            { index: true, element: <Navigate to="/queues" replace /> },
+
+            // Queue list (landing page)
+            { path: 'queues', element: <Dashboard /> },
+
+            // Queue detail view with messages/activity tabs
+            // :tab can be: main, processing, dead, acknowledged, archived (queue views)
+            //              activity, anomalies, consumers (activity views)
+            { path: 'queues/:queueName/:tab', element: <Dashboard /> },
+
+            // Redirect old routes to new structure
+            { path: 'queue/:tab', element: <Navigate to="/queues/default/main" replace /> },
+            { path: 'logs/:tab', element: <Navigate to="/queues/default/activity" replace /> },
+
+            // Catch-all redirect to queues list
+            { path: '*', element: <Navigate to="/queues" replace /> },
         ],
     },
 ])

@@ -14,6 +14,7 @@ import {
     AckTimeoutCell,
     TimeCell,
     EmptyTableBody,
+    HighlightableTableRow,
     Table,
     TableBody,
     TableHead,
@@ -24,7 +25,8 @@ import {
     PaginationFooter,
     ScrollArea,
     cn,
-    Message
+    Message,
+    tableStyles
 } from "./QueueTableBase"
 import { Button } from "@/components/ui/button"
 import {
@@ -63,7 +65,7 @@ const AcknowledgedQueueRow = React.memo(({
     formatTime: (ts?: number) => string,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
-    <TableRow className={cn("group transition-colors duration-150 border-muted/30", isHighlighted && "animate-highlight", isSelected && "bg-primary/10")}>
+    <HighlightableTableRow isHighlighted={isHighlighted} isSelected={isSelected}>
         <SelectCell id={msg.id} isSelected={isSelected} onToggleSelect={onToggleSelect} />
         <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
         <TypeCell type={msg.type} />
@@ -75,7 +77,7 @@ const AcknowledgedQueueRow = React.memo(({
             maxAttempts={msg.custom_max_attempts ?? config?.max_attempts}
         />
         <AckTimeoutCell customTimeout={msg.custom_ack_timeout} configTimeout={config?.ack_timeout_seconds} />
-    </TableRow>
+    </HighlightableTableRow>
 ))
 
 // ============================================================================
@@ -160,12 +162,12 @@ export const AcknowledgedQueueTable = React.memo(({
     )
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className={tableStyles.TABLE_CONTAINER}>
             <ScrollArea
                 viewportRef={scrollContainerRef}
-                className="relative flex-1 min-h-0"
-                viewportClassName="bg-card"
-                scrollBarClassName="mt-12 h-[calc(100%-3rem)]"
+                className={tableStyles.SCROLL_AREA}
+                viewportClassName={tableStyles.SCROLL_AREA_VIEWPORT}
+                scrollBarClassName={tableStyles.SCROLL_BAR}
                 onScroll={shouldVirtualize ? (e: React.UIEvent<HTMLDivElement>) => setScrollTop(e.currentTarget.scrollTop) : undefined}
             >
                 <div
@@ -173,11 +175,11 @@ export const AcknowledgedQueueTable = React.memo(({
                 >
                     <Table>
                         <TableHeader>
-                            <TableRow className="hover:bg-transparent border-b border-border/50">
-                                <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
+                            <TableRow className={tableStyles.TABLE_ROW_HEADER}>
+                                <TableHead className={tableStyles.TABLE_HEADER_CHECKBOX}>
                                     <input
                                         type="checkbox"
-                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                        className={tableStyles.INPUT_CHECKBOX}
                                         checked={allSelected}
                                         onChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                     />
@@ -188,24 +190,24 @@ export const AcknowledgedQueueTable = React.memo(({
                                 <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <SortableHeader label="Ack At" field="acknowledged_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Ack Timeout</TableHead>
+                                <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack Timeout</TableHead>
                                 {hasFilterProps && (
-                                    <TableHead className="sticky top-0 z-20 bg-card text-right pr-2 w-[50px]">
+                                    <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
                                         <Popover open={filterOpen} onOpenChange={setFilterOpen}>
                                             <PopoverTrigger asChild>
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    className={cn("h-7 w-7 relative", isFilterActive && "bg-primary/10 text-primary")}
+                                                    className={cn(tableStyles.BUTTON_FILTER, isFilterActive && tableStyles.BUTTON_FILTER_ACTIVE)}
                                                     aria-label="Message Filters"
                                                 >
                                                     <Filter className="h-3.5 w-3.5" />
                                                     {isFilterActive && (
-                                                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-primary rounded-full" />
+                                                        <span className={tableStyles.FILTER_INDICATOR_DOT} />
                                                     )}
                                                 </Button>
                                             </PopoverTrigger>
-                                            <PopoverContent className="w-72 p-4" align="end">
+                                            <PopoverContent className={tableStyles.FILTER_POPOVER} align="end">
                                                 <div className="space-y-4">
                                                     <div className="flex items-center justify-between">
                                                         <h4 className="font-medium text-sm">Message Filters</h4>
@@ -221,7 +223,7 @@ export const AcknowledgedQueueTable = React.memo(({
                                                                     setStartDate!(undefined)
                                                                     setEndDate!(undefined)
                                                                 }}
-                                                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                                                className={tableStyles.FILTER_CLEAR_BUTTON}
                                                             >
                                                                 Clear all
                                                             </Button>
@@ -229,20 +231,20 @@ export const AcknowledgedQueueTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Search</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Search</label>
                                                         <div className="relative">
                                                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                                                             <input
                                                                 placeholder="Search ID, payload..."
                                                                 value={search}
                                                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
-                                                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 pl-8 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                                className={tableStyles.FILTER_INPUT}
                                                             />
                                                         </div>
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Message Type</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Message Type</label>
                                                         <MultipleSelector
                                                             defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
                                                             value={
@@ -266,7 +268,7 @@ export const AcknowledgedQueueTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Priority</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Priority</label>
                                                         <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
                                                             <SelectTrigger className="w-full">
                                                                 <SelectValue placeholder="Any" />
@@ -281,7 +283,7 @@ export const AcknowledgedQueueTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Min Attempts</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Min Attempts</label>
                                                         <input
                                                             type="number"
                                                             min="0"
@@ -299,7 +301,7 @@ export const AcknowledgedQueueTable = React.memo(({
                                                     </div>
 
                                                     <div className="space-y-2">
-                                                        <label className="text-xs font-medium text-foreground/80">Acknowledged At</label>
+                                                        <label className={tableStyles.FILTER_LABEL}>Acknowledged At</label>
                                                         <div className="grid grid-cols-2 gap-2">
                                                             <div className="space-y-1">
                                                                 <label className="text-[10px] text-muted-foreground">From</label>
@@ -337,14 +339,14 @@ export const AcknowledgedQueueTable = React.memo(({
                             ) : shouldVirtualize && virtual ? (
                                 <>
                                     {virtual.topSpacerHeight > 0 && (
-                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.topSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.topSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                         </TableRow>
                                     )}
                                     {virtual.visibleItems.map(renderRow)}
                                     {virtual.bottomSpacerHeight > 0 && (
-                                        <TableRow className="hover:bg-transparent" style={{ height: virtual.bottomSpacerHeight }}>
-                                            <TableCell colSpan={colSpan} className="p-0 h-auto" />
+                                        <TableRow className={tableStyles.TABLE_ROW_SPACER} style={{ height: virtual.bottomSpacerHeight }}>
+                                            <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_SPACER} />
                                         </TableRow>
                                     )}
                                 </>
