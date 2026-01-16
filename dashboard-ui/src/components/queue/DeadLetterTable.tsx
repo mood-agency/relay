@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { Search, XCircle } from "lucide-react"
 
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     Select,
     SelectContent,
@@ -69,14 +70,9 @@ export const DeadLetterRow = React.memo(({
     return (
         <HighlightableTableRow isHighlighted={isHighlighted} isSelected={isSelected}>
             <TableCell>
-                <input
-                    type="checkbox"
-                    className={tableStyles.INPUT_CHECKBOX}
+                <Checkbox
                     checked={isSelected}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        e.stopPropagation()
-                        onToggleSelect(msg.id, (e.nativeEvent as any)?.shiftKey === true)
-                    }}
+                    onCheckedChange={(_, shiftKey) => onToggleSelect(msg.id, shiftKey)}
                 />
             </TableCell>
             <IdCell id={msg.id} msg={msg} onEdit={onEdit} />
@@ -144,6 +140,9 @@ export interface DeadLetterTableProps {
     endDate?: Date | undefined
     setEndDate?: (date: Date | undefined) => void
     availableTypes?: string[]
+    // Selection action handlers (optional - shown in filter bar when items are selected)
+    onMoveSelected?: () => void
+    onDeleteSelected?: () => void
 }
 
 export const DeadLetterTable = React.memo(({
@@ -181,7 +180,10 @@ export const DeadLetterTable = React.memo(({
     setStartDate,
     endDate,
     setEndDate,
-    availableTypes
+    availableTypes,
+    // Selection action handlers
+    onMoveSelected,
+    onDeleteSelected
 }: DeadLetterTableProps) => {
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
@@ -226,6 +228,11 @@ export const DeadLetterTable = React.memo(({
                         setFilterPriority!("")
                         setStartDate!(undefined)
                         setEndDate!(undefined)
+                    }}
+                    selectionActions={{
+                        selectedCount: selectedIds.size,
+                        onMoveSelected,
+                        onDeleteSelected
                     }}
                 >
                     {/* Search */}
@@ -315,11 +322,9 @@ export const DeadLetterTable = React.memo(({
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
                             <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]", tableStyles.TABLE_HEADER_FIRST)}>
-                                <input
-                                    type="checkbox"
-                                    className={tableStyles.INPUT_CHECKBOX}
+                                <Checkbox
                                     checked={allSelected}
-                                    onChange={() => onToggleSelectAll(messages.map(m => m.id))}
+                                    onCheckedChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                 />
                             </TableHead>
                             <SortableHeader label="ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />

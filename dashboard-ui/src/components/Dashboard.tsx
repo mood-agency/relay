@@ -517,48 +517,6 @@ export default function Dashboard() {
                                 </Tooltip>
                             </>
                         )}
-                        {queue.selectedIds.size > 0 && (
-                            <>
-                                <div className="w-px h-5 bg-border/50" />
-                                <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
-                                    {queue.selectedIds.size.toLocaleString()} selected
-                                </span>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => {
-                                                const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
-                                                const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
-                                                setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
-                                            }}
-                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                        >
-                                            <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Move selected</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={queue.handleBulkDelete}
-                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                        >
-                                            <Trash2 className="h-4 w-4 text-muted-foreground" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Delete selected</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </>
-                        )}
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -684,13 +642,18 @@ export default function Dashboard() {
                                         setFilterType={queue.setFilterType}
                                         filterPriority={queue.filterPriority}
                                         setFilterPriority={queue.setFilterPriority}
-                                        filterAttempts={queue.filterAttempts}
-                                        setFilterAttempts={queue.setFilterAttempts}
-                                        startDate={queue.startDate}
+                                                                                startDate={queue.startDate}
                                         setStartDate={queue.setStartDate}
                                         endDate={queue.endDate}
                                         setEndDate={queue.setEndDate}
                                         availableTypes={queue.availableTypes}
+                                        // Selection action handlers
+                                        onMoveSelected={() => {
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                            const defaultTarget = queues.find(q => q !== queue.activeTab) || 'processing'
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                        }}
+                                        onDeleteSelected={queue.handleBulkDelete}
                                     />
                                 )}
                                 {queue.activeTab === 'processing' && (
@@ -725,13 +688,18 @@ export default function Dashboard() {
                                         setFilterType={queue.setFilterType}
                                         filterPriority={queue.filterPriority}
                                         setFilterPriority={queue.setFilterPriority}
-                                        filterAttempts={queue.filterAttempts}
-                                        setFilterAttempts={queue.setFilterAttempts}
-                                        startDate={queue.startDate}
+                                                                                startDate={queue.startDate}
                                         setStartDate={queue.setStartDate}
                                         endDate={queue.endDate}
                                         setEndDate={queue.setEndDate}
                                         availableTypes={queue.availableTypes}
+                                        // Selection action handlers
+                                        onMoveSelected={() => {
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                            const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                        }}
+                                        onDeleteSelected={queue.handleBulkDelete}
                                     />
                                 )}
                                 {queue.activeTab === 'dead' && (
@@ -766,13 +734,18 @@ export default function Dashboard() {
                                         setFilterType={queue.setFilterType}
                                         filterPriority={queue.filterPriority}
                                         setFilterPriority={queue.setFilterPriority}
-                                        filterAttempts={queue.filterAttempts}
-                                        setFilterAttempts={queue.setFilterAttempts}
-                                        startDate={queue.startDate}
+                                                                                startDate={queue.startDate}
                                         setStartDate={queue.setStartDate}
                                         endDate={queue.endDate}
                                         setEndDate={queue.setEndDate}
                                         availableTypes={queue.availableTypes}
+                                        // Selection action handlers
+                                        onMoveSelected={() => {
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                            const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                        }}
+                                        onDeleteSelected={queue.handleBulkDelete}
                                     />
                                 )}
                                 {queue.activeTab === 'acknowledged' && (
@@ -806,13 +779,18 @@ export default function Dashboard() {
                                         setFilterType={queue.setFilterType}
                                         filterPriority={queue.filterPriority}
                                         setFilterPriority={queue.setFilterPriority}
-                                        filterAttempts={queue.filterAttempts}
-                                        setFilterAttempts={queue.setFilterAttempts}
-                                        startDate={queue.startDate}
+                                                                                startDate={queue.startDate}
                                         setStartDate={queue.setStartDate}
                                         endDate={queue.endDate}
                                         setEndDate={queue.setEndDate}
                                         availableTypes={queue.availableTypes}
+                                        // Selection action handlers
+                                        onMoveSelected={() => {
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                            const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                        }}
+                                        onDeleteSelected={queue.handleBulkDelete}
                                     />
                                 )}
                                 {queue.activeTab === 'archived' && (
@@ -846,13 +824,18 @@ export default function Dashboard() {
                                         setFilterType={queue.setFilterType}
                                         filterPriority={queue.filterPriority}
                                         setFilterPriority={queue.setFilterPriority}
-                                        filterAttempts={queue.filterAttempts}
-                                        setFilterAttempts={queue.setFilterAttempts}
-                                        startDate={queue.startDate}
+                                                                                startDate={queue.startDate}
                                         setStartDate={queue.setStartDate}
                                         endDate={queue.endDate}
                                         setEndDate={queue.setEndDate}
                                         availableTypes={queue.availableTypes}
+                                        // Selection action handlers
+                                        onMoveSelected={() => {
+                                            const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                            const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                            setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                        }}
+                                        onDeleteSelected={queue.handleBulkDelete}
                                     />
                                 )}
                             </div>

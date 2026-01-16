@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent } from "@/components/ui/card"
 import {
     Table,
@@ -556,11 +557,9 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
                                     Queue has {totalMessages.toLocaleString()} messages
                                 </div>
                                 <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={forceDelete}
-                                        onChange={(e) => setForceDelete(e.target.checked)}
-                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                        onCheckedChange={(checked) => setForceDelete(checked === true)}
                                     />
                                     Force delete (delete all messages)
                                 </label>

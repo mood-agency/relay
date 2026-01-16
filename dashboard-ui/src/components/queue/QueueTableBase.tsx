@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Edit, Copy, Search, Inbox, Filter, Loader2 } from "lucide-react"
+import { Edit, Copy, Search, Inbox, Filter, Loader2, ArrowRightLeft, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     Tooltip,
     TooltipContent,
@@ -256,22 +257,75 @@ export const FilterPopover = ({
 // Filter Bar Component (expanded filter display above table)
 // ============================================================================
 
+export interface SelectionActionsProps {
+    selectedCount: number
+    onMoveSelected?: () => void
+    onDeleteSelected?: () => void
+}
+
 export interface FilterBarProps {
     isFilterActive: boolean
     onClearFilters: () => void
     children: React.ReactNode
     className?: string
+    // Selection actions (shown when items are selected)
+    selectionActions?: SelectionActionsProps
 }
 
 export const FilterBar = ({
     isFilterActive,
     onClearFilters,
     children,
-    className
+    className,
+    selectionActions
 }: FilterBarProps) => (
     <div className={cn(tableStyles.FILTER_BAR, className)}>
         <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
         {children}
+        {/* Spacer to push selection actions to the right */}
+        <div className="flex-1" />
+        {/* Selection actions */}
+        {selectionActions && selectionActions.selectedCount > 0 && (
+            <div className="flex items-center gap-2 animate-in fade-in zoom-in duration-200">
+                <span className="text-sm text-muted-foreground">
+                    {selectionActions.selectedCount.toLocaleString()} selected
+                </span>
+                {selectionActions.onMoveSelected && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={selectionActions.onMoveSelected}
+                                className="h-8 w-8"
+                            >
+                                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            <p>Move selected</p>
+                        </TooltipContent>
+                    </Tooltip>
+                )}
+                {selectionActions.onDeleteSelected && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={selectionActions.onDeleteSelected}
+                                className="h-8 w-8"
+                            >
+                                <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            <p>Delete selected</p>
+                        </TooltipContent>
+                    </Tooltip>
+                )}
+            </div>
+        )}
         {isFilterActive && (
             <Button
                 variant="ghost"
@@ -469,14 +523,9 @@ export const SelectCell = React.memo(({
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
     <TableCell className={tableStyles.TABLE_CELL_FIRST}>
-        <input
-            type="checkbox"
-            className={tableStyles.INPUT_CHECKBOX}
+        <Checkbox
             checked={isSelected}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                e.stopPropagation()
-                onToggleSelect(id, (e.nativeEvent as any)?.shiftKey === true)
-            }}
+            onCheckedChange={(_, shiftKey) => onToggleSelect(id, shiftKey)}
         />
     </TableCell>
 ))

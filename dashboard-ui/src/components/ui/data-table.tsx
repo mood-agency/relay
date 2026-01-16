@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     Select,
     SelectContent,
@@ -453,11 +454,9 @@ export function DataTable<T extends Record<string, any>>({
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
                             {selectable && (
                                 <TableHead className={tableStyles.TABLE_HEADER_CHECKBOX}>
-                                    <input
-                                        type="checkbox"
-                                        className={tableStyles.INPUT_CHECKBOX}
+                                    <Checkbox
                                         checked={allSelected}
-                                        onChange={() => onToggleSelectAll?.(data.map(item => String(item[keyField])))}
+                                        onCheckedChange={() => onToggleSelectAll?.(data.map(item => String(item[keyField])))}
                                     />
                                 </TableHead>
                             )}

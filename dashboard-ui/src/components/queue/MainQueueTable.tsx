@@ -1,6 +1,7 @@
 import React from "react"
 import { Search } from "lucide-react"
 
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     BaseQueueTableProps,
     useTableVirtualization,
@@ -93,6 +94,9 @@ export interface MainQueueTableProps extends BaseQueueTableProps {
     endDate?: Date | undefined
     setEndDate?: (date: Date | undefined) => void
     availableTypes?: string[]
+    // Selection action handlers (optional - shown in filter bar when items are selected)
+    onMoveSelected?: () => void
+    onDeleteSelected?: () => void
 }
 
 export const MainQueueTable = React.memo(({
@@ -130,7 +134,10 @@ export const MainQueueTable = React.memo(({
     setStartDate,
     endDate,
     setEndDate,
-    availableTypes
+    availableTypes,
+    // Selection action handlers
+    onMoveSelected,
+    onDeleteSelected
 }: MainQueueTableProps) => {
     const { shouldVirtualize, scrollContainerRef, setScrollTop, virtual } = useTableVirtualization(messages, scrollResetKey)
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
@@ -163,6 +170,11 @@ export const MainQueueTable = React.memo(({
                         setFilterPriority!("")
                         setStartDate!(undefined)
                         setEndDate!(undefined)
+                    }}
+                    selectionActions={{
+                        selectedCount: selectedIds.size,
+                        onMoveSelected,
+                        onDeleteSelected
                     }}
                 >
                     {/* Search */}
@@ -252,11 +264,9 @@ export const MainQueueTable = React.memo(({
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
                                 <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]", tableStyles.TABLE_HEADER_FIRST)}>
-                                    <input
-                                        type="checkbox"
-                                        className={tableStyles.INPUT_CHECKBOX}
+                                    <Checkbox
                                         checked={allSelected}
-                                        onChange={() => onToggleSelectAll(messages.map(m => m.id))}
+                                        onCheckedChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                     />
                                 </TableHead>
                                 <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />

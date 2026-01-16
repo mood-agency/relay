@@ -10,6 +10,7 @@ import {
     TableRow
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     SortableHeader,
     StaticHeader,
@@ -271,14 +272,9 @@ export function GenericTable<T extends Record<string, any>>({
             >
                 {selectable && (
                     <TableCell>
-                        <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                        <Checkbox
                             checked={isSelected}
-                            onChange={(e) => {
-                                e.stopPropagation()
-                                onToggleSelect?.(id, (e.nativeEvent as any)?.shiftKey === true)
-                            }}
+                            onCheckedChange={(_, shiftKey) => onToggleSelect?.(id, shiftKey)}
                         />
                     </TableCell>
                 )}
@@ -304,11 +300,9 @@ export function GenericTable<T extends Record<string, any>>({
                         <TableRow className="hover:bg-transparent border-b border-border/50">
                             {selectable && (
                                 <TableHead className="sticky top-0 z-20 bg-card w-[40px] text-xs">
-                                    <input
-                                        type="checkbox"
-                                        className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+                                    <Checkbox
                                         checked={allSelected}
-                                        onChange={() => onToggleSelectAll?.(data.map(item => String(item[keyField])))}
+                                        onCheckedChange={() => onToggleSelectAll?.(data.map(item => String(item[keyField])))}
                                     />
                                 </TableHead>
                             )}
