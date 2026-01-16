@@ -190,7 +190,7 @@ export function AnomaliesTable({
                                         {formatTime(log.timestamp)}
                                     </TableCell>
                                     {log.payload ? (
-                                        <PayloadCell payload={log.payload} toastMessage="Payload copied to clipboard" />
+                                        <PayloadCell payload={log.payload} toastMessage="Payload copied to clipboard" className={tableStyles.TABLE_CELL_LAST} />
                                     ) : (
                                         <TableCell className={cn(tableStyles.TABLE_CELL_PAYLOAD, tableStyles.TABLE_CELL_LAST)}>
                                             <span className={tableStyles.TEXT_MUTED}>—</span>
