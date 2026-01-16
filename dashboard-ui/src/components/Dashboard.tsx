@@ -195,7 +195,6 @@ export default function Dashboard() {
 
     // Create dialog state
     const [createDialog, setCreateDialog] = useState(false)
-    const [createQueueDialog, setCreateQueueDialog] = useState(false)
 
     // View payload dialog state
     const [viewPayloadDialog, setViewPayloadDialog] = useState<{
@@ -231,6 +230,9 @@ export default function Dashboard() {
         isOpen: false,
         messageId: null
     })
+
+    // Queue refresh trigger - incremented when queues are created/renamed/deleted
+    const [queueRefreshTrigger, setQueueRefreshTrigger] = useState(0)
 
     // Highlighted log IDs for activity logs (for animation on new entries)
     const [highlightedLogIds, setHighlightedLogIds] = useState<Set<string>>(new Set())
@@ -458,15 +460,15 @@ export default function Dashboard() {
             {/* Sidebar */}
             <Sidebar
                 authFetch={authFetch}
-                onCreateQueue={() => setCreateQueueDialog(true)}
                 statusData={queue.statusData}
                 activityCounts={activityCounts}
+                refreshTrigger={queueRefreshTrigger}
             />
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 {/* Header */}
-                <div className="flex items-center justify-between gap-4 px-6 py-4 border-b bg-background">
+                <div className="h-[57px] flex items-center justify-between gap-4 px-6 border-b bg-background">
                     <div className="flex items-center gap-3">
                         <h2 className="text-lg font-semibold">
                             {currentQueueName && !isQueueList && (
@@ -604,6 +606,7 @@ export default function Dashboard() {
                             <QueueManagement
                                 authFetch={authFetch}
                                 onQueueSelect={(queueName) => navigate(`/queues/${queueName}/main`)}
+                                onQueuesChanged={() => setQueueRefreshTrigger(prev => prev + 1)}
                             />
                         )}
 

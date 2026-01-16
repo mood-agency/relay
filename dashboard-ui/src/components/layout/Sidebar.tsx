@@ -14,7 +14,6 @@ import {
     User,
     ChevronRight,
     ChevronDown,
-    Plus,
     Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -31,7 +30,6 @@ type ActivityTab = 'activity' | 'anomalies' | 'consumers'
 
 interface SidebarProps {
     authFetch: (url: string, options?: RequestInit) => Promise<Response>
-    onCreateQueue?: () => void
     statusData?: SystemStatus | null
     activityCounts?: {
         logs?: number
@@ -39,6 +37,7 @@ interface SidebarProps {
         criticalAnomalies?: number
         consumers?: number
     }
+    refreshTrigger?: number
 }
 
 // ============================================================================
@@ -64,9 +63,9 @@ const getQueueTypeIcon = (type: string) => {
 
 export default function Sidebar({
     authFetch,
-    onCreateQueue,
     statusData,
     activityCounts,
+    refreshTrigger,
 }: SidebarProps) {
     const navigate = useNavigate()
     const params = useParams<{ queueName?: string; tab?: string }>()
@@ -100,6 +99,13 @@ export default function Sidebar({
     useEffect(() => {
         fetchQueues()
     }, [fetchQueues])
+
+    // Refresh queues when trigger changes (e.g., after queue rename/create/delete)
+    useEffect(() => {
+        if (refreshTrigger !== undefined && refreshTrigger > 0) {
+            fetchQueues()
+        }
+    }, [refreshTrigger, fetchQueues])
 
     // Toggle section expansion
     const toggleSection = (section: string) => {
@@ -151,7 +157,7 @@ export default function Sidebar({
     return (
         <div className="w-64 h-full border-r bg-card flex flex-col">
             {/* Header */}
-            <div className="p-4 border-b">
+            <div className="h-[57px] flex items-center px-4 border-b">
                 <h1
                     className="font-semibold text-lg cursor-pointer hover:text-primary transition-colors"
                     onClick={() => navigate('/queues')}
@@ -205,30 +211,19 @@ export default function Sidebar({
                                             >
                                                 {getQueueTypeIcon(queue.queue_type)}
                                                 <span className="truncate flex-1 text-left">{queue.name}</span>
-                                                {queue.dead_count > 0 ? (
-                                                    <span className="text-[10px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded">
-                                                        {queue.dead_count}
-                                                    </span>
-                                                ) : totalMessages > 0 ? (
-                                                    <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
-                                                        {totalMessages}
-                                                    </span>
-                                                ) : null}
+                                                <span className={cn(
+                                                    "text-[10px] px-1.5 py-0.5 rounded min-w-[1.5rem] text-center",
+                                                    queue.dead_count > 0
+                                                        ? "bg-destructive/10 text-destructive"
+                                                        : "bg-muted text-muted-foreground"
+                                                )}>
+                                                    {queue.dead_count > 0 ? queue.dead_count : totalMessages}
+                                                </span>
                                             </button>
                                         )
                                     })
                                 )}
 
-                                {/* Create Queue Button */}
-                                {onCreateQueue && (
-                                    <button
-                                        onClick={onCreateQueue}
-                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                                    >
-                                        <Plus className="h-3.5 w-3.5" />
-                                        <span>Create Queue</span>
-                                    </button>
-                                )}
                             </div>
                         )}
                     </div>
@@ -339,16 +334,14 @@ export default function Sidebar({
                                                     hasCritical && "text-destructive"
                                                 )} />
                                                 <span className="flex-1 text-left">{tab.label}</span>
-                                                {typeof count === 'number' && count > 0 && (
-                                                    <span className={cn(
-                                                        "text-[10px] px-1.5 py-0.5 rounded min-w-[1.5rem] text-center",
-                                                        hasCritical
-                                                            ? "bg-destructive/10 text-destructive"
-                                                            : "bg-muted text-muted-foreground"
-                                                    )}>
-                                                        {count}
-                                                    </span>
-                                                )}
+                                                <span className={cn(
+                                                    "text-[10px] px-1.5 py-0.5 rounded min-w-[1.5rem] text-center",
+                                                    hasCritical
+                                                        ? "bg-destructive/10 text-destructive"
+                                                        : "bg-muted text-muted-foreground"
+                                                )}>
+                                                    {count ?? 0}
+                                                </span>
                                             </button>
                                         )
                                     })}
