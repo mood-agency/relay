@@ -117,11 +117,7 @@ CREATE TABLE IF NOT EXISTS messages (
     payload_size INTEGER DEFAULT 0,
 
     -- Original message data (for moves/requeues)
-    original_priority INTEGER,
-
-    -- Encryption/signature support
-    encryption JSONB,
-    signature TEXT
+    original_priority INTEGER
 );
 
 -- Indexes for efficient dequeue (priority DESC, created_at ASC for FIFO within priority)
@@ -157,6 +153,32 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at
 CREATE INDEX IF NOT EXISTS idx_messages_consumer
     ON messages(consumer_id)
     WHERE status = 'processing';
+
+-- ==================== OPTIMIZED INDEXES ====================
+
+-- Index for fast ACK operations (lookup by id when status is processing)
+-- Speeds up acknowledgeMessage() which queries by id and verifies status
+CREATE INDEX IF NOT EXISTS idx_messages_ack
+    ON messages(id)
+    WHERE status = 'processing';
+
+-- Index for cleanup of acknowledged messages (archival/deletion)
+-- Enables efficient batch cleanup of old acknowledged messages
+CREATE INDEX IF NOT EXISTS idx_messages_cleanup
+    ON messages(acknowledged_at)
+    WHERE status = 'acknowledged';
+
+-- Index for consumer history and statistics
+-- Supports queries for per-consumer metrics across all statuses
+CREATE INDEX IF NOT EXISTS idx_messages_consumer_history
+    ON messages(consumer_id, acknowledged_at DESC)
+    WHERE consumer_id IS NOT NULL AND status = 'acknowledged';
+
+-- Index for dead letter queue analysis
+-- Fast lookup of failed messages for debugging and retry operations
+CREATE INDEX IF NOT EXISTS idx_messages_dlq
+    ON messages(queue_name, created_at DESC)
+    WHERE status = 'dead';
 
 -- ==================== UNLOGGED MESSAGES TABLE (High Performance) ====================
 -- Uses UNLOGGED for faster writes (2-3x), but data lost on crash
@@ -211,6 +233,23 @@ CREATE INDEX IF NOT EXISTS idx_messages_unlogged_overdue_global
 CREATE INDEX IF NOT EXISTS idx_messages_unlogged_status
     ON messages_unlogged(queue_name, status);
 
+-- Optimized indexes for unlogged table (same as standard table)
+CREATE INDEX IF NOT EXISTS idx_messages_unlogged_ack
+    ON messages_unlogged(id)
+    WHERE status = 'processing';
+
+CREATE INDEX IF NOT EXISTS idx_messages_unlogged_cleanup
+    ON messages_unlogged(acknowledged_at)
+    WHERE status = 'acknowledged';
+
+CREATE INDEX IF NOT EXISTS idx_messages_unlogged_consumer_history
+    ON messages_unlogged(consumer_id, acknowledged_at DESC)
+    WHERE consumer_id IS NOT NULL AND status = 'acknowledged';
+
+CREATE INDEX IF NOT EXISTS idx_messages_unlogged_dlq
+    ON messages_unlogged(queue_name, created_at DESC)
+    WHERE status = 'dead';
+
 -- ==================== ACTIVITY LOG TABLE ====================
 
 CREATE TABLE IF NOT EXISTS activity_logs (
@@ -244,6 +283,15 @@ CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at
 CREATE INDEX IF NOT EXISTS idx_activity_logs_consumer
     ON activity_logs(consumer_id)
     WHERE consumer_id IS NOT NULL;
+
+-- Composite index for efficient cleanup queries (retention policy)
+-- Enables fast deletion of old logs while optionally filtering by queue
+CREATE INDEX IF NOT EXISTS idx_activity_logs_cleanup
+    ON activity_logs(created_at, queue_name);
+
+-- Composite index for dashboard queries (action + time range)
+CREATE INDEX IF NOT EXISTS idx_activity_logs_action_time
+    ON activity_logs(action, created_at DESC);
 
 -- ==================== ANOMALIES TABLE ====================
 
@@ -306,100 +354,64 @@ CREATE INDEX IF NOT EXISTS idx_queue_metrics_created_at
 
 -- ==================== NOTIFICATION FUNCTIONS ====================
 
--- Function to notify on message changes (for SSE)
+-- Optimized function to notify on message changes (for SSE)
+-- Improvements:
+-- 1. Reduced payload size (no full message payload, just metadata)
+-- 2. Use clock_timestamp() for more accurate timing
+-- 3. Single CASE statement for cleaner code path
+-- 4. Only notify on status changes for updates
 CREATE OR REPLACE FUNCTION notify_message_change()
 RETURNS TRIGGER AS $$
 DECLARE
-    notify_payload JSONB;
+    notify_payload TEXT;
+    event_type TEXT;
 BEGIN
+    -- Determine event type based on operation
     IF TG_OP = 'INSERT' THEN
-        notify_payload := jsonb_build_object(
-            'type', 'enqueue',
-            'queue', NEW.queue_name,
-            'timestamp', extract(epoch from NOW()) * 1000,
-            'payload', jsonb_build_object(
-                'count', 1,
-                'message', jsonb_build_object(
-                    'id', NEW.id,
-                    'type', NEW.type,
-                    'priority', NEW.priority,
-                    'payload', NEW.payload
-                )
-            )
-        );
-        PERFORM pg_notify('queue_events', notify_payload::text);
-    ELSIF TG_OP = 'UPDATE' THEN
-        -- Status change notifications
-        IF OLD.status != NEW.status THEN
-            IF NEW.status = 'acknowledged' THEN
-                notify_payload := jsonb_build_object(
-                    'type', 'acknowledge',
-                    'queue', NEW.queue_name,
-                    'timestamp', extract(epoch from NOW()) * 1000,
-                    'payload', jsonb_build_object(
-                        'count', 1,
-                        'message', jsonb_build_object(
-                            'id', NEW.id,
-                            'type', NEW.type
-                        )
-                    )
-                );
-            ELSIF NEW.status = 'dead' THEN
-                notify_payload := jsonb_build_object(
-                    'type', 'move_to_dlq',
-                    'queue', NEW.queue_name,
-                    'timestamp', extract(epoch from NOW()) * 1000,
-                    'payload', jsonb_build_object(
-                        'count', 1,
-                        'message', jsonb_build_object(
-                            'id', NEW.id,
-                            'type', NEW.type
-                        )
-                    )
-                );
-            ELSIF NEW.status = 'queued' AND OLD.status = 'processing' THEN
-                notify_payload := jsonb_build_object(
-                    'type', 'requeue',
-                    'queue', NEW.queue_name,
-                    'timestamp', extract(epoch from NOW()) * 1000,
-                    'payload', jsonb_build_object(
-                        'count', 1,
-                        'triggered_by', 'timeout'
-                    )
-                );
-            ELSIF NEW.status = 'processing' THEN
-                notify_payload := jsonb_build_object(
-                    'type', 'dequeue',
-                    'queue', NEW.queue_name,
-                    'timestamp', extract(epoch from NOW()) * 1000,
-                    'payload', jsonb_build_object(
-                        'count', 1,
-                        'message', jsonb_build_object(
-                            'id', NEW.id,
-                            'type', NEW.type
-                        )
-                    )
-                );
-            END IF;
-            IF notify_payload IS NOT NULL THEN
-                PERFORM pg_notify('queue_events', notify_payload::text);
-            END IF;
-        END IF;
+        event_type := 'enqueue';
     ELSIF TG_OP = 'DELETE' THEN
-        notify_payload := jsonb_build_object(
-            'type', 'delete',
-            'queue', OLD.queue_name,
-            'timestamp', extract(epoch from NOW()) * 1000,
-            'payload', jsonb_build_object(
-                'count', 1,
-                'message', jsonb_build_object(
-                    'id', OLD.id,
-                    'type', OLD.type
-                )
-            )
-        );
-        PERFORM pg_notify('queue_events', notify_payload::text);
+        event_type := 'delete';
+    ELSIF TG_OP = 'UPDATE' AND OLD.status IS DISTINCT FROM NEW.status THEN
+        -- Only notify on status changes for updates
+        event_type := CASE NEW.status
+            WHEN 'acknowledged' THEN 'acknowledge'
+            WHEN 'dead' THEN 'move_to_dlq'
+            WHEN 'processing' THEN 'dequeue'
+            WHEN 'queued' THEN
+                CASE WHEN OLD.status = 'processing' THEN 'requeue' ELSE NULL END
+            ELSE NULL
+        END;
     END IF;
+
+    -- Skip if no relevant event
+    IF event_type IS NULL THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+
+    -- Build compact notification payload (avoid including full message payload)
+    -- Using string concatenation is faster than jsonb_build_object for simple payloads
+    IF TG_OP = 'DELETE' THEN
+        notify_payload := format(
+            '{"type":"%s","queue":"%s","ts":%s,"id":"%s","msg_type":%s}',
+            event_type,
+            OLD.queue_name,
+            extract(epoch from clock_timestamp()) * 1000,
+            OLD.id,
+            COALESCE('"' || OLD.type || '"', 'null')
+        );
+    ELSE
+        notify_payload := format(
+            '{"type":"%s","queue":"%s","ts":%s,"id":"%s","msg_type":%s,"priority":%s}',
+            event_type,
+            NEW.queue_name,
+            extract(epoch from clock_timestamp()) * 1000,
+            NEW.id,
+            COALESCE('"' || NEW.type || '"', 'null'),
+            COALESCE(NEW.priority::text, '0')
+        );
+    END IF;
+
+    PERFORM pg_notify('queue_events', notify_payload);
 
     RETURN COALESCE(NEW, OLD);
 END;
@@ -528,29 +540,139 @@ $$ LANGUAGE plpgsql;
 
 -- ==================== CLEANUP FUNCTIONS ====================
 
--- Function to clean up old activity logs (retention)
-CREATE OR REPLACE FUNCTION cleanup_old_activity_logs(retention_hours INTEGER DEFAULT 24)
-RETURNS INTEGER AS $$
+-- Function to clean up old acknowledged/archived messages (batch delete for performance)
+-- Uses batch deletion to avoid long-running transactions and reduce lock contention
+CREATE OR REPLACE FUNCTION cleanup_old_messages(
+    p_retention_hours INTEGER DEFAULT 168,  -- 7 days default
+    p_batch_size INTEGER DEFAULT 1000,
+    p_max_batches INTEGER DEFAULT 100
+)
+RETURNS TABLE(deleted_acknowledged INTEGER, deleted_archived INTEGER) AS $$
 DECLARE
-    deleted_count INTEGER;
+    total_ack INTEGER := 0;
+    total_arch INTEGER := 0;
+    batch_deleted INTEGER;
+    batch_count INTEGER := 0;
+    cutoff_time TIMESTAMPTZ;
 BEGIN
-    DELETE FROM activity_logs
-    WHERE created_at < NOW() - (retention_hours || ' hours')::INTERVAL;
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
+    cutoff_time := NOW() - (p_retention_hours || ' hours')::INTERVAL;
+
+    -- Delete acknowledged messages in batches
+    LOOP
+        EXIT WHEN batch_count >= p_max_batches;
+
+        DELETE FROM messages
+        WHERE id IN (
+            SELECT id FROM messages
+            WHERE status = 'acknowledged'
+            AND acknowledged_at < cutoff_time
+            LIMIT p_batch_size
+            FOR UPDATE SKIP LOCKED
+        );
+        GET DIAGNOSTICS batch_deleted = ROW_COUNT;
+
+        total_ack := total_ack + batch_deleted;
+        batch_count := batch_count + 1;
+
+        EXIT WHEN batch_deleted < p_batch_size;
+
+        -- Small pause to reduce lock pressure
+        PERFORM pg_sleep(0.01);
+    END LOOP;
+
+    -- Reset batch counter for archived messages
+    batch_count := 0;
+
+    -- Delete archived messages in batches
+    LOOP
+        EXIT WHEN batch_count >= p_max_batches;
+
+        DELETE FROM messages
+        WHERE id IN (
+            SELECT id FROM messages
+            WHERE status = 'archived'
+            AND acknowledged_at < cutoff_time
+            LIMIT p_batch_size
+            FOR UPDATE SKIP LOCKED
+        );
+        GET DIAGNOSTICS batch_deleted = ROW_COUNT;
+
+        total_arch := total_arch + batch_deleted;
+        batch_count := batch_count + 1;
+
+        EXIT WHEN batch_deleted < p_batch_size;
+
+        PERFORM pg_sleep(0.01);
+    END LOOP;
+
+    deleted_acknowledged := total_ack;
+    deleted_archived := total_arch;
+    RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to clean up old anomalies
-CREATE OR REPLACE FUNCTION cleanup_old_anomalies(retention_hours INTEGER DEFAULT 72)
+-- Function to archive old acknowledged messages (move to archived status instead of delete)
+CREATE OR REPLACE FUNCTION archive_old_messages(
+    p_hours_old INTEGER DEFAULT 24,
+    p_batch_size INTEGER DEFAULT 1000
+)
 RETURNS INTEGER AS $$
 DECLARE
-    deleted_count INTEGER;
+    archived_count INTEGER;
 BEGIN
-    DELETE FROM anomalies
-    WHERE created_at < NOW() - (retention_hours || ' hours')::INTERVAL;
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
+    UPDATE messages
+    SET status = 'archived'
+    WHERE id IN (
+        SELECT id FROM messages
+        WHERE status = 'acknowledged'
+        AND acknowledged_at < NOW() - (p_hours_old || ' hours')::INTERVAL
+        LIMIT p_batch_size
+        FOR UPDATE SKIP LOCKED
+    );
+    GET DIAGNOSTICS archived_count = ROW_COUNT;
+    RETURN archived_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==================== REFERENTIAL INTEGRITY (OPTIONAL) ====================
+
+-- Optional: Add foreign key constraint for queue_name
+-- This ensures all messages reference a valid queue
+-- Note: This adds overhead on INSERT/UPDATE, so only enable if data integrity is critical
+-- To enable: SELECT enable_queue_fk_constraint();
+-- To disable: SELECT disable_queue_fk_constraint();
+
+CREATE OR REPLACE FUNCTION enable_queue_fk_constraint()
+RETURNS VOID AS $$
+BEGIN
+    -- Add FK constraint if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_messages_queue'
+    ) THEN
+        ALTER TABLE messages
+        ADD CONSTRAINT fk_messages_queue
+        FOREIGN KEY (queue_name) REFERENCES queues(name)
+        ON DELETE CASCADE;
+
+        RAISE NOTICE 'Foreign key constraint fk_messages_queue enabled';
+    ELSE
+        RAISE NOTICE 'Foreign key constraint fk_messages_queue already exists';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION disable_queue_fk_constraint()
+RETURNS VOID AS $$
+BEGIN
+    -- Remove FK constraint if it exists
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_messages_queue'
+    ) THEN
+        ALTER TABLE messages DROP CONSTRAINT fk_messages_queue;
+        RAISE NOTICE 'Foreign key constraint fk_messages_queue disabled';
+    ELSE
+        RAISE NOTICE 'Foreign key constraint fk_messages_queue does not exist';
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 

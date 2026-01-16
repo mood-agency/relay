@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Pencil, Copy, Search, Inbox } from "lucide-react"
+import { Pencil, Copy, Search, Inbox, Filter, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -13,7 +13,8 @@ import {
     PaginationFooter,
     EmptyState,
     useElementHeight,
-    useVirtualization
+    useVirtualization,
+    StaticHeader
 } from "@/components/ui/data-table"
 import {
     Table,
@@ -26,6 +27,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/sonner"
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import * as tableStyles from "@/components/ui/table-styles"
 
@@ -180,10 +186,178 @@ export const CursorTooltip = ({
 }
 
 // ============================================================================
+// Loading Overlay Component
+// ============================================================================
+
+export const LoadingOverlay = () => (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+    </div>
+)
+
+// ============================================================================
+// Filter Popover Component
+// ============================================================================
+
+export interface FilterPopoverProps {
+    isOpen: boolean
+    onOpenChange: (open: boolean) => void
+    isFilterActive: boolean
+    onClearFilters: () => void
+    title?: string
+    children: React.ReactNode
+}
+
+export const FilterPopover = ({
+    isOpen,
+    onOpenChange,
+    isFilterActive,
+    onClearFilters,
+    title = "Filters",
+    children
+}: FilterPopoverProps) => (
+    <Popover open={isOpen} onOpenChange={onOpenChange}>
+        <PopoverTrigger asChild>
+            <Button
+                variant="ghost"
+                size="icon"
+                className={cn(tableStyles.BUTTON_FILTER, isFilterActive && tableStyles.BUTTON_FILTER_ACTIVE)}
+                aria-label={title}
+            >
+                <Filter className="h-3.5 w-3.5" />
+                {isFilterActive && (
+                    <span className={tableStyles.FILTER_INDICATOR_DOT} />
+                )}
+            </Button>
+        </PopoverTrigger>
+        <PopoverContent className={tableStyles.FILTER_POPOVER} align="end">
+            <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">{title}</h4>
+                    {isFilterActive && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={onClearFilters}
+                            className={tableStyles.FILTER_CLEAR_BUTTON}
+                        >
+                            Clear all
+                        </Button>
+                    )}
+                </div>
+                {children}
+            </div>
+        </PopoverContent>
+    </Popover>
+)
+
+// ============================================================================
+// Table Container Component
+// ============================================================================
+
+export interface TableContainerProps {
+    children: React.ReactNode
+    loading?: boolean
+    footer?: React.ReactNode
+    className?: string
+}
+
+export const TableContainer = ({
+    children,
+    loading = false,
+    footer,
+    className
+}: TableContainerProps) => (
+    <div className={cn(tableStyles.TABLE_CONTAINER, className)}>
+        {loading && <LoadingOverlay />}
+        {children}
+        {footer}
+    </div>
+)
+
+// ============================================================================
+// Summary Footer Component
+// ============================================================================
+
+export interface SummaryFooterItem {
+    label: string
+    value: string | number
+    color?: string // Tailwind color class for indicator dot, e.g., "bg-destructive"
+}
+
+export interface SummaryFooterProps {
+    items: SummaryFooterItem[]
+    rightContent?: React.ReactNode
+    className?: string
+}
+
+export const SummaryFooter = ({
+    items,
+    rightContent,
+    className
+}: SummaryFooterProps) => (
+    <div className={cn(tableStyles.PAGINATION_FOOTER, className)}>
+        <div className="flex items-center gap-6">
+            {items.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                    {item.color && (
+                        <span className={cn("h-2 w-2 rounded-full", item.color)} />
+                    )}
+                    <span className={item.color ? tableStyles.TEXT_MUTED : tableStyles.PAGINATION_LABEL}>
+                        {item.label}:
+                    </span>
+                    <span className={item.color ? tableStyles.TEXT_MUTED : tableStyles.PAGINATION_INFO}>
+                        {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
+                    </span>
+                </div>
+            ))}
+        </div>
+        {rightContent}
+    </div>
+)
+
+// ============================================================================
+// Copyable ID Cell Component (for non-message contexts)
+// ============================================================================
+
+export interface CopyableIdCellProps {
+    id: string
+    truncateLength?: number
+    className?: string
+}
+
+export const CopyableIdCell = React.memo(({
+    id,
+    truncateLength = 10,
+    className
+}: CopyableIdCellProps) => (
+    <TableCell className={cn(tableStyles.TEXT_MONO, tableStyles.TABLE_CELL_ID, className)}>
+        <div className={tableStyles.FLEX_INLINE}>
+            <span className="truncate" title={id}>
+                {truncateLength > 0 && id.length > truncateLength ? id.substring(0, truncateLength) : id}
+            </span>
+            <button
+                onClick={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    navigator.clipboard.writeText(id)
+                    toast.success("ID copied to clipboard")
+                }}
+                className={tableStyles.BUTTON_COPY_ID}
+                tabIndex={-1}
+                title="Copy ID"
+            >
+                <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+            </button>
+        </div>
+    </TableCell>
+))
+
+// ============================================================================
 // Shared Components
 // ============================================================================
 
-export const PayloadCell = React.memo(({ payload }: { payload: any }) => {
+export const PayloadCell = React.memo(({ payload, toastMessage = "Copied to clipboard" }: { payload: any, toastMessage?: string }) => {
     const payloadText = JSON.stringify(payload)
     const { isHovered, mousePos, handlers } = useCursorTooltip()
 
@@ -202,10 +376,12 @@ export const PayloadCell = React.memo(({ payload }: { payload: any }) => {
                             e.stopPropagation();
                             e.preventDefault();
                             navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+                            toast.success(toastMessage);
                             (e.target as HTMLElement).closest('button')?.blur();
                         }}
                         className={tableStyles.BUTTON_COPY_PAYLOAD}
                         tabIndex={-1}
+                        title="Copy payload"
                     >
                         <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
                     </button>
@@ -484,6 +660,7 @@ export {
     TableHeader,
     TableRow,
     SortableHeader,
+    StaticHeader,
     PaginationFooter,
     EmptyState,
     ScrollArea,
@@ -494,8 +671,16 @@ export {
     Badge,
     Copy,
     Pencil,
-    cn
+    Filter,
+    Loader2,
+    cn,
+    // Hooks from data-table
+    useElementHeight,
+    useVirtualization
 }
+
+// Re-export Popover components
+export { Popover, PopoverContent, PopoverTrigger }
 
 export type { Message, QueueConfig }
 

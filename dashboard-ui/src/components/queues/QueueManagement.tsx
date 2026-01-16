@@ -16,6 +16,7 @@ import {
     Clock,
     XCircle,
     Edit,
+    Pencil,
     ArrowUp,
     ArrowDown,
     ArrowUpDown,
@@ -599,6 +600,121 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
 }
 
 // ============================================================================
+// Rename Queue Dialog
+// ============================================================================
+
+interface RenameQueueDialogProps {
+    isOpen: boolean
+    onClose: () => void
+    onRename: (newName: string) => Promise<void>
+    queue: QueueInfo | null
+    isLoading: boolean
+}
+
+function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: RenameQueueDialogProps) {
+    const [newName, setNewName] = useState("")
+    const [error, setError] = useState<string | null>(null)
+
+    useEffect(() => {
+        if (queue && isOpen) {
+            setNewName(queue.name)
+            setError(null)
+        }
+    }, [queue, isOpen])
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        setError(null)
+
+        // Validate new name
+        if (!newName.trim()) {
+            setError("Queue name is required")
+            return
+        }
+        if (!/^[a-zA-Z0-9_-]+$/.test(newName)) {
+            setError("Queue name can only contain alphanumeric characters, underscores, and hyphens")
+            return
+        }
+        if (newName === queue?.name) {
+            setError("New name must be different from current name")
+            return
+        }
+
+        try {
+            await onRename(newName.trim())
+            onClose()
+        } catch (err: any) {
+            setError(err.message || "Failed to rename queue")
+        }
+    }
+
+    return (
+        <Dialog open={isOpen} onOpenChange={onClose}>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Rename Queue</DialogTitle>
+                    <DialogDescription>
+                        Change the name of queue <span className="font-mono font-semibold">{queue?.name}</span>
+                    </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSubmit}>
+                    <div className="space-y-4 py-4">
+                        {error && (
+                            <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md text-sm text-destructive flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                {error}
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">New Queue Name *</label>
+                            <input
+                                type="text"
+                                value={newName}
+                                onChange={(e) => setNewName(e.target.value)}
+                                placeholder="my-queue"
+                                className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            <p className="text-xs text-muted-foreground">Alphanumeric, underscores, and hyphens only</p>
+                        </div>
+
+                        {/* Queue Info (read-only) */}
+                        <div className="space-y-3 pt-2 border-t">
+                            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Queue Configuration</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-xs text-muted-foreground">ACK Timeout</label>
+                                    <p className="text-sm font-medium">{queue?.ack_timeout_seconds}s</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-muted-foreground">Max Attempts</label>
+                                    <p className="text-sm font-medium">{queue?.max_attempts}</p>
+                                </div>
+                            </div>
+                            {queue?.description && (
+                                <div className="space-y-1">
+                                    <label className="text-xs text-muted-foreground">Description</label>
+                                    <p className="text-sm text-muted-foreground">{queue.description}</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={onClose}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" disabled={isLoading || newName === queue?.name}>
+                            {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Rename Queue
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -622,6 +738,7 @@ export default function QueueManagement({ authFetch, onQueueSelect }: QueueManag
     const [createDialog, setCreateDialog] = useState(false)
     const [editDialog, setEditDialog] = useState<{ isOpen: boolean; queue: QueueInfo | null }>({ isOpen: false, queue: null })
     const [deleteDialog, setDeleteDialog] = useState<{ isOpen: boolean; queue: QueueInfo | null }>({ isOpen: false, queue: null })
+    const [renameDialog, setRenameDialog] = useState<{ isOpen: boolean; queue: QueueInfo | null }>({ isOpen: false, queue: null })
     const [actionLoading, setActionLoading] = useState(false)
 
     // Pagination
@@ -724,6 +841,28 @@ export default function QueueManagement({ authFetch, onQueueSelect }: QueueManag
             setActionLoading(false)
         }
     }, [authFetch, deleteDialog.queue, fetchQueues])
+
+    // Rename queue
+    const handleRenameQueue = useCallback(async (newName: string) => {
+        if (!renameDialog.queue) return
+        setActionLoading(true)
+        try {
+            const response = await authFetch(`/api/queues/${encodeURIComponent(renameDialog.queue.name)}/rename`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ newName }),
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                throw new Error(errorData.message || `Failed to rename queue: ${response.statusText}`)
+            }
+
+            await fetchQueues()
+        } finally {
+            setActionLoading(false)
+        }
+    }, [authFetch, renameDialog.queue, fetchQueues])
 
     // Sort handler
     const handleSort = useCallback((field: SortField) => {
@@ -886,7 +1025,7 @@ export default function QueueManagement({ authFetch, onQueueSelect }: QueueManag
                             <SortableHeader label="Processing" field="processing_count" sortState={sortState} onSort={handleSort} className="text-right" />
                             <SortableHeader label="Dead" field="dead_count" sortState={sortState} onSort={handleSort} className="text-right" />
                             <SortableHeader label="Created" field="created_at" sortState={sortState} onSort={handleSort} />
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[80px]")}>Actions</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[110px]")}>Actions</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -946,13 +1085,26 @@ export default function QueueManagement({ authFetch, onQueueSelect }: QueueManag
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
+                                                        onClick={() => setRenameDialog({ isOpen: true, queue })}
+                                                        className={tableStyles.BUTTON_ACTION}
+                                                    >
+                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Rename queue</TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
                                                         onClick={() => setEditDialog({ isOpen: true, queue })}
                                                         className={tableStyles.BUTTON_ACTION}
                                                     >
                                                         <Edit className="h-3.5 w-3.5" />
                                                     </Button>
                                                 </TooltipTrigger>
-                                                <TooltipContent>Edit queue</TooltipContent>
+                                                <TooltipContent>Edit settings</TooltipContent>
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
@@ -1010,6 +1162,14 @@ export default function QueueManagement({ authFetch, onQueueSelect }: QueueManag
                 onClose={() => setDeleteDialog({ isOpen: false, queue: null })}
                 onConfirm={handleDeleteQueue}
                 queue={deleteDialog.queue}
+                isLoading={actionLoading}
+            />
+
+            <RenameQueueDialog
+                isOpen={renameDialog.isOpen}
+                onClose={() => setRenameDialog({ isOpen: false, queue: null })}
+                onRename={handleRenameQueue}
+                queue={renameDialog.queue}
                 isLoading={actionLoading}
             />
         </div>

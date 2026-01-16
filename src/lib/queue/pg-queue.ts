@@ -152,6 +152,10 @@ export class PostgresQueue {
     return this.queueManagement.deleteQueueByName(name, force);
   }
 
+  renameQueue(oldName: string, newName: string): Promise<QueueDefinition> {
+    return this.queueManagement.renameQueue(oldName, newName);
+  }
+
   purgeQueue(name: string, status: string = "all"): Promise<number> {
     return this.queueManagement.purgeQueue(name, status);
   }

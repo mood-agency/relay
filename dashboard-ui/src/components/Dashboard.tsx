@@ -98,6 +98,7 @@ import {
     AcknowledgedQueueTable,
     ArchivedQueueTable,
 } from "@/components/queue"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 // Queue Management
 import { QueueManagement } from "@/components/queues"
@@ -107,7 +108,7 @@ import { QueueManagement } from "@/components/queues"
 // ============================================================================
 
 const getStoredApiKey = (): string => {
-    const envKey = import.meta.env.VITE_API_KEY
+    const envKey = import.meta.env.VITE_SECRET_KEY
     if (envKey) return envKey
     return localStorage.getItem('queue-api-key') || ''
 }
@@ -190,14 +191,15 @@ export default function Dashboard() {
         queueTab,
         queueName: currentQueueName || 'default',
         navigate,
-        onEvent: () => {
+        onEvent: (type: string) => {
             // Refresh activity logs on relevant events if we are on the activity view
             // Use refs to avoid stale closure issues with currentView/activityTab
             // Use silent=true to avoid showing loading spinner on SSE-triggered updates
             if (currentViewRef.current === 'activity') {
                 if (activityTabRef.current === 'activity') fetchActivityLogsRef.current?.(true)
                 else if (activityTabRef.current === 'anomalies') fetchAnomaliesRef.current?.(true)
-                else if (activityTabRef.current === 'consumers') fetchConsumerStatsRef.current?.()
+                // Consumer stats only update on dequeue events, not enqueue
+                else if (activityTabRef.current === 'consumers' && type === 'dequeue') fetchConsumerStatsRef.current?.()
             }
         },
         onActivityCleared: () => {
@@ -613,6 +615,7 @@ export default function Dashboard() {
                         </div>
 
                         <div className="flex items-center justify-end gap-1 w-[300px]">
+                            <ThemeToggle />
                             <Popover>
                                 <PopoverTrigger asChild>
                                     <Button

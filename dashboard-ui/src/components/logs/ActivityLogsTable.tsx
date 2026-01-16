@@ -19,12 +19,10 @@ import {
     tableStyles,
     useCursorTooltip,
     CursorTooltip,
-    HighlightableTableRow
-} from "@/components/queue/QueueTableBase"
-import {
+    HighlightableTableRow,
     useElementHeight,
     useVirtualization
-} from "@/components/ui/data-table"
+} from "@/components/queue/QueueTableBase"
 import { Button } from "@/components/ui/button"
 import {
     Popover,

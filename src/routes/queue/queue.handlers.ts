@@ -25,6 +25,7 @@ import type {
   UpdateQueueRoute,
   DeleteQueueRoute,
   PurgeQueueRoute,
+  RenameQueueRoute,
 } from "./queue.routes";
 import type { AppRouteHandler } from "../../config/types";
 import { streamSSE } from "hono/streaming";
@@ -241,13 +242,13 @@ export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
   const q = await getQueue();
 
   try {
-    const message = (await q.dequeueMessage(
+    const message = await q.dequeueMessage(
       timeout,
       ackTimeout,
       queueName || "default",
       type,
       consumerId
-    )) as DequeuedMessage;
+    );
 
     if (!message) {
       return c.json({ message: "Message not found" }, 404);
@@ -948,5 +949,34 @@ export const purgeQueueHandler: AppRouteHandler<PurgeQueueRoute> = async (c: any
       return c.json({ message: error.message }, 404);
     }
     return c.json({ message: error.message || "Failed to purge queue" }, 500);
+  }
+};
+
+export const renameQueueHandler: AppRouteHandler<RenameQueueRoute> = async (c: any) => {
+  try {
+    const { queueName } = c.req.valid("param");
+    const { newName } = c.req.valid("json");
+    const q = await getQueue();
+
+    const renamedQueue = await q.renameQueue(queueName, newName);
+
+    return c.json(
+      {
+        message: `Queue renamed from '${queueName}' to '${newName}'`,
+        queue: renamedQueue,
+      },
+      200
+    );
+  } catch (error: any) {
+    if (error.message?.includes("not found")) {
+      return c.json({ message: error.message }, 404);
+    }
+    if (error.message?.includes("already exists")) {
+      return c.json({ message: error.message }, 409);
+    }
+    if (error.message?.includes("Cannot rename") || error.message?.includes("cannot be empty")) {
+      return c.json({ message: error.message }, 400);
+    }
+    return c.json({ message: error.message || "Failed to rename queue" }, 500);
   }
 };

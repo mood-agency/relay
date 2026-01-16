@@ -2,16 +2,19 @@ import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
+import { ThemeProvider } from '@/components/ThemeProvider'
 
 // Layout wrapper that provides common context
 function RootLayout() {
     return (
-        <TooltipProvider>
-            <div className="min-h-screen bg-background">
-                <Outlet />
-            </div>
-            <Toaster position="bottom-right" />
-        </TooltipProvider>
+        <ThemeProvider>
+            <TooltipProvider>
+                <div className="min-h-screen bg-background">
+                    <Outlet />
+                </div>
+                <Toaster position="bottom-right" />
+            </TooltipProvider>
+        </ThemeProvider>
     )
 }
 

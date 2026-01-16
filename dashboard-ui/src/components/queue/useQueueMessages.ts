@@ -418,6 +418,12 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, queueName = 'def
             if (currentTab !== activeTabRef.current) return
 
             setMessagesData(json)
+            // Clear highlights on full fetch since the message set changed
+            setHighlightedIds(new Set())
+            if (highlightRemovalTimeoutRef.current) {
+                clearTimeout(highlightRemovalTimeoutRef.current)
+                highlightRemovalTimeoutRef.current = null
+            }
             setError(null)
         } catch (err: any) {
             if (currentTab !== activeTabRef.current) return

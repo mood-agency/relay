@@ -100,7 +100,7 @@ export const TEXT_PAYLOAD = "text-xs font-mono text-muted-foreground group-hover
 // ============================================================================
 
 /** Checkbox input style */
-export const INPUT_CHECKBOX = "h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer align-middle accent-primary"
+export const INPUT_CHECKBOX = "h-4 w-4 rounded border-border bg-muted dark:bg-muted/50 text-primary focus:ring-primary focus:ring-offset-background cursor-pointer align-middle accent-primary"
 
 /** Copy button style (appears on hover) */
 export const BUTTON_COPY = "opacity-0 transition-opacity p-0.5 hover:bg-muted rounded flex-shrink-0"

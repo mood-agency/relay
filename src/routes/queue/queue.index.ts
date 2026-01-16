@@ -10,6 +10,7 @@ const router = createRouter()
   .openapi(routes.updateQueue, handlers.updateQueueHandler)
   .openapi(routes.deleteQueue, handlers.deleteQueueHandler)
   .openapi(routes.purgeQueue, handlers.purgeQueueHandler)
+  .openapi(routes.renameQueue, handlers.renameQueueHandler)
   // Message Routes
   .openapi(routes.addMessage, handlers.addMessage)
   .openapi(routes.addBatch, handlers.addBatch)

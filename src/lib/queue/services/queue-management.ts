@@ -198,6 +198,106 @@ export class QueueManagementService {
     return this.mapQueueDefinition(result.rows[0]);
   }
 
+  async renameQueue(
+    oldName: string,
+    newName: string
+  ): Promise<QueueDefinition> {
+    // Validate new name
+    if (!newName || newName.trim() === "") {
+      throw new Error("New queue name cannot be empty");
+    }
+
+    const trimmedNewName = newName.trim();
+
+    // Check if old queue exists
+    const oldQueue = await this.getQueueByName(oldName);
+    if (!oldQueue) {
+      throw new Error(`Queue not found: ${oldName}`);
+    }
+
+    // Check if new name already exists
+    const existingQueue = await this.getQueueByName(trimmedNewName);
+    if (existingQueue) {
+      throw new Error(`Queue with name "${trimmedNewName}" already exists`);
+    }
+
+    // Use a transaction to update all tables atomically
+    const client = await this.ctx.pgManager.getClient();
+    try {
+      await client.query("BEGIN");
+
+      // Update the queue registry
+      await client.query(
+        `UPDATE queues SET name = $1, updated_at = NOW() WHERE name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in messages table
+      await client.query(
+        `UPDATE messages SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in messages_unlogged table
+      await client.query(
+        `UPDATE messages_unlogged SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in activity_logs table
+      await client.query(
+        `UPDATE activity_logs SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in anomalies table
+      await client.query(
+        `UPDATE anomalies SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in consumer_stats table
+      await client.query(
+        `UPDATE consumer_stats SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      // Update queue_name in queue_metrics table
+      await client.query(
+        `UPDATE queue_metrics SET queue_name = $1 WHERE queue_name = $2`,
+        [trimmedNewName, oldName]
+      );
+
+      await client.query("COMMIT");
+
+      // Log the rename activity
+      await this.logActivity("rename_queue", null, {
+        old_name: oldName,
+        new_name: trimmedNewName,
+        consumer_id: (this.ctx.config as any).manual_operation_actor,
+      });
+
+      // Invalidate cache for old name
+      this.invalidateQueueCache(oldName);
+
+      logger.info(
+        { old_name: oldName, new_name: trimmedNewName },
+        "Queue renamed"
+      );
+
+      // Return the updated queue
+      const updatedQueue = await this.getQueueByName(trimmedNewName, {
+        includeStats: true,
+      });
+      return updatedQueue!;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async deleteQueueByName(
     name: string,
     force: boolean = false

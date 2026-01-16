@@ -42,7 +42,7 @@ export const DequeuedMessageSchema = z.object({
   attempt_count: z.number(),
   dequeued_at: z.number().nullable(),
   last_error: z.string().nullable(),
-  processing_duration: z.number(),
+  processing_duration: z.number().optional(),
   acknowledged_at: z.number().optional(),
   consumer_id: z.string().nullable().optional(),
   lock_token: z.string().optional().describe("Unique fencing token for lock ownership - use this for ACK and touch operations"),
@@ -1032,9 +1032,41 @@ export const purgeQueue = createRoute({
   },
 });
 
+export const renameQueue = createRoute({
+  path: "/queues/:queueName/rename",
+  method: "post",
+  tags: queueManagementTags,
+  description: "Rename a queue. Updates the queue name in all related tables (messages, logs, etc.)",
+  request: {
+    params: z.object({
+      queueName: z.string(),
+    }),
+    body: jsonContentRequired(
+      z.object({
+        newName: z.string().min(1).max(100).describe("New name for the queue"),
+      }),
+      "Rename Options"
+    ),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        queue: QueueInfoSchema,
+      }),
+      "Queue Renamed"
+    ),
+    400: jsonContent(z.object({ message: z.string() }), "Invalid queue name or cannot rename"),
+    404: jsonContent(z.object({ message: z.string() }), "Queue not found"),
+    409: jsonContent(z.object({ message: z.string() }), "Queue with new name already exists"),
+    500: jsonContent(z.object({ message: z.string() }), "Internal Server Error"),
+  },
+});
+
 export type CreateQueueRoute = typeof createQueue;
 export type ListQueuesRoute = typeof listQueues;
 export type GetQueueRoute = typeof getQueue;
 export type UpdateQueueRoute = typeof updateQueue;
 export type DeleteQueueRoute = typeof deleteQueue;
 export type PurgeQueueRoute = typeof purgeQueue;
+export type RenameQueueRoute = typeof renameQueue;

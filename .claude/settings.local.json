@@ -27,7 +27,13 @@
       "Bash(ss:*)",
       "Bash(pnpm exec tsc:*)",
       "Bash(npx vite build)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "mcp__plugin_claude-mem_mcp-search__search",
+      "mcp__acp__Bash",
+      "mcp__acp__Write",
+      "Bash(done)",
+      "Bash(echo:*)",
+      "Bash(where bun:*)"
     ]
   }
 }

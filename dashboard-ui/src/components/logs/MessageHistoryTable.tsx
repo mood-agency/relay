@@ -1,7 +1,5 @@
 import React, { useState } from "react"
 import {
-    Loader2,
-    Search,
     ArrowRight,
     Clock,
     Zap,
@@ -9,22 +7,23 @@ import {
     History
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from "@/components/ui/tooltip"
 import {
     Table,
     TableBody,
     TableCell,
     TableHead,
     TableHeader,
-    TableRow
-} from "@/components/ui/table"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { cn } from "@/lib/utils"
+    TableRow,
+    ScrollArea,
+    cn,
+    tableStyles,
+    HighlightableTableRow,
+    EmptyState,
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+    LoadingOverlay
+} from "@/components/queue/QueueTableBase"
 
 import { MessageHistoryResponse } from "./types"
 import { getActionBadge, getSeverityBadge } from "./helpers"
@@ -59,64 +58,63 @@ export function MessageHistoryTable({
     }
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
-            <ScrollArea className="relative flex-1 min-h-0" scrollBarClassName="mt-12 h-[calc(100%-3rem)]">
-                {loading && (
-                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    </div>
-                )}
+        <div className={tableStyles.TABLE_CONTAINER}>
+            <ScrollArea
+                className={tableStyles.SCROLL_AREA}
+                scrollBarClassName={tableStyles.SCROLL_BAR}
+            >
+                {loading && <LoadingOverlay />}
                 <Table>
                     <TableHeader>
-                        <TableRow className="hover:bg-transparent border-b border-border/50">
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[50px]">#</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[90px]">Action</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[180px]">Timestamp</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[100px]">Queue</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[100px]">Consumer</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs w-[120px]">Timing</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card font-semibold text-foreground text-xs">Details</TableHead>
-                            <TableHead className="sticky top-0 z-20 bg-card w-[50px]"></TableHead>
+                        <TableRow className={tableStyles.TABLE_ROW_HEADER}>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[50px]")}>#</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[90px]")}>Action</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[180px]")}>Timestamp</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px]")}>Queue</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px]")}>Consumer</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[120px]")}>Timing</TableHead>
+                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Details</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[50px]")}></TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {!loading && !history ? (
-                            <TableRow className="hover:bg-transparent">
-                                <TableCell colSpan={8} className="h-[400px] p-0">
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                                        <History className="h-12 w-12 mb-3 opacity-30" />
-                                        <p className="font-medium">Enter a message ID</p>
-                                        <p className="text-sm">View the complete journey of any message</p>
-                                    </div>
+                            <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+                                <TableCell colSpan={8} className={tableStyles.TABLE_CELL_EMPTY}>
+                                    <EmptyState
+                                        icon={History}
+                                        title="Enter a message ID"
+                                        description="View the complete journey of any message"
+                                    />
                                 </TableCell>
                             </TableRow>
                         ) : !loading && history && !history.history?.length ? (
-                            <TableRow className="hover:bg-transparent">
-                                <TableCell colSpan={8} className="h-[400px] p-0">
-                                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                                        <FileText className="h-12 w-12 mb-3 opacity-30" />
-                                        <p className="font-medium">No history found</p>
-                                        <p className="text-sm font-mono">{history.message_id}</p>
-                                    </div>
+                            <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
+                                <TableCell colSpan={8} className={tableStyles.TABLE_CELL_EMPTY}>
+                                    <EmptyState
+                                        icon={FileText}
+                                        title="No history found"
+                                        description={history.message_id}
+                                    />
                                 </TableCell>
                             </TableRow>
                         ) : (
                             history?.history.map((event, idx) => (
-                                <TableRow key={event.log_id} className={cn(
-                                    "hover:bg-muted/50",
-                                    event.anomaly && event.anomaly.severity === 'critical' && "bg-destructive/5"
-                                )}>
-                                    <TableCell className="text-xs text-muted-foreground font-mono">
+                                <HighlightableTableRow
+                                    key={event.log_id}
+                                    isCritical={event.anomaly?.severity === 'critical'}
+                                >
+                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground")}>
                                         {idx + 1}
                                         {idx === 0 && <span className="ml-1 text-[10px] text-green-500">●</span>}
                                     </TableCell>
                                     <TableCell>{getActionBadge(event.action)}</TableCell>
-                                    <TableCell className="text-xs font-mono text-muted-foreground">
+                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground")}>
                                         {formatTime(event.timestamp)}
                                     </TableCell>
-                                    <TableCell className="text-xs">
+                                    <TableCell className={tableStyles.TEXT_PRIMARY}>
                                         {event.source_queue && event.dest_queue ? (
-                                            <span className="flex items-center gap-1">
+                                            <span className={tableStyles.FLEX_INLINE}>
                                                 <span>{event.source_queue}</span>
                                                 <ArrowRight className="h-3 w-3 text-muted-foreground" />
                                                 <span>{event.dest_queue}</span>
@@ -125,10 +123,10 @@ export function MessageHistoryTable({
                                             event.queue || '—'
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-xs font-mono text-muted-foreground truncate max-w-[100px]" title={event.consumer_id || ''}>
+                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground truncate max-w-[100px]")} title={event.consumer_id || ''}>
                                         {event.consumer_id?.substring(0, 12) || '—'}
                                     </TableCell>
-                                    <TableCell className="text-xs">
+                                    <TableCell className={tableStyles.TEXT_PRIMARY}>
                                         {event.time_in_queue_ms !== null && (
                                             <span className="text-muted-foreground" title="Time in queue">
                                                 <Clock className="h-3 w-3 inline mr-1" />
@@ -142,8 +140,8 @@ export function MessageHistoryTable({
                                             </span>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-xs">
-                                        <div className="flex items-center gap-2">
+                                    <TableCell className={tableStyles.TEXT_PRIMARY}>
+                                        <div className={tableStyles.FLEX_INLINE}>
                                             {event.attempt_count !== null && (
                                                 <span className="text-muted-foreground">Attempt {event.attempt_count}</span>
                                             )}
@@ -160,27 +158,25 @@ export function MessageHistoryTable({
                                             {event.anomaly && (
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
-                                                        <div className="flex items-center gap-1 cursor-help">
+                                                        <div className={cn(tableStyles.FLEX_INLINE, "cursor-help")}>
                                                             {getSeverityBadge(event.anomaly.severity)}
                                                         </div>
                                                     </TooltipTrigger>
                                                     <TooltipContent className="max-w-sm">
                                                         <p className="font-medium">{event.anomaly.type}</p>
-                                                        <p className="text-xs text-muted-foreground">{event.anomaly.description}</p>
+                                                        <p className={tableStyles.TEXT_MUTED}>{event.anomaly.description}</p>
                                                     </TooltipContent>
                                                 </Tooltip>
                                             )}
                                         </div>
                                     </TableCell>
                                     <TableCell />
-                                </TableRow>
+                                </HighlightableTableRow>
                             ))
                         )}
                     </TableBody>
                 </Table>
             </ScrollArea>
-
-
         </div>
     )
 }
