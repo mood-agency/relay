@@ -94,7 +94,7 @@ const LockTokenCell = React.memo(({ lockToken }: { lockToken?: string }) => {
 })
 
 const TimeRemainingCell = React.memo(({ remaining }: { remaining: React.ReactNode }) => (
-    <TableCell className={tableStyles.TABLE_CELL_TIME}>
+    <TableCell className={cn(tableStyles.TABLE_CELL_TIME, tableStyles.TABLE_CELL_LAST)}>
         {remaining}
     </TableCell>
 ))
@@ -349,7 +349,7 @@ export const ProcessingQueueTable = React.memo(({
                     <Table>
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                                <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]")}>
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]", tableStyles.TABLE_HEADER_FIRST)}>
                                     <input
                                         type="checkbox"
                                         className={tableStyles.INPUT_CHECKBOX}
@@ -365,7 +365,7 @@ export const ProcessingQueueTable = React.memo(({
                                 <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
                                 <SortableHeader label="Consumer" field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[140px]" />
                                 <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px]")}>Lock Token</TableHead>
-                                <TableHead className={tableStyles.TABLE_HEADER_BASE}>Remaining(s)</TableHead>
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Remaining(s)</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
