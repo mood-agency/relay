@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import React from "react"
 import { Search } from "lucide-react"
 
 import {
@@ -27,7 +27,7 @@ import {
     cn,
     Message,
     tableStyles,
-    FilterPopover
+    FilterBar
 } from "./QueueTableBase"
 import {
     Select,
@@ -136,13 +136,12 @@ export const MainQueueTable = React.memo(({
     setEndDate,
     availableTypes
 }: MainQueueTableProps) => {
-    const [filterOpen, setFilterOpen] = useState(false)
     const { shouldVirtualize, scrollContainerRef, setScrollTop, virtual } = useTableVirtualization(messages, scrollResetKey)
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
-    // Check if filter props are provided - if so, show filter column
+    // Check if filter props are provided - if so, show filter bar
     const hasFilterProps = setSearch !== undefined && setFilterType !== undefined
-    const colSpan = hasFilterProps ? 9 : 8
+    const colSpan = 8
 
     const renderRow = (msg: Message) => (
         <MainQueueRow
@@ -159,6 +158,116 @@ export const MainQueueTable = React.memo(({
 
     return (
         <div className={tableStyles.TABLE_CONTAINER}>
+            {hasFilterProps && (
+                <FilterBar
+                    isFilterActive={isFilterActive ?? false}
+                    onClearFilters={() => {
+                        setSearch!("")
+                        setFilterType!("all")
+                        setFilterPriority!("")
+                        setFilterAttempts!("")
+                        setStartDate!(undefined)
+                        setEndDate!(undefined)
+                    }}
+                >
+                    {/* Search */}
+                    <div className={cn(tableStyles.FILTER_BAR_ITEM, "relative")}>
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <input
+                            placeholder="Search ID, payload..."
+                            value={search}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
+                            className={cn(
+                                "flex h-8 w-[200px] rounded-md border border-input bg-background pl-8 pr-3 py-1 text-sm shadow-sm transition-colors",
+                                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            )}
+                        />
+                    </div>
+
+                    {/* Message Type */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Type:</span>
+                        <MultipleSelector
+                            defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
+                            value={
+                                filterType === "all" || !filterType
+                                    ? []
+                                    : filterType.split(",").map(t => ({ label: t, value: t }))
+                            }
+                            onChange={(selected: Option[]) => {
+                                if (selected.length === 0) {
+                                    setFilterType!("all")
+                                } else {
+                                    setFilterType!(selected.map(s => s.value).join(","))
+                                }
+                            }}
+                            hideClearAllButton
+                            placeholder="All"
+                            className="min-w-[150px]"
+                            badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
+                            emptyIndicator={
+                                <p className="text-center text-sm text-muted-foreground">No types found</p>
+                            }
+                        />
+                    </div>
+
+                    {/* Priority */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Priority:</span>
+                        <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
+                            <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
+                                <SelectValue placeholder="Any" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="any">Any</SelectItem>
+                                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                                    <SelectItem key={p} value={String(p)}>{p}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Min Attempts */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Min Attempts:</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="Any"
+                            value={filterAttempts}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                const val = e.target.value
+                                if (val === "" || /^\d+$/.test(val)) {
+                                    setFilterAttempts!(val)
+                                }
+                            }}
+                            className={cn(
+                                "flex h-8 w-[80px] rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors",
+                                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            )}
+                        />
+                    </div>
+
+                    {/* Date Range */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Created:</span>
+                        <DateTimePicker
+                            date={startDate}
+                            setDate={setStartDate!}
+                            placeholder="From"
+                            className={tableStyles.FILTER_BAR_DATE}
+                        />
+                        <span className="text-muted-foreground">-</span>
+                        <DateTimePicker
+                            date={endDate}
+                            setDate={setEndDate!}
+                            placeholder="To"
+                            className={tableStyles.FILTER_BAR_DATE}
+                        />
+                    </div>
+                </FilterBar>
+            )}
             <ScrollArea
                 viewportRef={scrollContainerRef}
                 className={tableStyles.SCROLL_AREA}
@@ -187,116 +296,6 @@ export const MainQueueTable = React.memo(({
                                 <SortableHeader label="Created At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
                                 <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack Timeout</TableHead>
-                                {hasFilterProps && (
-                                    <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
-                                        <FilterPopover
-                                            isOpen={filterOpen}
-                                            onOpenChange={setFilterOpen}
-                                            isFilterActive={isFilterActive ?? false}
-                                            onClearFilters={() => {
-                                                setSearch!("")
-                                                setFilterType!("all")
-                                                setFilterPriority!("")
-                                                setFilterAttempts!("")
-                                                setStartDate!(undefined)
-                                                setEndDate!(undefined)
-                                            }}
-                                            title="Message Filters"
-                                        >
-                                            <div className="space-y-2">
-                                                <label className={tableStyles.FILTER_LABEL}>Search</label>
-                                                <div className="relative">
-                                                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                    <input
-                                                        placeholder="Search ID, payload..."
-                                                        value={search}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
-                                                        className={tableStyles.FILTER_INPUT}
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className={tableStyles.FILTER_LABEL}>Message Type</label>
-                                                <MultipleSelector
-                                                    defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
-                                                    value={
-                                                        filterType === "all" || !filterType
-                                                            ? []
-                                                            : filterType.split(",").map(t => ({ label: t, value: t }))
-                                                    }
-                                                    onChange={(selected: Option[]) => {
-                                                        if (selected.length === 0) {
-                                                            setFilterType!("all")
-                                                        } else {
-                                                            setFilterType!(selected.map(s => s.value).join(","))
-                                                        }
-                                                    }}
-                                                    hideClearAllButton
-                                                    badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
-                                                    emptyIndicator={
-                                                        <p className="text-center text-sm text-muted-foreground">No types found</p>
-                                                    }
-                                                />
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className={tableStyles.FILTER_LABEL}>Priority</label>
-                                                <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
-                                                    <SelectTrigger className="w-full">
-                                                        <SelectValue placeholder="Any" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="any">Any</SelectItem>
-                                                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
-                                                            <SelectItem key={p} value={String(p)}>{p}</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className={tableStyles.FILTER_LABEL}>Min Attempts</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="1"
-                                                    placeholder="Any"
-                                                    value={filterAttempts}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                        const val = e.target.value
-                                                        if (val === "" || /^\d+$/.test(val)) {
-                                                            setFilterAttempts!(val)
-                                                        }
-                                                    }}
-                                                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                                />
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className={tableStyles.FILTER_LABEL}>Created At</label>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-muted-foreground">From</label>
-                                                        <DateTimePicker
-                                                            date={startDate}
-                                                            setDate={setStartDate!}
-                                                            placeholder="From"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-muted-foreground">To</label>
-                                                        <DateTimePicker
-                                                            date={endDate}
-                                                            setDate={setEndDate!}
-                                                            placeholder="To"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </FilterPopover>
-                                    </TableHead>
-                                )}
                             </TableRow>
                         </TableHeader>
                         <TableBody>

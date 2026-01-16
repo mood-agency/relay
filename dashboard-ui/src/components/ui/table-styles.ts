@@ -166,7 +166,7 @@ export const TOOLTIP_PAYLOAD = "max-w-[400px] max-h-[300px] overflow-auto p-0"
 export const TOOLTIP_CODE = "text-xs p-3 rounded-md bg-slate-950 text-slate-50 overflow-auto"
 
 // ============================================================================
-// Filter Popover Styles
+// Filter Popover Styles (legacy - for components still using popover)
 // ============================================================================
 
 /** Filter popover content */
@@ -180,6 +180,34 @@ export const FILTER_INPUT = "flex h-9 w-full rounded-md border border-input bg-b
 
 /** Clear filters button */
 export const FILTER_CLEAR_BUTTON = "h-7 text-xs text-muted-foreground hover:text-foreground"
+
+// ============================================================================
+// Filter Bar Styles (expanded filter display above table)
+// ============================================================================
+
+/** Filter bar container */
+export const FILTER_BAR = "flex flex-wrap items-center gap-3 px-4 py-3 border-b bg-muted/5"
+
+/** Filter bar item wrapper */
+export const FILTER_BAR_ITEM = "flex items-center gap-2"
+
+/** Filter bar input (compact) */
+export const FILTER_BAR_INPUT = "h-8 text-sm"
+
+/** Filter bar search input with icon */
+export const FILTER_BAR_SEARCH = "h-8 w-[200px] pl-8 text-sm"
+
+/** Filter bar select trigger */
+export const FILTER_BAR_SELECT = "h-8 w-[120px] text-sm"
+
+/** Filter bar date picker */
+export const FILTER_BAR_DATE = "h-8 w-[140px] text-sm"
+
+/** Filter bar clear button */
+export const FILTER_BAR_CLEAR = "h-8 text-xs text-muted-foreground hover:text-foreground"
+
+/** Filter bar active indicator */
+export const FILTER_BAR_ACTIVE = "flex items-center gap-2 text-xs text-primary"
 
 // ============================================================================
 // Badge Styles

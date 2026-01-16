@@ -196,7 +196,7 @@ export const LoadingOverlay = () => (
 )
 
 // ============================================================================
-// Filter Popover Component
+// Filter Popover Component (legacy - kept for backwards compatibility)
 // ============================================================================
 
 export interface FilterPopoverProps {
@@ -249,6 +249,39 @@ export const FilterPopover = ({
             </div>
         </PopoverContent>
     </Popover>
+)
+
+// ============================================================================
+// Filter Bar Component (expanded filter display above table)
+// ============================================================================
+
+export interface FilterBarProps {
+    isFilterActive: boolean
+    onClearFilters: () => void
+    children: React.ReactNode
+    className?: string
+}
+
+export const FilterBar = ({
+    isFilterActive,
+    onClearFilters,
+    children,
+    className
+}: FilterBarProps) => (
+    <div className={cn(tableStyles.FILTER_BAR, className)}>
+        <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+        {children}
+        {isFilterActive && (
+            <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClearFilters}
+                className={tableStyles.FILTER_BAR_CLEAR}
+            >
+                Clear all
+            </Button>
+        )}
+    </div>
 )
 
 // ============================================================================

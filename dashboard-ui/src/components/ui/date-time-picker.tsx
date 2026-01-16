@@ -16,9 +16,10 @@ interface DateTimePickerProps {
   date: Date | undefined
   setDate: (date: Date | undefined) => void
   placeholder?: string
+  className?: string
 }
 
-export function DateTimePicker({ date, setDate, placeholder = "Pick a date" }: DateTimePickerProps) {
+export function DateTimePicker({ date, setDate, placeholder = "Pick a date", className }: DateTimePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false)
 
   const hours = Array.from({ length: 24 }, (_, i) => i)
@@ -57,7 +58,8 @@ export function DateTimePicker({ date, setDate, placeholder = "Pick a date" }: D
           variant="outline"
           className={cn(
             "w-full justify-start text-left font-normal overflow-hidden",
-            !date && "text-muted-foreground"
+            !date && "text-muted-foreground",
+            className
           )}
         >
           <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
