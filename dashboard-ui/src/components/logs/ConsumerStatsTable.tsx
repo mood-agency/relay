@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useState, useMemo } from "react"
 import {
     User,
     RefreshCw
@@ -9,7 +9,6 @@ import {
     Table,
     TableBody,
     TableCell,
-    TableHead,
     TableHeader,
     TableRow,
     ScrollArea,
@@ -17,7 +16,8 @@ import {
     tableStyles,
     EmptyState,
     LoadingOverlay,
-    SummaryFooter
+    SummaryFooter,
+    SortableHeader
 } from "@/components/queue/QueueTableBase"
 
 import { ConsumerStatsResponse } from "./types"
@@ -25,6 +25,9 @@ import { ConsumerStatsResponse } from "./types"
 // ============================================================================
 // Consumer Stats Table Component
 // ============================================================================
+
+type SortField = 'consumer_id' | 'dequeue_count' | 'last_dequeue' | 'share'
+type SortOrder = 'asc' | 'desc'
 
 export interface ConsumerStatsTableProps {
     stats: ConsumerStatsResponse | null
@@ -39,8 +42,42 @@ export function ConsumerStatsTable({
     onRefresh,
     formatTime
 }: ConsumerStatsTableProps) {
+    const [sortBy, setSortBy] = useState<SortField>('dequeue_count')
+    const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+
     const consumerEntries = stats?.stats ? Object.entries(stats.stats) : []
     const totalDequeues = consumerEntries.reduce((sum, [, data]) => sum + data.dequeue_count, 0)
+
+    const handleSort = (field: string) => {
+        const typedField = field as SortField
+        if (sortBy === typedField) {
+            setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')
+        } else {
+            setSortBy(typedField)
+            setSortOrder('desc')
+        }
+    }
+
+    const sortedEntries = useMemo(() => {
+        return [...consumerEntries].sort((a, b) => {
+            const [idA, dataA] = a
+            const [idB, dataB] = b
+            const dir = sortOrder === 'asc' ? 1 : -1
+
+            switch (sortBy) {
+                case 'consumer_id':
+                    return idA.localeCompare(idB) * dir
+                case 'dequeue_count':
+                    return (dataA.dequeue_count - dataB.dequeue_count) * dir
+                case 'last_dequeue':
+                    return ((dataA.last_dequeue || 0) - (dataB.last_dequeue || 0)) * dir
+                case 'share':
+                    return (dataA.dequeue_count - dataB.dequeue_count) * dir
+                default:
+                    return 0
+            }
+        })
+    }, [consumerEntries, sortBy, sortOrder])
 
     // Build summary footer items
     const summaryItems = [
@@ -58,14 +95,14 @@ export function ConsumerStatsTable({
                 <Table>
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Consumer ID</TableHead>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[150px]")}>Dequeue Count</TableHead>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[200px]")}>Last Activity</TableHead>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px] text-right pr-6")}>Share</TableHead>
+                            <SortableHeader label="Consumer ID" field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[200px]", tableStyles.TABLE_HEADER_FIRST)} />
+                            <SortableHeader label="Dequeue Count" field="dequeue_count" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
+                            <SortableHeader label="Last Activity" field="last_dequeue" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
+                            <SortableHeader label="Share" field="share" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {!loading && consumerEntries.length === 0 ? (
+                        {!loading && sortedEntries.length === 0 ? (
                             <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
                                 <TableCell colSpan={4} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
@@ -76,11 +113,12 @@ export function ConsumerStatsTable({
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            consumerEntries.map(([consumerId, data]) => {
+                            sortedEntries.map(([consumerId, data]) => {
                                 const sharePercent = totalDequeues > 0 ? ((data.dequeue_count / totalDequeues) * 100).toFixed(1) : '0'
+                                const maxDequeues = Math.max(...consumerEntries.map(([, d]) => d.dequeue_count))
                                 return (
                                     <TableRow key={consumerId} className={tableStyles.TABLE_ROW_BASE}>
-                                        <TableCell className={tableStyles.TEXT_MONO} title={consumerId}>
+                                        <TableCell className={cn(tableStyles.TEXT_MONO, tableStyles.TABLE_CELL_FIRST)} title={consumerId}>
                                             {consumerId}
                                         </TableCell>
                                         <TableCell>
@@ -89,7 +127,7 @@ export function ConsumerStatsTable({
                                                 <div className="flex-1 h-1.5 bg-muted rounded-full max-w-[80px]">
                                                     <div
                                                         className="h-full bg-primary rounded-full"
-                                                        style={{ width: `${Math.min(100, (data.dequeue_count / Math.max(...consumerEntries.map(([,d]) => d.dequeue_count))) * 100)}%` }}
+                                                        style={{ width: `${Math.min(100, (data.dequeue_count / maxDequeues) * 100)}%` }}
                                                     />
                                                 </div>
                                             </div>
@@ -97,7 +135,7 @@ export function ConsumerStatsTable({
                                         <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground")}>
                                             {formatTime(data.last_dequeue)}
                                         </TableCell>
-                                        <TableCell className={cn(tableStyles.TEXT_MUTED, "text-right pr-6")}>
+                                        <TableCell className={cn(tableStyles.TEXT_MUTED, tableStyles.TABLE_CELL_LAST)}>
                                             {sharePercent}%
                                         </TableCell>
                                     </TableRow>

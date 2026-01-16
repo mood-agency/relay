@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import React from "react"
 import { CheckCircle2 } from "lucide-react"
 
 import {
@@ -18,7 +18,7 @@ import {
     PayloadCell,
     CopyableIdCell,
     LoadingOverlay,
-    FilterPopover,
+    FilterBar,
     SummaryFooter
 } from "@/components/queue/QueueTableBase"
 import {
@@ -65,7 +65,6 @@ export function AnomaliesTable({
     onRefresh: _onRefresh,
     formatTime
 }: AnomaliesTableProps) {
-    const [filterOpen, setFilterOpen] = useState(false)
     const isFilterActive = severityFilter !== '' || typeFilter !== ''
 
     // onRefresh is available via props if needed in the future
@@ -95,6 +94,50 @@ export function AnomaliesTable({
 
     return (
         <div className={tableStyles.TABLE_CONTAINER}>
+            <FilterBar
+                isFilterActive={isFilterActive}
+                onClearFilters={handleClearFilters}
+            >
+                {/* Severity */}
+                <div className={tableStyles.FILTER_BAR_ITEM}>
+                    <span className={tableStyles.FILTER_LABEL}>Severity:</span>
+                    <Select value={severityFilter || 'all'} onValueChange={(val) => setSeverityFilter(val === 'all' ? '' : val)}>
+                        <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
+                            <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            <SelectItem value="critical">Critical</SelectItem>
+                            <SelectItem value="warning">Warning</SelectItem>
+                            <SelectItem value="info">Info</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                {/* Anomaly Type */}
+                <div className={tableStyles.FILTER_BAR_ITEM}>
+                    <span className={tableStyles.FILTER_LABEL}>Type:</span>
+                    <Select value={typeFilter || 'all'} onValueChange={(val) => setTypeFilter(val === 'all' ? '' : val)}>
+                        <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
+                            <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Types</SelectItem>
+                            <SelectItem value="flash_message">Flash Message</SelectItem>
+                            <SelectItem value="zombie_message">Zombie Message</SelectItem>
+                            <SelectItem value="near_dlq">Near DLQ</SelectItem>
+                            <SelectItem value="dlq_movement">DLQ Movement</SelectItem>
+                            <SelectItem value="long_processing">Long Processing</SelectItem>
+                            <SelectItem value="lock_stolen">Lock Stolen</SelectItem>
+                            <SelectItem value="burst_dequeue">Burst Dequeue</SelectItem>
+                            <SelectItem value="bulk_delete">Bulk Delete</SelectItem>
+                            <SelectItem value="bulk_move">Bulk Move</SelectItem>
+                            <SelectItem value="queue_cleared">Queue Cleared</SelectItem>
+                            <SelectItem value="large_payload">Large Payload</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+            </FilterBar>
             <ScrollArea
                 className={tableStyles.SCROLL_AREA}
                 scrollBarClassName={tableStyles.SCROLL_BAR}
@@ -103,63 +146,18 @@ export function AnomaliesTable({
                 <Table>
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                            <SortableHeader label="Severity" field="severity" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[90px]" />
+                            <SortableHeader label="Severity" field="severity" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[90px]", tableStyles.TABLE_HEADER_FIRST)} />
                             <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[120px]")}>Message ID</TableHead>
-                            <SortableHeader label="Anomaly Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} />
-                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Description</TableHead>
+                            <SortableHeader label="Anomaly Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[220px]")}>Description</TableHead>
                             <SortableHeader label="Timestamp" field="timestamp" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
-                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Payload</TableHead>
-                            <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
-                                <FilterPopover
-                                    isOpen={filterOpen}
-                                    onOpenChange={setFilterOpen}
-                                    isFilterActive={isFilterActive}
-                                    onClearFilters={handleClearFilters}
-                                >
-                                    <div className="space-y-2">
-                                        <label className={tableStyles.FILTER_LABEL}>Severity</label>
-                                        <Select value={severityFilter || 'all'} onValueChange={(val) => setSeverityFilter(val === 'all' ? '' : val)}>
-                                            <SelectTrigger className="w-full h-9">
-                                                <SelectValue placeholder="All Severities" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All Severities</SelectItem>
-                                                <SelectItem value="critical">Critical</SelectItem>
-                                                <SelectItem value="warning">Warning</SelectItem>
-                                                <SelectItem value="info">Info</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label className={tableStyles.FILTER_LABEL}>Anomaly Type</label>
-                                        <Select value={typeFilter || 'all'} onValueChange={(val) => setTypeFilter(val === 'all' ? '' : val)}>
-                                            <SelectTrigger className="w-full h-9">
-                                                <SelectValue placeholder="All Types" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All Types</SelectItem>
-                                                <SelectItem value="flash_message">Flash Message</SelectItem>
-                                                <SelectItem value="zombie_message">Zombie Message</SelectItem>
-                                                <SelectItem value="near_dlq">Near DLQ</SelectItem>
-                                                <SelectItem value="dlq_movement">DLQ Movement</SelectItem>
-                                                <SelectItem value="long_processing">Long Processing</SelectItem>
-                                                <SelectItem value="lock_stolen">Lock Stolen</SelectItem>
-                                                <SelectItem value="burst_dequeue">Burst Dequeue</SelectItem>
-                                                <SelectItem value="bulk_delete">Bulk Delete</SelectItem>
-                                                <SelectItem value="bulk_move">Bulk Move</SelectItem>
-                                                <SelectItem value="queue_cleared">Queue Cleared</SelectItem>
-                                                <SelectItem value="large_payload">Large Payload</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </FilterPopover>
-                            </TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Payload</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {!loading && (!anomalies?.anomalies?.length) ? (
                             <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
-                                <TableCell colSpan={7} className={tableStyles.TABLE_CELL_EMPTY}>
+                                <TableCell colSpan={6} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={CheckCircle2}
                                         title="No anomalies detected"
@@ -174,7 +172,7 @@ export function AnomaliesTable({
                                     key={log.log_id}
                                     isCritical={log.anomaly?.severity === 'critical'}
                                 >
-                                    <TableCell>{getSeverityBadge(log.anomaly?.severity || 'info')}</TableCell>
+                                    <TableCell className={tableStyles.TABLE_CELL_FIRST}>{getSeverityBadge(log.anomaly?.severity || 'info')}</TableCell>
                                     {log.message_id ? (
                                         <CopyableIdCell id={log.message_id} truncateLength={10} />
                                     ) : (
@@ -194,11 +192,10 @@ export function AnomaliesTable({
                                     {log.payload ? (
                                         <PayloadCell payload={log.payload} toastMessage="Payload copied to clipboard" />
                                     ) : (
-                                        <TableCell className={tableStyles.TABLE_CELL_PAYLOAD}>
+                                        <TableCell className={cn(tableStyles.TABLE_CELL_PAYLOAD, tableStyles.TABLE_CELL_LAST)}>
                                             <span className={tableStyles.TEXT_MUTED}>—</span>
                                         </TableCell>
                                     )}
-                                    <TableCell />
                                 </HighlightableTableRow>
                             ))
                         )}

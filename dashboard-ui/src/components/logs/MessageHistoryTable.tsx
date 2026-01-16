@@ -1,8 +1,6 @@
 import React, { useState } from "react"
 import {
     ArrowRight,
-    Clock,
-    Zap,
     FileText,
     History
 } from "lucide-react"
@@ -71,8 +69,7 @@ export function MessageHistoryTable({
                             <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[90px]")}>Action</TableHead>
                             <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[180px]")}>Timestamp</TableHead>
                             <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px]")}>Queue</TableHead>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[100px]")}>Consumer</TableHead>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[120px]")}>Timing</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[50%]")}>Actor</TableHead>
                             <TableHead className={tableStyles.TABLE_HEADER_BASE}>Details</TableHead>
                             <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[50px]")}></TableHead>
                         </TableRow>
@@ -80,7 +77,7 @@ export function MessageHistoryTable({
                     <TableBody>
                         {!loading && !history ? (
                             <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
-                                <TableCell colSpan={8} className={tableStyles.TABLE_CELL_EMPTY}>
+                                <TableCell colSpan={7} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={History}
                                         title="Enter a message ID"
@@ -90,7 +87,7 @@ export function MessageHistoryTable({
                             </TableRow>
                         ) : !loading && history && !history.history?.length ? (
                             <TableRow className={tableStyles.TABLE_ROW_EMPTY}>
-                                <TableCell colSpan={8} className={tableStyles.TABLE_CELL_EMPTY}>
+                                <TableCell colSpan={7} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={FileText}
                                         title="No history found"
@@ -109,7 +106,7 @@ export function MessageHistoryTable({
                                         {idx === 0 && <span className="ml-1 text-[10px] text-green-500">●</span>}
                                     </TableCell>
                                     <TableCell>{getActionBadge(event.action)}</TableCell>
-                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground")}>
+                                    <TableCell className={tableStyles.TABLE_CELL_TIME}>
                                         {formatTime(event.timestamp)}
                                     </TableCell>
                                     <TableCell className={tableStyles.TEXT_PRIMARY}>
@@ -123,22 +120,8 @@ export function MessageHistoryTable({
                                             event.queue || '—'
                                         )}
                                     </TableCell>
-                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-muted-foreground truncate max-w-[100px]")} title={event.consumer_id || ''}>
-                                        {event.consumer_id?.substring(0, 12) || '—'}
-                                    </TableCell>
-                                    <TableCell className={tableStyles.TEXT_PRIMARY}>
-                                        {event.time_in_queue_ms !== null && (
-                                            <span className="text-muted-foreground" title="Time in queue">
-                                                <Clock className="h-3 w-3 inline mr-1" />
-                                                {event.time_in_queue_ms}ms
-                                            </span>
-                                        )}
-                                        {event.processing_time_ms !== null && (
-                                            <span className="text-muted-foreground ml-2" title="Processing time">
-                                                <Zap className="h-3 w-3 inline mr-1" />
-                                                {event.processing_time_ms}ms
-                                            </span>
-                                        )}
+                                    <TableCell className={cn(tableStyles.TEXT_MONO, "text-foreground truncate max-w-[100px]")} title={event.consumer_id || ''}>
+                                        {event.consumer_id || '—'}
                                     </TableCell>
                                     <TableCell className={tableStyles.TEXT_PRIMARY}>
                                         <div className={tableStyles.FLEX_INLINE}>

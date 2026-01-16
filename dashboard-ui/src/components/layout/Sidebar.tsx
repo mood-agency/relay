@@ -15,17 +15,10 @@ import {
     ChevronRight,
     ChevronDown,
     Plus,
-    RefreshCw,
     Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { QueueInfo } from "@/components/queues/QueueManagement"
 import { SystemStatus } from "@/components/queue/types"
 
@@ -158,29 +151,13 @@ export default function Sidebar({
     return (
         <div className="w-64 h-full border-r bg-card flex flex-col">
             {/* Header */}
-            <div className="p-4 border-b flex items-center justify-between">
+            <div className="p-4 border-b">
                 <h1
                     className="font-semibold text-lg cursor-pointer hover:text-primary transition-colors"
                     onClick={() => navigate('/queues')}
                 >
                     Relay
                 </h1>
-                <div className="flex items-center gap-1">
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={fetchQueues}
-                                disabled={loading}
-                                className="h-8 w-8"
-                            >
-                                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Refresh queues</TooltipContent>
-                    </Tooltip>
-                </div>
             </div>
 
             <ScrollArea className="flex-1">
@@ -213,26 +190,33 @@ export default function Sidebar({
                                         No queues yet
                                     </div>
                                 ) : (
-                                    queues.map((queue) => (
-                                        <button
-                                            key={queue.name}
-                                            onClick={() => navigateToQueue(queue.name)}
-                                            className={cn(
-                                                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
-                                                currentQueueName === queue.name
-                                                    ? "bg-primary/10 text-primary font-medium"
-                                                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                                            )}
-                                        >
-                                            {getQueueTypeIcon(queue.queue_type)}
-                                            <span className="truncate flex-1 text-left">{queue.name}</span>
-                                            {queue.dead_count > 0 && (
-                                                <span className="text-[10px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded">
-                                                    {queue.dead_count}
-                                                </span>
-                                            )}
-                                        </button>
-                                    ))
+                                    queues.map((queue) => {
+                                        const totalMessages = queue.message_count + queue.processing_count + queue.dead_count
+                                        return (
+                                            <button
+                                                key={queue.name}
+                                                onClick={() => navigateToQueue(queue.name)}
+                                                className={cn(
+                                                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
+                                                    currentQueueName === queue.name
+                                                        ? "bg-primary/10 text-primary font-medium"
+                                                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                                )}
+                                            >
+                                                {getQueueTypeIcon(queue.queue_type)}
+                                                <span className="truncate flex-1 text-left">{queue.name}</span>
+                                                {queue.dead_count > 0 ? (
+                                                    <span className="text-[10px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded">
+                                                        {queue.dead_count}
+                                                    </span>
+                                                ) : totalMessages > 0 ? (
+                                                    <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                                                        {totalMessages}
+                                                    </span>
+                                                ) : null}
+                                            </button>
+                                        )
+                                    })
                                 )}
 
                                 {/* Create Queue Button */}

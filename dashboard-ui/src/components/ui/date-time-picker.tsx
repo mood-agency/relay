@@ -75,6 +75,7 @@ export function DateTimePicker({ date, setDate, placeholder = "Pick a date", cla
             selected={date}
             onSelect={handleDateSelect}
             initialFocus
+            className="pr-8"
           />
           <div className="flex flex-col sm:flex-row sm:h-[300px] divide-y sm:divide-y-0 sm:divide-x border-l">
             <ScrollArea className="w-64 sm:w-auto">

@@ -33,7 +33,8 @@
       "mcp__acp__Write",
       "Bash(done)",
       "Bash(echo:*)",
-      "Bash(where bun:*)"
+      "Bash(where bun:*)",
+      "Bash(git worktree:*)"
     ]
   }
 }

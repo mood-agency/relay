@@ -21,16 +21,16 @@ function Calendar({
         [UI.Months]:
           "flex flex-col sm:flex-row space-y-4 sm:space-x-4 sm:space-y-0",
         [UI.Month]: "space-y-4",
-        [UI.MonthCaption]: "flex justify-center pt-1 relative items-center",
+        [UI.MonthCaption]: "flex justify-center pt-1 items-center gap-2",
         [UI.CaptionLabel]: "text-sm font-medium",
-        [UI.Nav]: "space-x-1 flex items-center",
+        [UI.Nav]: "flex items-center gap-1",
         [UI.PreviousMonthButton]: cn(
           buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-1"
+          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100"
         ),
         [UI.NextMonthButton]: cn(
           buttonVariants({ variant: "outline" }),
-          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-1"
+          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100"
         ),
         [UI.MonthGrid]: "w-full border-collapse space-y-1",
         [UI.Weekdays]: "flex",

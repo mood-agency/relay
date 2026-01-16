@@ -10,6 +10,12 @@
 /** Base sticky header style - use for all table headers */
 export const TABLE_HEADER_BASE = "sticky top-0 z-20 bg-card font-semibold text-foreground text-xs"
 
+/** First column header style - extra left padding for alignment with header/filter */
+export const TABLE_HEADER_FIRST = "pl-6"
+
+/** Last column header style - extra right padding for alignment */
+export const TABLE_HEADER_LAST = "pr-6"
+
 /** Sortable header style - extends base with hover effects */
 export const TABLE_HEADER_SORTABLE = `${TABLE_HEADER_BASE} cursor-pointer select-none hover:bg-muted/50 transition-colors`
 
@@ -54,6 +60,12 @@ export const TABLE_ROW_CRITICAL = "bg-destructive/5"
 // ============================================================================
 // Table Cell Styles
 // ============================================================================
+
+/** First column cell style - extra left padding for alignment */
+export const TABLE_CELL_FIRST = "pl-6"
+
+/** Last column cell style - extra right padding for alignment */
+export const TABLE_CELL_LAST = "pr-6"
 
 /** Base cell style with mono font for IDs */
 export const TABLE_CELL_ID = "group/id"
@@ -186,7 +198,7 @@ export const FILTER_CLEAR_BUTTON = "h-7 text-xs text-muted-foreground hover:text
 // ============================================================================
 
 /** Filter bar container */
-export const FILTER_BAR = "flex flex-wrap items-center gap-3 px-4 py-3 border-b bg-muted/5"
+export const FILTER_BAR = "flex flex-wrap items-center gap-3 px-6 py-3 border-b bg-muted/5"
 
 /** Filter bar item wrapper */
 export const FILTER_BAR_ITEM = "flex items-center gap-2"
@@ -196,6 +208,9 @@ export const FILTER_BAR_INPUT = "h-8 text-sm"
 
 /** Filter bar search input with icon */
 export const FILTER_BAR_SEARCH = "h-8 w-[200px] pl-8 text-sm"
+
+/** Filter bar text input (standard text/number inputs) */
+export const FILTER_BAR_TEXT_INPUT = "h-8 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
 /** Filter bar select trigger */
 export const FILTER_BAR_SELECT = "h-8 w-[120px] text-sm"
@@ -246,7 +261,7 @@ export const EMPTY_STATE_FILTERS_VALUE = "font-mono text-[11px] px-3 py-1 rounde
 // ============================================================================
 
 /** Pagination footer container */
-export const PAGINATION_FOOTER = "shrink-0 flex items-center justify-between px-4 py-4 border-t bg-muted/5"
+export const PAGINATION_FOOTER = "shrink-0 flex items-center justify-between px-6 py-4 border-t bg-muted/5"
 
 /** Pagination button */
 export const PAGINATION_BUTTON = "h-8 w-8 p-0"

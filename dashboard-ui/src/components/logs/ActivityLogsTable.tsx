@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from "react"
-import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy, Filter } from "lucide-react"
+import React, { useEffect, useRef, useMemo } from "react"
+import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy } from "lucide-react"
 
 import {
     Table,
@@ -21,14 +21,9 @@ import {
     CursorTooltip,
     HighlightableTableRow,
     useElementHeight,
-    useVirtualization
+    useVirtualization,
+    FilterBar
 } from "@/components/queue/QueueTableBase"
-import { Button } from "@/components/ui/button"
-import {
-    Popover,
-    PopoverContent,
-    PopoverTrigger,
-} from "@/components/ui/popover"
 import {
     Select,
     SelectContent,
@@ -98,7 +93,7 @@ const ActivityPayloadCell = React.memo(({ payload }: { payload: any }) => {
 
     return (
         <>
-            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD)} {...handlers}>
+            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD, tableStyles.TABLE_CELL_LAST)} {...handlers}>
                 <div className={tableStyles.FLEX_INLINE}>
                     <span className={cn("truncate", tableStyles.TEXT_PAYLOAD)}>
                         {JSON.stringify(payload)}
@@ -146,7 +141,7 @@ const ActivityLogRow = React.memo(({
         isHighlighted={isHighlighted}
         isCritical={log.anomaly?.severity === 'critical'}
     >
-        <TableCell className={cn("max-w-[120px]", tableStyles.TABLE_CELL_ID)}>
+        <TableCell className={cn("max-w-[120px]", tableStyles.TABLE_CELL_ID, tableStyles.TABLE_CELL_FIRST)}>
             {log.message_id ? (
                 <div className={tableStyles.FLEX_INLINE}>
                     <Tooltip>
@@ -197,13 +192,13 @@ const ActivityLogRow = React.memo(({
                 log.queue
             )}
         </TableCell>
-        <TableCell className={cn(tableStyles.TEXT_MONO, "text-foreground")} title={log.consumer_id || ''}>
+        <TableCell className={cn(tableStyles.TEXT_MONO, "text-foreground max-w-[192px] truncate")} title={log.consumer_id || ''}>
             {log.consumer_id || '—'}
         </TableCell>
         {log.payload ? (
             <ActivityPayloadCell payload={log.payload} />
         ) : (
-            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD)}>
+            <TableCell className={cn("max-w-[200px]", tableStyles.TABLE_CELL_PAYLOAD, tableStyles.TABLE_CELL_LAST)}>
                 <span className={tableStyles.TEXT_MUTED}>—</span>
             </TableCell>
         )}
@@ -261,16 +256,15 @@ export const ActivityLogsTable = React.memo(({
     filterHasAnomaly,
     setFilterHasAnomaly
 }: ActivityLogsTableProps) => {
-    const [filterOpen, setFilterOpen] = useState(false)
     const logsList = Array.isArray(logs) ? logs : []
     const scrollContainerRef = useRef<HTMLDivElement | null>(null)
     const viewportHeight = useElementHeight(scrollContainerRef)
-    const [scrollTop, setScrollTop] = useState(0)
-    const [sort, setSort] = useState<SortState>({ column: null, direction: 'desc' })
+    const [scrollTop, setScrollTop] = React.useState(0)
+    const [sort, setSort] = React.useState<SortState>({ column: null, direction: 'desc' })
 
     // Check if filter props are provided
     const hasFilterProps = setFilterAction !== undefined && setFilterMessageId !== undefined
-    const colSpan = hasFilterProps ? 7 : 6
+    const colSpan = 6
 
     const handleSort = (column: SortColumn) => {
         setSort(prev => ({
@@ -338,6 +332,65 @@ export const ActivityLogsTable = React.memo(({
 
     return (
         <div className={tableStyles.TABLE_CONTAINER}>
+            {hasFilterProps && (
+                <FilterBar
+                    isFilterActive={isFilterActive ?? false}
+                    onClearFilters={() => {
+                        setFilterAction!("")
+                        setFilterMessageId!("")
+                        setFilterHasAnomaly!(null)
+                    }}
+                >
+                    {/* Search by Message ID */}
+                    <div className={cn(tableStyles.FILTER_BAR_ITEM, "relative")}>
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <input
+                            placeholder="Search message ID..."
+                            value={filterMessageId || ''}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterMessageId!(e.target.value)}
+                            className={cn(tableStyles.FILTER_BAR_TEXT_INPUT, "w-[180px] pl-8")}
+                        />
+                    </div>
+
+                    {/* Action */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Action:</span>
+                        <Select value={filterAction || "any"} onValueChange={(val: string) => setFilterAction!(val === "any" ? "" : val)}>
+                            <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
+                                <SelectValue placeholder="Any" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="any">Any</SelectItem>
+                                <SelectItem value="enqueue">Enqueue</SelectItem>
+                                <SelectItem value="dequeue">Dequeue</SelectItem>
+                                <SelectItem value="ack">Acknowledge</SelectItem>
+                                <SelectItem value="nack">Negative Ack</SelectItem>
+                                <SelectItem value="requeue">Requeue</SelectItem>
+                                <SelectItem value="move">Move</SelectItem>
+                                <SelectItem value="delete">Delete</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Has Anomaly */}
+                    <div className={tableStyles.FILTER_BAR_ITEM}>
+                        <span className={tableStyles.FILTER_LABEL}>Anomaly:</span>
+                        <Select
+                            value={filterHasAnomaly === null ? "any" : filterHasAnomaly ? "yes" : "no"}
+                            onValueChange={(val: string) => setFilterHasAnomaly!(val === "any" ? null : val === "yes")}
+                        >
+                            <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
+                                <SelectValue placeholder="Any" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="any">Any</SelectItem>
+                                <SelectItem value="yes">Yes</SelectItem>
+                                <SelectItem value="no">No</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </FilterBar>
+            )}
             <ScrollArea
                 viewportRef={scrollContainerRef}
                 className={tableStyles.SCROLL_AREA}
@@ -351,101 +404,12 @@ export const ActivityLogsTable = React.memo(({
                     <Table>
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                                <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className="w-[120px]" />
+                                <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className={cn("w-[120px]", tableStyles.TABLE_HEADER_FIRST)} />
                                 <SortableHeader column="timestamp" label="Timestamp" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                                <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[90px]" />
+                                <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[100px]" />
                                 <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                                <SortableHeader column="consumer_id" label="Actor" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                                <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} />
-                                {hasFilterProps && (
-                                    <TableHead className={tableStyles.TABLE_HEADER_FILTER}>
-                                        <Popover open={filterOpen} onOpenChange={setFilterOpen}>
-                                            <PopoverTrigger asChild>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className={cn(tableStyles.BUTTON_FILTER, isFilterActive && tableStyles.BUTTON_FILTER_ACTIVE)}
-                                                    aria-label="Log Filters"
-                                                >
-                                                    <Filter className="h-3.5 w-3.5" />
-                                                    {isFilterActive && (
-                                                        <span className={tableStyles.FILTER_INDICATOR_DOT} />
-                                                    )}
-                                                </Button>
-                                            </PopoverTrigger>
-                                            <PopoverContent className={tableStyles.FILTER_POPOVER} align="end">
-                                                <div className="space-y-4">
-                                                    <div className="flex items-center justify-between">
-                                                        <h4 className="font-medium text-sm">Log Filters</h4>
-                                                        {isFilterActive && (
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() => {
-                                                                    setFilterAction!("")
-                                                                    setFilterMessageId!("")
-                                                                    setFilterHasAnomaly!(null)
-                                                                }}
-                                                                className={tableStyles.FILTER_CLEAR_BUTTON}
-                                                            >
-                                                                Clear all
-                                                            </Button>
-                                                        )}
-                                                    </div>
-
-                                                    <div className="space-y-2">
-                                                        <label className={tableStyles.FILTER_LABEL}>Message ID</label>
-                                                        <div className="relative">
-                                                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                            <input
-                                                                placeholder="Search by message ID..."
-                                                                value={filterMessageId || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterMessageId!(e.target.value)}
-                                                                className={tableStyles.FILTER_INPUT}
-                                                            />
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="space-y-2">
-                                                        <label className={tableStyles.FILTER_LABEL}>Action</label>
-                                                        <Select value={filterAction || "any"} onValueChange={(val: string) => setFilterAction!(val === "any" ? "" : val)}>
-                                                            <SelectTrigger className="w-full">
-                                                                <SelectValue placeholder="Any" />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                <SelectItem value="any">Any</SelectItem>
-                                                                <SelectItem value="enqueue">Enqueue</SelectItem>
-                                                                <SelectItem value="dequeue">Dequeue</SelectItem>
-                                                                <SelectItem value="ack">Acknowledge</SelectItem>
-                                                                <SelectItem value="nack">Negative Ack</SelectItem>
-                                                                <SelectItem value="requeue">Requeue</SelectItem>
-                                                                <SelectItem value="move">Move</SelectItem>
-                                                                <SelectItem value="delete">Delete</SelectItem>
-                                                            </SelectContent>
-                                                        </Select>
-                                                    </div>
-
-                                                    <div className="space-y-2">
-                                                        <label className={tableStyles.FILTER_LABEL}>Has Anomaly</label>
-                                                        <Select
-                                                            value={filterHasAnomaly === null ? "any" : filterHasAnomaly ? "yes" : "no"}
-                                                            onValueChange={(val: string) => setFilterHasAnomaly!(val === "any" ? null : val === "yes")}
-                                                        >
-                                                            <SelectTrigger className="w-full">
-                                                                <SelectValue placeholder="Any" />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                <SelectItem value="any">Any</SelectItem>
-                                                                <SelectItem value="yes">Yes</SelectItem>
-                                                                <SelectItem value="no">No</SelectItem>
-                                                            </SelectContent>
-                                                        </Select>
-                                                    </div>
-                                                </div>
-                                            </PopoverContent>
-                                        </Popover>
-                                    </TableHead>
-                                )}
+                                <SortableHeader column="consumer_id" label="Actor" currentSort={sort} onSort={handleSort} className="w-[192px]" />
+                                <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
                             </TableRow>
                         </TableHeader>
                         <TableBody>

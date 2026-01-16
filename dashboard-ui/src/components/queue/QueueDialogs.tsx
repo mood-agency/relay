@@ -105,13 +105,15 @@ export function MoveMessageDialog({
                             <label htmlFor="dlqReason" className="text-sm font-medium">
                                 Error Reason
                             </label>
-                            <textarea
-                                id="dlqReason"
-                                value={dlqReason}
-                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDlqReason(e.target.value)}
-                                placeholder="Why are you moving these messages to Failed?"
-                                className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            />
+                            <ScrollArea className="h-[80px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
+                                <textarea
+                                    id="dlqReason"
+                                    value={dlqReason}
+                                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDlqReason(e.target.value)}
+                                    placeholder="Why are you moving these messages to Failed?"
+                                    className="min-h-[80px] w-full bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 resize-none border-none"
+                                />
+                            </ScrollArea>
                         </div>
                     )}
                 </div>
@@ -346,17 +348,17 @@ export function EditMessageDialog({
                                     Payload
                                 </label>
                                 <div className="col-span-3 relative group">
-                                    <textarea
-                                        id="payload-readonly"
-                                        value={payload}
-                                        readOnly
-                                        className="flex min-h-[150px] w-full rounded-md border border-input bg-muted px-3 py-2 pr-10 text-sm shadow-sm font-mono focus-visible:outline-none cursor-text"
-                                    />
+                                    <ScrollArea className="h-[150px] w-full rounded-md border border-input bg-muted">
+                                        <pre
+                                            id="payload-readonly"
+                                            className="px-3 py-2 pr-10 text-sm font-mono whitespace-pre-wrap break-all"
+                                        >{payload}</pre>
+                                    </ScrollArea>
                                     <Button
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="absolute right-4 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                                         onClick={() => copyToClipboard(payload, setCopiedPayload)}
                                         title="Copy Payload"
                                     >
@@ -412,17 +414,19 @@ export function EditMessageDialog({
                                     Payload
                                 </label>
                                 <div className="col-span-3 relative group">
-                                    <textarea
-                                        id="payload"
-                                        value={payload}
-                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
-                                        className="flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 pr-10 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                                    />
+                                    <ScrollArea className="h-[150px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
+                                        <textarea
+                                            id="payload"
+                                            value={payload}
+                                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
+                                            className="min-h-[150px] w-full bg-transparent px-3 py-2 pr-10 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 font-mono resize-none border-none"
+                                        />
+                                    </ScrollArea>
                                     <Button
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="absolute right-4 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                                         onClick={() => copyToClipboard(payload, setCopiedPayload)}
                                         title="Copy Payload"
                                     >
@@ -609,12 +613,14 @@ export function CreateMessageDialog({
                         <label htmlFor="create-payload" className="text-right text-sm font-medium pt-2">
                             Payload
                         </label>
-                        <textarea
-                            id="create-payload"
-                            value={payload}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
-                            className="col-span-3 flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                        />
+                        <ScrollArea className="col-span-3 h-[150px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
+                            <textarea
+                                id="create-payload"
+                                value={payload}
+                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPayload(e.target.value)}
+                                className="min-h-[150px] w-full bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 font-mono resize-none border-none"
+                            />
+                        </ScrollArea>
                     </div>
                     {error && (
                         <div className="text-sm text-destructive font-medium text-center">

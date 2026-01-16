@@ -87,8 +87,6 @@ export interface AcknowledgedQueueTableProps extends BaseQueueTableProps {
     setFilterType?: (value: string) => void
     filterPriority?: string
     setFilterPriority?: (value: string) => void
-    filterAttempts?: string
-    setFilterAttempts?: (value: string) => void
     startDate?: Date | undefined
     setStartDate?: (date: Date | undefined) => void
     endDate?: Date | undefined
@@ -127,8 +125,6 @@ export const AcknowledgedQueueTable = React.memo(({
     setFilterType,
     filterPriority,
     setFilterPriority,
-    filterAttempts,
-    setFilterAttempts,
     startDate,
     setStartDate,
     endDate,
@@ -164,7 +160,6 @@ export const AcknowledgedQueueTable = React.memo(({
                         setSearch!("")
                         setFilterType!("all")
                         setFilterPriority!("")
-                        setFilterAttempts!("")
                         setStartDate!(undefined)
                         setEndDate!(undefined)
                     }}
@@ -176,10 +171,7 @@ export const AcknowledgedQueueTable = React.memo(({
                             placeholder="Search ID, payload..."
                             value={search}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
-                            className={cn(
-                                "flex h-8 w-[200px] rounded-md border border-input bg-background pl-8 pr-3 py-1 text-sm shadow-sm transition-colors",
-                                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            )}
+                            className={cn(tableStyles.FILTER_BAR_TEXT_INPUT, "w-[200px] pl-8")}
                         />
                     </div>
 
@@ -202,7 +194,7 @@ export const AcknowledgedQueueTable = React.memo(({
                             }}
                             hideClearAllButton
                             placeholder="All"
-                            className="min-w-[150px]"
+                            className="w-[150px]"
                             badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
                             emptyIndicator={
                                 <p className="text-center text-sm text-muted-foreground">No types found</p>
@@ -224,28 +216,6 @@ export const AcknowledgedQueueTable = React.memo(({
                                 ))}
                             </SelectContent>
                         </Select>
-                    </div>
-
-                    {/* Min Attempts */}
-                    <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Min Attempts:</span>
-                        <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="Any"
-                            value={filterAttempts}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                const val = e.target.value
-                                if (val === "" || /^\d+$/.test(val)) {
-                                    setFilterAttempts!(val)
-                                }
-                            }}
-                            className={cn(
-                                "flex h-8 w-[80px] rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors",
-                                "placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            )}
-                        />
                     </div>
 
                     {/* Date Range */}
@@ -280,7 +250,7 @@ export const AcknowledgedQueueTable = React.memo(({
                     <Table>
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                                <TableHead className={tableStyles.TABLE_HEADER_CHECKBOX}>
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]")}>
                                     <input
                                         type="checkbox"
                                         className={tableStyles.INPUT_CHECKBOX}
@@ -288,13 +258,13 @@ export const AcknowledgedQueueTable = React.memo(({
                                         onChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                     />
                                 </TableHead>
-                                <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <SortableHeader label="Ack At" field="acknowledged_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} />
-                                <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack Timeout</TableHead>
+                                <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
+                                <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
+                                <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[70px]" />
+                                <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[200px]" />
+                                <SortableHeader label="Ack At" field="acknowledged_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
+                                <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
+                                <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack time(s)</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>

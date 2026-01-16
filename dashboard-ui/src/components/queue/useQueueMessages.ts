@@ -954,7 +954,10 @@ export function useQueueMessages({ authFetch, apiKey, queueTab, queueName = 'def
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(data),
+                body: JSON.stringify({
+                    ...data,
+                    consumerId: 'user-manual-operation',
+                }),
             })
 
             if (response.ok) {

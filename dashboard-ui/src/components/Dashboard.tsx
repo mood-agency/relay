@@ -639,8 +639,8 @@ export default function Dashboard() {
                 )}
 
                 {/* Main Content Area */}
-                <div className="flex-1 min-h-0 overflow-hidden p-6">
-                    <div className="h-full rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col">
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <div className="h-full bg-card text-card-foreground overflow-hidden flex flex-col">
                         {/* Queue List View */}
                         {isQueueList && (
                             <QueueManagement

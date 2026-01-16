@@ -114,7 +114,7 @@ export const getPriorityBadge = (p: number) => (
 
 export function useCursorTooltip(delay: number = 200) {
     const [isHovered, setIsHovered] = useState(false)
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+    const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
     const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const handleMouseEnter = useCallback(() => {
@@ -129,6 +129,7 @@ export function useCursorTooltip(delay: number = 200) {
             hoverTimeoutRef.current = null
         }
         setIsHovered(false)
+        setMousePos(null)
     }, [])
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -144,8 +145,8 @@ export function useCursorTooltip(delay: number = 200) {
     }, [])
 
     return {
-        isHovered,
-        mousePos,
+        isHovered: isHovered && mousePos !== null,
+        mousePos: mousePos ?? { x: 0, y: 0 },
         handlers: {
             onMouseEnter: handleMouseEnter,
             onMouseLeave: handleMouseLeave,
@@ -467,7 +468,7 @@ export const SelectCell = React.memo(({
     isSelected: boolean,
     onToggleSelect: (id: string, shiftKey?: boolean) => void
 }) => (
-    <TableCell>
+    <TableCell className={tableStyles.TABLE_CELL_FIRST}>
         <input
             type="checkbox"
             className={tableStyles.INPUT_CHECKBOX}
@@ -560,8 +561,8 @@ export const AckTimeoutCell = React.memo(({
     customTimeout?: number,
     configTimeout?: number
 }) => (
-    <TableCell className={tableStyles.TABLE_CELL_TIME}>
-        {customTimeout ?? configTimeout ?? 60}s
+    <TableCell className={cn(tableStyles.TABLE_CELL_TIME, tableStyles.TABLE_CELL_LAST)}>
+        {customTimeout ?? configTimeout ?? 60}
     </TableCell>
 ))
 

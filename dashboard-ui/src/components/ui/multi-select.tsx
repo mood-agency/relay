@@ -200,6 +200,8 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
     const [onScrollbar, setOnScrollbar] = React.useState(false);
     const [isLoading, setIsLoading] = React.useState(false);
     const dropdownRef = React.useRef<HTMLDivElement>(null); // Added this
+    const badgesContainerRef = React.useRef<HTMLDivElement>(null);
+    const [overflowCount, setOverflowCount] = React.useState(0);
 
     const [selected, setSelected] = React.useState<Option[]>(value || []);
     const [options, setOptions] = React.useState<GroupOption>(
@@ -282,6 +284,35 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
         setSelected(value);
       }
     }, [value]);
+
+    // Calculate overflow count
+    useEffect(() => {
+      const container = badgesContainerRef.current;
+      if (!container) return;
+
+      const calculateOverflow = () => {
+        const badges = container.querySelectorAll('[data-badge]');
+        let hiddenCount = 0;
+        const containerRight = container.getBoundingClientRect().right;
+
+        badges.forEach((badge) => {
+          const badgeRect = badge.getBoundingClientRect();
+          // Badge is hidden if its right edge is beyond container's right edge
+          if (badgeRect.right > containerRight) {
+            hiddenCount++;
+          }
+        });
+
+        setOverflowCount(hiddenCount);
+      };
+
+      calculateOverflow();
+
+      const resizeObserver = new ResizeObserver(calculateOverflow);
+      resizeObserver.observe(container);
+
+      return () => resizeObserver.disconnect();
+    }, [selected]);
 
     useEffect(() => {
       /** If `onSearch` is provided, do not trigger options updated. */
@@ -440,7 +471,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
       >
         <div
           className={cn(
-            'flex items-center justify-between rounded-md border border-input px-3 py-1 text-base ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 md:text-sm min-h-[40px]',
+            'w-full flex items-center justify-between rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors ring-offset-background focus-within:ring-1 focus-within:ring-ring min-h-8',
             {
               'cursor-text': !disabled && selected.length !== 0,
             },
@@ -451,13 +482,14 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
             inputRef?.current?.focus();
           }}
         >
-          <div className="relative flex flex-wrap gap-1 flex-1 items-center">
+          <div ref={badgesContainerRef} className="relative flex flex-nowrap gap-1 min-w-0 flex-1 items-center overflow-hidden">
             {selected.map((option: Option) => {
               return (
                 <Badge
                   key={option.value}
+                  data-badge
                   className={cn(
-                    'data-[disabled]:bg-muted-foreground data-[disabled]:text-muted data-[disabled]:hover:bg-muted-foreground',
+                    'shrink-0 data-[disabled]:bg-muted-foreground data-[disabled]:text-muted data-[disabled]:hover:bg-muted-foreground',
                     'data-[fixed]:bg-muted-foreground data-[fixed]:text-muted data-[fixed]:hover:bg-muted-foreground',
                     badgeClassName,
                   )}
@@ -507,17 +539,19 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
                 setOpen(true);
                 inputProps?.onFocus?.(event);
               }}
-              placeholder={hidePlaceholderWhenSelected && selected.length !== 0 ? '' : placeholder}
+              placeholder={selected.length !== 0 ? '' : placeholder}
               className={cn(
-                'flex-1 self-center bg-transparent outline-none placeholder:text-muted-foreground min-w-[2rem]',
-                {
-                  'w-full': hidePlaceholderWhenSelected,
-                  'ml-1': selected.length !== 0,
-                },
+                'self-center bg-transparent outline-none placeholder:text-muted-foreground',
+                selected.length === 0 ? 'flex-1 min-w-[2rem]' : 'w-0 min-w-0',
                 inputProps?.className,
               )}
             />
           </div>
+          {overflowCount > 0 && (
+            <span className="shrink-0 text-xs text-muted-foreground ml-1">
+              +{overflowCount}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -549,7 +583,7 @@ const MultipleSelector = React.forwardRef<MultipleSelectorRef, MultipleSelectorP
         <div className="relative">
           {open && (
             <CommandList
-              className="absolute top-1 z-10 w-full rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in"
+              className="absolute top-1 z-50 w-full rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in"
               onMouseLeave={() => {
                 setOnScrollbar(false);
               }}
