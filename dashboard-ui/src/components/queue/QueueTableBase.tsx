@@ -391,14 +391,14 @@ export const CopyableIdCell = React.memo(({
 // Shared Components
 // ============================================================================
 
-export const PayloadCell = React.memo(({ payload, toastMessage = "Copied to clipboard" }: { payload: any, toastMessage?: string }) => {
+export const PayloadCell = React.memo(({ payload, toastMessage = "Copied to clipboard", className }: { payload: any, toastMessage?: string, className?: string }) => {
     const payloadText = JSON.stringify(payload)
     const { isHovered, mousePos, handlers } = useCursorTooltip()
 
     return (
         <>
             <TableCell
-                className={tableStyles.TABLE_CELL_PAYLOAD}
+                className={cn(tableStyles.TABLE_CELL_PAYLOAD, className)}
                 {...handlers}
             >
                 <div className={tableStyles.FLEX_INLINE}>

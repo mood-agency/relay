@@ -314,7 +314,7 @@ export const DeadLetterTable = React.memo(({
                     <Table>
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]")}>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]", tableStyles.TABLE_HEADER_FIRST)}>
                                 <input
                                     type="checkbox"
                                     className={tableStyles.INPUT_CHECKBOX}
@@ -329,7 +329,7 @@ export const DeadLetterTable = React.memo(({
                             <SortableHeader label="Failed At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
                             <SortableHeader label="Error Reason" field="error_message" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
                             <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
-                            <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack time(s)</TableHead>
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Ack time(s)</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>

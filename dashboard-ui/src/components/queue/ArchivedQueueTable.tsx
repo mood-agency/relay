@@ -250,7 +250,7 @@ export const ArchivedQueueTable = React.memo(({
                     <Table>
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                                <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]")}>
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_CHECKBOX, "w-[32px]", tableStyles.TABLE_HEADER_FIRST)}>
                                     <input
                                         type="checkbox"
                                         className={tableStyles.INPUT_CHECKBOX}
@@ -264,7 +264,7 @@ export const ArchivedQueueTable = React.memo(({
                                 <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[200px]" />
                                 <SortableHeader label="Archived At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
                                 <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
-                                <TableHead className={tableStyles.TABLE_HEADER_BASE}>Ack time(s)</TableHead>
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Ack time(s)</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
