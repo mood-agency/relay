@@ -14,18 +14,7 @@ import {
     Key,
     KeyRound,
     MoreVertical,
-    User,
-    FileText,
-    AlertCircle,
-    Inbox,
-    Pickaxe,
-    XCircle,
-    Check,
-    Archive,
-    Database,
 } from "lucide-react"
-
-import { format } from "date-fns"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -34,13 +23,6 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { Card, CardContent } from "@/components/ui/card"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue
-} from "@/components/ui/select"
 import {
     Dialog,
     DialogContent,
@@ -55,20 +37,6 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
-import {
-    Tabs,
-    TabsContent,
-    TabsList,
-    TabsTrigger,
-} from "@/components/ui/tabs"
-import {
-    Breadcrumb,
-    BreadcrumbItem,
-    BreadcrumbLink,
-    BreadcrumbList,
-    BreadcrumbPage,
-    BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
 
 // Activity Logs components
 import {
@@ -99,6 +67,9 @@ import {
     ArchivedQueueTable,
 } from "@/components/queue"
 import { ThemeToggle } from "@/components/ThemeToggle"
+
+// Layout
+import { Sidebar } from "@/components/layout"
 
 // Queue Management
 import { QueueManagement } from "@/components/queues"
@@ -158,7 +129,6 @@ export default function Dashboard() {
     // Parse tabs from URL params
     const queueTab = parseQueueTab(params.tab)
     const activityTab = parseActivityTab(params.tab)
-    // const messageIdFromUrl = params.messageId // Unused for now as we moved to dialog
 
     // Refs for stable access in callbacks (must be defined before useQueueMessages)
     const currentViewRef = useRef(currentView)
@@ -225,6 +195,7 @@ export default function Dashboard() {
 
     // Create dialog state
     const [createDialog, setCreateDialog] = useState(false)
+    const [createQueueDialog, setCreateQueueDialog] = useState(false)
 
     // View payload dialog state
     const [viewPayloadDialog, setViewPayloadDialog] = useState<{
@@ -338,13 +309,9 @@ export default function Dashboard() {
             params.append('sort_by', anomalySortBy)
             params.append('sort_order', anomalySortOrder)
 
-            console.log(`[fetchAnomalies] Fetching with sort_by=${anomalySortBy}, sort_order=${anomalySortOrder}`)
             const response = await authFetch(`/api/queue/activity/anomalies?${params.toString()}`)
             if (response.ok) {
                 const data = await response.json()
-                if (data.anomalies?.length > 0) {
-                    console.log(`[fetchAnomalies] Response: first ts=${data.anomalies[0]?.timestamp}, last ts=${data.anomalies[data.anomalies.length - 1]?.timestamp}`)
-                }
                 setAnomalies(data)
             }
         } catch (err) {
@@ -448,6 +415,14 @@ export default function Dashboard() {
         setCreateDialog(false)
     }, [queue])
 
+    // Calculate activity counts for sidebar
+    const activityCounts = {
+        logs: activityLogs?.pagination?.total,
+        anomalies: anomalies?.summary?.total,
+        criticalAnomalies: anomalies?.summary?.by_severity?.critical ?? 0,
+        consumers: consumerStats ? Object.keys(consumerStats.stats).length : undefined,
+    }
+
     // Loading state
     if (queue.loadingStatus && !queue.statusData) {
         return (
@@ -458,11 +433,204 @@ export default function Dashboard() {
         )
     }
 
+    // Get current tab title
+    const getTabTitle = () => {
+        if (isQueueList) return 'All Queues'
+        if (isActivityView) {
+            switch (activityTab) {
+                case 'activity': return 'Activity Logs'
+                case 'anomalies': return 'Anomalies'
+                case 'consumers': return 'Consumers'
+            }
+        }
+        switch (queueTab) {
+            case 'main': return 'Main Queue'
+            case 'processing': return 'Processing'
+            case 'dead': return 'Dead Letter'
+            case 'acknowledged': return 'Acknowledged'
+            case 'archived': return 'Archived'
+        }
+        return 'Queue'
+    }
+
     return (
-        <div className="container mx-auto py-6 px-4 max-w-[1600px] h-screen max-h-screen overflow-hidden flex flex-col animate-in fade-in duration-500">
-            <div className="flex-1 min-h-0 flex flex-col gap-4">
+        <div className="flex h-screen max-h-screen overflow-hidden animate-in fade-in duration-500">
+            {/* Sidebar */}
+            <Sidebar
+                authFetch={authFetch}
+                onCreateQueue={() => setCreateQueueDialog(true)}
+                statusData={queue.statusData}
+                activityCounts={activityCounts}
+            />
+
+            {/* Main Content */}
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                {/* Header */}
+                <div className="flex items-center justify-between gap-4 px-6 py-4 border-b bg-background">
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-lg font-semibold">
+                            {currentQueueName && !isQueueList && (
+                                <span className="text-muted-foreground font-normal">{currentQueueName} / </span>
+                            )}
+                            {getTabTitle()}
+                        </h2>
+                        {!isQueueList && (
+                            <>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            onClick={() => {
+                                                queue.handleRefresh()
+                                                if (currentView === 'activity') {
+                                                    if (activityTab === 'activity') fetchActivityLogs()
+                                                    else if (activityTab === 'anomalies') fetchAnomalies()
+                                                    else if (activityTab === 'consumers') fetchConsumerStats()
+                                                }
+                                            }}
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8"
+                                            aria-label="Refresh"
+                                        >
+                                            <RefreshCw className={cn("h-4 w-4", (queue.loadingMessages || queue.loadingStatus || loadingActivity || loadingAnomalies || loadingConsumerStats) && "animate-spin")} />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Refresh</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            onClick={queue.handleToggleAutoRefresh}
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
+                                            aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
+                                        >
+                                            {queue.autoRefresh ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </>
+                        )}
+                        {queue.selectedIds.size > 0 && (
+                            <>
+                                <div className="w-px h-5 bg-border/50" />
+                                <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
+                                    {queue.selectedIds.size.toLocaleString()} selected
+                                </span>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => {
+                                                const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
+                                                const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
+                                                setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
+                                            }}
+                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
+                                        >
+                                            <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Move selected</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={queue.handleBulkDelete}
+                                            className="h-8 w-8 animate-in fade-in zoom-in duration-200"
+                                        >
+                                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Delete selected</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                        <ThemeToggle />
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    aria-label="More actions"
+                                >
+                                    <MoreVertical className="h-4 w-4" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-48 p-1" align="end">
+                                <Button
+                                    onClick={() => setCreateDialog(true)}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                    Create Message
+                                </Button>
+                                <Button
+                                    onClick={() => queue.fileInputRef.current?.click()}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    <Upload className="h-4 w-4" />
+                                    Import Messages
+                                </Button>
+                                <Button
+                                    onClick={queue.handleExport}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    <Download className="h-4 w-4" />
+                                    Export Messages
+                                </Button>
+                                <Button
+                                    onClick={() => setShowApiKeyInput(true)}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
+                                    {apiKey ? "API Key Configured" : "Configure API Key"}
+                                </Button>
+                                <Button
+                                    onClick={queue.handleClearAll}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                    Clear All Queues
+                                </Button>
+                                <Button
+                                    onClick={queue.handleClearActivityLogs}
+                                    variant="ghost"
+                                    className="w-full justify-start gap-2 h-9 px-2"
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                    Clear Logs
+                                </Button>
+                            </PopoverContent>
+                        </Popover>
+                    </div>
+                </div>
+
+                {/* Error Display */}
                 {queue.error && (
-                    <Card className="border-destructive/50 bg-destructive/10">
+                    <Card className="border-destructive/50 bg-destructive/10 mx-6 mt-4">
                         <CardContent className="pt-6 flex items-center gap-3 text-destructive">
                             <AlertTriangle className="h-5 w-5" />
                             <p className="font-medium text-sm">Error: {queue.error}</p>
@@ -470,582 +638,285 @@ export default function Dashboard() {
                     </Card>
                 )}
 
-                {/* Header with Title and Actions */}
-                <Tabs
-                    value={currentView === 'queue-management' ? 'queue-management' : (isActivityView ? 'activity' : 'queues')}
-                    onValueChange={(v) => {
-                        if (currentQueueName) {
-                            // We're viewing a specific queue - switch between messages and activity
-                            if (v === 'queues') {
-                                navigate(`/queues/${currentQueueName}/main`)
-                            } else if (v === 'activity') {
-                                navigate(`/queues/${currentQueueName}/activity`)
-                            }
-                        }
-                    }}
-                    className="flex flex-col flex-1 min-h-0 gap-4"
-                >
-                    <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-1 w-[300px]">
-                            <Breadcrumb>
-                                <BreadcrumbList className="text-sm flex-nowrap">
-                                    <BreadcrumbItem>
-                                        <BreadcrumbLink
-                                            onClick={() => navigate('/queues')}
-                                            className={cn(
-                                                "font-medium cursor-pointer",
-                                                !currentQueueName && "text-foreground pointer-events-none"
-                                            )}
-                                        >
-                                            Relay
-                                        </BreadcrumbLink>
-                                    </BreadcrumbItem>
-                                    <BreadcrumbSeparator className={cn(!currentQueueName && "hidden")} />
-                                    <BreadcrumbItem className={cn(!currentQueueName && "hidden")}>
-                                        <BreadcrumbPage>
-                                            {currentQueueName}
-                                        </BreadcrumbPage>
-                                    </BreadcrumbItem>
-                                </BreadcrumbList>
-                            </Breadcrumb>
-                            {!isQueueList && (
-                                <>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                onClick={() => {
-                                                    queue.handleRefresh()
-                                                    if (currentView === 'activity') {
-                                                        if (activityTab === 'activity') fetchActivityLogs()
-                                                        else if (activityTab === 'anomalies') fetchAnomalies()
-                                                        else if (activityTab === 'consumers') fetchConsumerStats()
-                                                    }
-                                                }}
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                aria-label="Refresh"
-                                            >
-                                                <RefreshCw className={cn("h-3.5 w-3.5", (queue.loadingMessages || queue.loadingStatus || loadingActivity || loadingAnomalies || loadingConsumerStats) && "animate-spin")} />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>Refresh</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                onClick={queue.handleToggleAutoRefresh}
-                                                variant="ghost"
-                                                size="icon"
-                                                className={cn("h-8 w-8", queue.autoRefresh && "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground")}
-                                                aria-label={queue.autoRefresh ? "Disable auto refresh" : "Enable auto refresh"}
-                                            >
-                                                {queue.autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </>
-                            )}
-                            {queue.selectedIds.size > 0 && (
-                                <>
-                                    <div className="w-px h-5 bg-border/50 mx-1" />
-                                    <span className="text-sm text-muted-foreground animate-in fade-in zoom-in duration-200">
-                                        {queue.selectedIds.size.toLocaleString()} selected
-                                    </span>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={() => {
-                                                    const queues = ['main', 'processing', 'dead', 'acknowledged', 'archived']
-                                                    const defaultTarget = queues.find(q => q !== queue.activeTab) || 'main'
-                                                    setMoveDialog(prev => ({ ...prev, isOpen: true, targetQueue: defaultTarget }))
-                                                }}
-                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                            >
-                                                <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>Move selected</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={queue.handleBulkDelete}
-                                                className="h-8 w-8 animate-in fade-in zoom-in duration-200"
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            <p>Delete selected</p>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </>
-                            )}
-                        </div>
-
-                        {/* Center Tabs - only show when viewing a specific queue */}
-                        <div className="flex-1 flex justify-center">
-                            {currentQueueName ? (
-                                <TabsList className="grid w-[300px] grid-cols-2">
-                                    <TabsTrigger value="queues">
-                                        Messages
-                                    </TabsTrigger>
-                                    <TabsTrigger value="activity" className="flex items-center gap-2">
-                                        Activity
-                                        {(anomalies?.summary?.by_severity?.critical ?? 0) > 0 && (
-                                            <span className="h-2 w-2 bg-destructive rounded-full animate-pulse" />
-                                        )}
-                                    </TabsTrigger>
-                                </TabsList>
-                            ) : (
-                                <h2 className="text-lg font-semibold">Queues</h2>
-                            )}
-                        </div>
-
-                        <div className="flex items-center justify-end gap-1 w-[300px]">
-                            <ThemeToggle />
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        aria-label="More actions"
-                                    >
-                                        <MoreVertical className="h-3.5 w-3.5" />
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-48 p-1" align="end">
-                                    <Button
-                                        onClick={() => setCreateDialog(true)}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        <Plus className="h-4 w-4" />
-                                        Create Message
-                                    </Button>
-                                    <Button
-                                        onClick={() => queue.fileInputRef.current?.click()}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        <Upload className="h-4 w-4" />
-                                        Import Messages
-                                    </Button>
-                                    <Button
-                                        onClick={queue.handleExport}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        <Download className="h-4 w-4" />
-                                        Export Messages
-                                    </Button>
-                                    <Button
-                                        onClick={() => setShowApiKeyInput(true)}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
-                                        {apiKey ? "API Key Configured" : "Configure API Key"}
-                                    </Button>
-                                    <Button
-                                        onClick={queue.handleClearAll}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                        Clear All Queues
-                                    </Button>
-                                    <Button
-                                        onClick={queue.handleClearActivityLogs}
-                                        variant="ghost"
-                                        className="w-full justify-start gap-2 h-9 px-2"
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                        Clear Logs
-                                    </Button>
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-                    </div>
-                    <TabsContent value="queues" className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col mt-0 data-[state=inactive]:hidden">
-                        <div className="flex items-center border-b bg-muted/20">
-                            {[
-                                { id: 'main' as const, icon: Inbox, label: 'Main', count: queue.statusData?.mainQueue?.length || 0 },
-                                { id: 'processing' as const, icon: Pickaxe, label: 'Processing', count: queue.statusData?.processingQueue?.length || 0 },
-                                { id: 'dead' as const, icon: XCircle, label: 'Dead Letter', count: queue.statusData?.deadLetterQueue?.length || 0, badgeVariant: 'destructive' as const },
-                                { id: 'acknowledged' as const, icon: Check, label: 'Acknowledged', count: queue.statusData?.acknowledgedQueue?.length || 0, badgeVariant: 'success' as const },
-                                { id: 'archived' as const, icon: Archive, label: 'Archived', count: queue.statusData?.archivedQueue?.length || 0 },
-                            ].map((tab) => {
-                                const Icon = tab.icon
-                                const isActive = queue.activeTab === tab.id
-                                return (
-                                    <button
-                                        key={tab.id}
-                                        onClick={() => queue.navigateToTab(tab.id)}
-                                        className={cn(
-                                            "flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative",
-                                            "hover:text-foreground hover:bg-muted/50",
-                                            isActive
-                                                ? "text-foreground"
-                                                : "text-muted-foreground"
-                                        )}
-                                    >
-                                        <Icon className={cn(
-                                            "h-3.5 w-3.5",
-                                            tab.badgeVariant === 'success' && tab.count > 0 && "text-green-500",
-                                            tab.badgeVariant === 'destructive' && tab.count > 0 && "text-destructive"
-                                        )} />
-                                        {tab.label}
-                                        <span className={cn(
-                                            "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
-                                            tab.badgeVariant === 'success' && tab.count > 0
-                                                ? "bg-green-500/10 text-green-500"
-                                                : tab.badgeVariant === 'destructive' && tab.count > 0
-                                                    ? "bg-destructive/10 text-destructive"
-                                                    : "bg-muted text-muted-foreground"
-                                        )}>
-                                            {tab.count.toLocaleString()}
-                                        </span>
-                                        {isActive && (
-                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary/50" />
-                                        )}
-                                    </button>
-                                )
-                            })}
-                        </div>
-
-                        {/* Queue Table Content */}
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            {queue.activeTab === 'main' && (
-                                <MainQueueTable
-                                    messages={queue.effectiveMessagesData?.messages || []}
-                                    config={queue.config}
-                                    onDelete={queue.handleTableDelete}
-                                    onEdit={queue.openEditDialog}
-                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={queue.pageSize}
-                                    setPageSize={queue.setPageSize}
-                                    selectedIds={queue.selectedIds}
-                                    onToggleSelect={queue.handleToggleSelect}
-                                    onToggleSelectAll={queue.handleSelectAll}
-                                    currentPage={queue.currentPage}
-                                    setCurrentPage={queue.setCurrentPage}
-                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                                    sortBy={queue.sortBy}
-                                    sortOrder={queue.sortOrder}
-                                    onSort={queue.handleSort}
-                                    scrollResetKey={queue.scrollResetKey}
-                                    highlightedIds={queue.highlightedIds}
-                                    isFilterActive={queue.isFilterActive}
-                                    activeFiltersDescription={queue.activeFiltersDescription}
-                                    isLoading={queue.showMessagesLoading}
-                                    // Filter props
-                                    search={queue.search}
-                                    setSearch={queue.setSearch}
-                                    filterType={queue.filterType}
-                                    setFilterType={queue.setFilterType}
-                                    filterPriority={queue.filterPriority}
-                                    setFilterPriority={queue.setFilterPriority}
-                                    filterAttempts={queue.filterAttempts}
-                                    setFilterAttempts={queue.setFilterAttempts}
-                                    startDate={queue.startDate}
-                                    setStartDate={queue.setStartDate}
-                                    endDate={queue.endDate}
-                                    setEndDate={queue.setEndDate}
-                                    availableTypes={queue.availableTypes}
-                                />
-                            )}
-                            {queue.activeTab === 'processing' && (
-                                <ProcessingQueueTable
-                                    messages={queue.effectiveMessagesData?.messages || []}
-                                    config={queue.config}
-                                    onDelete={queue.handleTableDelete}
-                                    onEdit={queue.openEditDialog}
-                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={queue.pageSize}
-                                    setPageSize={queue.setPageSize}
-                                    selectedIds={queue.selectedIds}
-                                    onToggleSelect={queue.handleToggleSelect}
-                                    onToggleSelectAll={queue.handleSelectAll}
-                                    currentPage={queue.currentPage}
-                                    setCurrentPage={queue.setCurrentPage}
-                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                                    sortBy={queue.sortBy}
-                                    sortOrder={queue.sortOrder}
-                                    onSort={queue.handleSort}
-                                    scrollResetKey={queue.scrollResetKey}
-                                    highlightedIds={queue.highlightedIds}
-                                    isFilterActive={queue.isFilterActive}
-                                    activeFiltersDescription={queue.activeFiltersDescription}
-                                    isLoading={queue.showMessagesLoading}
-                                    // Filter props
-                                    search={queue.search}
-                                    setSearch={queue.setSearch}
-                                    filterType={queue.filterType}
-                                    setFilterType={queue.setFilterType}
-                                    filterPriority={queue.filterPriority}
-                                    setFilterPriority={queue.setFilterPriority}
-                                    filterAttempts={queue.filterAttempts}
-                                    setFilterAttempts={queue.setFilterAttempts}
-                                    startDate={queue.startDate}
-                                    setStartDate={queue.setStartDate}
-                                    endDate={queue.endDate}
-                                    setEndDate={queue.setEndDate}
-                                    availableTypes={queue.availableTypes}
-                                />
-                            )}
-                            {queue.activeTab === 'dead' && (
-                                <DeadLetterTable
-                                    messages={queue.effectiveMessagesData?.messages || []}
-                                    config={queue.config}
-                                    onDelete={queue.handleTableDelete}
-                                    onEdit={queue.openEditDialog}
-                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={queue.pageSize}
-                                    setPageSize={queue.setPageSize}
-                                    selectedIds={queue.selectedIds}
-                                    onToggleSelect={queue.handleToggleSelect}
-                                    onToggleSelectAll={queue.handleSelectAll}
-                                    currentPage={queue.currentPage}
-                                    setCurrentPage={queue.setCurrentPage}
-                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                                    sortBy={queue.sortBy}
-                                    sortOrder={queue.sortOrder}
-                                    onSort={queue.handleSort}
-                                    scrollResetKey={queue.scrollResetKey}
-                                    highlightedIds={queue.highlightedIds}
-                                    isFilterActive={queue.isFilterActive}
-                                    activeFiltersDescription={queue.activeFiltersDescription}
-                                    isLoading={queue.showMessagesLoading}
-                                    // Filter props
-                                    search={queue.search}
-                                    setSearch={queue.setSearch}
-                                    filterType={queue.filterType}
-                                    setFilterType={queue.setFilterType}
-                                    filterPriority={queue.filterPriority}
-                                    setFilterPriority={queue.setFilterPriority}
-                                    filterAttempts={queue.filterAttempts}
-                                    setFilterAttempts={queue.setFilterAttempts}
-                                    startDate={queue.startDate}
-                                    setStartDate={queue.setStartDate}
-                                    endDate={queue.endDate}
-                                    setEndDate={queue.setEndDate}
-                                    availableTypes={queue.availableTypes}
-                                />
-                            )}
-                            {queue.activeTab === 'acknowledged' && (
-                                <AcknowledgedQueueTable
-                                    messages={queue.effectiveMessagesData?.messages || []}
-                                    config={queue.config}
-                                    onDelete={queue.handleTableDelete}
-                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={queue.pageSize}
-                                    setPageSize={queue.setPageSize}
-                                    selectedIds={queue.selectedIds}
-                                    onToggleSelect={queue.handleToggleSelect}
-                                    onToggleSelectAll={queue.handleSelectAll}
-                                    currentPage={queue.currentPage}
-                                    setCurrentPage={queue.setCurrentPage}
-                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                                    sortBy={queue.sortBy}
-                                    sortOrder={queue.sortOrder}
-                                    onSort={queue.handleSort}
-                                    scrollResetKey={queue.scrollResetKey}
-                                    highlightedIds={queue.highlightedIds}
-                                    isFilterActive={queue.isFilterActive}
-                                    activeFiltersDescription={queue.activeFiltersDescription}
-                                    isLoading={queue.showMessagesLoading}
-                                    // Filter props
-                                    search={queue.search}
-                                    setSearch={queue.setSearch}
-                                    filterType={queue.filterType}
-                                    setFilterType={queue.setFilterType}
-                                    filterPriority={queue.filterPriority}
-                                    setFilterPriority={queue.setFilterPriority}
-                                    filterAttempts={queue.filterAttempts}
-                                    setFilterAttempts={queue.setFilterAttempts}
-                                    startDate={queue.startDate}
-                                    setStartDate={queue.setStartDate}
-                                    endDate={queue.endDate}
-                                    setEndDate={queue.setEndDate}
-                                    availableTypes={queue.availableTypes}
-                                />
-                            )}
-                            {queue.activeTab === 'archived' && (
-                                <ArchivedQueueTable
-                                    messages={queue.effectiveMessagesData?.messages || []}
-                                    config={queue.config}
-                                    onDelete={queue.handleTableDelete}
-                                    onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={queue.pageSize}
-                                    setPageSize={queue.setPageSize}
-                                    selectedIds={queue.selectedIds}
-                                    onToggleSelect={queue.handleToggleSelect}
-                                    onToggleSelectAll={queue.handleSelectAll}
-                                    currentPage={queue.currentPage}
-                                    setCurrentPage={queue.setCurrentPage}
-                                    totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
-                                    totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
-                                    sortBy={queue.sortBy}
-                                    sortOrder={queue.sortOrder}
-                                    onSort={queue.handleSort}
-                                    scrollResetKey={queue.scrollResetKey}
-                                    highlightedIds={queue.highlightedIds}
-                                    isFilterActive={queue.isFilterActive}
-                                    activeFiltersDescription={queue.activeFiltersDescription}
-                                    isLoading={queue.showMessagesLoading}
-                                    // Filter props
-                                    search={queue.search}
-                                    setSearch={queue.setSearch}
-                                    filterType={queue.filterType}
-                                    setFilterType={queue.setFilterType}
-                                    filterPriority={queue.filterPriority}
-                                    setFilterPriority={queue.setFilterPriority}
-                                    filterAttempts={queue.filterAttempts}
-                                    setFilterAttempts={queue.setFilterAttempts}
-                                    startDate={queue.startDate}
-                                    setStartDate={queue.setStartDate}
-                                    endDate={queue.endDate}
-                                    setEndDate={queue.setEndDate}
-                                    availableTypes={queue.availableTypes}
-                                />
-                            )}
-                        </div>
-                    </TabsContent >
-
-                    <TabsContent value="activity" className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col mt-0 data-[state=inactive]:hidden">
-                        {/* Activity Sub-tabs */}
-                        <div className="flex items-center border-b bg-muted/20">
-                            {[
-                                { id: 'activity' as const, icon: FileText, label: 'All Logs', count: activityLogs?.pagination?.total },
-                                { id: 'anomalies' as const, icon: AlertCircle, label: 'Anomalies', count: anomalies?.summary?.total },
-                                { id: 'consumers' as const, icon: User, label: 'Consumers', count: consumerStats ? Object.keys(consumerStats.stats).length : undefined },
-                            ].map((tab) => {
-                                const Icon = tab.icon
-                                const isActive = activityTab === tab.id
-                                return (
-                                    <button
-                                        key={tab.id}
-                                        onClick={() => navigateToActivityTab(tab.id)}
-                                        className={cn(
-                                            "flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative",
-                                            "hover:text-foreground hover:bg-muted/50",
-                                            isActive
-                                                ? "text-foreground"
-                                                : "text-muted-foreground"
-                                        )}
-                                    >
-                                        <Icon className={cn(
-                                            "h-3.5 w-3.5",
-                                            tab.id === 'anomalies' && (anomalies?.summary?.by_severity?.critical ?? 0) > 0 && "text-destructive"
-                                        )} />
-                                        {tab.label}
-                                        {typeof tab.count === 'number' && tab.count > 0 && (
-                                            <span className={cn(
-                                                "text-xs px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center",
-                                                tab.id === 'anomalies' && (anomalies?.summary?.by_severity?.critical ?? 0) > 0
-                                                    ? "bg-destructive/10 text-destructive"
-                                                    : "bg-muted text-muted-foreground"
-                                            )}>
-                                                {tab.count.toLocaleString()}
-                                            </span>
-                                        )}
-                                        {isActive && (
-                                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary/50" />
-                                        )}
-                                    </button>
-                                )
-                            })}
-                        </div>
-
-                        {/* Activity Content */}
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            {activityTab === 'activity' && (
-                                <ActivityLogsTable
-                                    logs={activityLogs?.logs ?? []}
-                                    loading={loadingActivity}
-                                    formatTime={queue.formatTimestamp}
-                                    pageSize={String(activityFilter.limit)}
-                                    setPageSize={(size) => setActivityFilter(prev => ({ ...prev, limit: Number(size), offset: 0 }))}
-                                    currentPage={Math.floor(activityFilter.offset / activityFilter.limit) + 1}
-                                    setCurrentPage={(page) => setActivityFilter(prev => ({ ...prev, offset: (page - 1) * prev.limit }))}
-                                    totalPages={activityLogs ? Math.ceil(activityLogs.pagination.total / activityFilter.limit) : 0}
-                                    totalItems={activityLogs?.pagination.total ?? 0}
-                                    isFilterActive={activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null}
-                                    onViewMessageHistory={(msgId) => {
-                                        setMessageIdSearch(msgId)
-                                        fetchMessageHistory(msgId)
-                                        setHistoryDialog({ isOpen: true, messageId: msgId })
-                                    }}
-                                    highlightedIds={highlightedLogIds}
-                                    // Filter props
-                                    filterAction={activityFilter.action}
-                                    setFilterAction={(value) => setActivityFilter(prev => ({ ...prev, action: value, offset: 0 }))}
-                                    filterMessageId={activityFilter.message_id}
-                                    setFilterMessageId={(value) => setActivityFilter(prev => ({ ...prev, message_id: value, offset: 0 }))}
-                                    filterHasAnomaly={activityFilter.has_anomaly}
-                                    setFilterHasAnomaly={(value) => setActivityFilter(prev => ({ ...prev, has_anomaly: value, offset: 0 }))}
-                                />
-                            )}
-                            {activityTab === 'anomalies' && (
-                                <AnomaliesTable
-                                    anomalies={anomalies}
-                                    loading={loadingAnomalies}
-                                    severityFilter={anomalySeverityFilter}
-                                    setSeverityFilter={setAnomalySeverityFilter}
-                                    typeFilter={anomalyTypeFilter}
-                                    setTypeFilter={setAnomalyTypeFilter}
-                                    sortBy={anomalySortBy}
-                                    setSortBy={setAnomalySortBy}
-                                    sortOrder={anomalySortOrder}
-                                    setSortOrder={setAnomalySortOrder}
-                                    onRefresh={fetchAnomalies}
-                                    formatTime={queue.formatTimestamp}
-                                />
-                            )}
-                            {activityTab === 'consumers' && (
-                                <ConsumerStatsTable
-                                    stats={consumerStats}
-                                    loading={loadingConsumerStats}
-                                    onRefresh={fetchConsumerStats}
-                                    formatTime={queue.formatTimestamp}
-                                />
-                            )}
-                        </div>
-                    </TabsContent>
-
-                    {isQueueList && (
-                        <div className="flex-1 min-h-0 rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col">
+                {/* Main Content Area */}
+                <div className="flex-1 min-h-0 overflow-hidden p-6">
+                    <div className="h-full rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col">
+                        {/* Queue List View */}
+                        {isQueueList && (
                             <QueueManagement
                                 authFetch={authFetch}
                                 onQueueSelect={(queueName) => navigate(`/queues/${queueName}/main`)}
                             />
-                        </div>
-                    )}
-                </Tabs >
-            </div >
+                        )}
+
+                        {/* Queue Messages View */}
+                        {!isQueueList && !isActivityView && (
+                            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                                {queue.activeTab === 'main' && (
+                                    <MainQueueTable
+                                        messages={queue.effectiveMessagesData?.messages || []}
+                                        config={queue.config}
+                                        onDelete={queue.handleTableDelete}
+                                        onEdit={queue.openEditDialog}
+                                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={queue.pageSize}
+                                        setPageSize={queue.setPageSize}
+                                        selectedIds={queue.selectedIds}
+                                        onToggleSelect={queue.handleToggleSelect}
+                                        onToggleSelectAll={queue.handleSelectAll}
+                                        currentPage={queue.currentPage}
+                                        setCurrentPage={queue.setCurrentPage}
+                                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                        sortBy={queue.sortBy}
+                                        sortOrder={queue.sortOrder}
+                                        onSort={queue.handleSort}
+                                        scrollResetKey={queue.scrollResetKey}
+                                        highlightedIds={queue.highlightedIds}
+                                        isFilterActive={queue.isFilterActive}
+                                        activeFiltersDescription={queue.activeFiltersDescription}
+                                        isLoading={queue.showMessagesLoading}
+                                        // Filter props
+                                        search={queue.search}
+                                        setSearch={queue.setSearch}
+                                        filterType={queue.filterType}
+                                        setFilterType={queue.setFilterType}
+                                        filterPriority={queue.filterPriority}
+                                        setFilterPriority={queue.setFilterPriority}
+                                        filterAttempts={queue.filterAttempts}
+                                        setFilterAttempts={queue.setFilterAttempts}
+                                        startDate={queue.startDate}
+                                        setStartDate={queue.setStartDate}
+                                        endDate={queue.endDate}
+                                        setEndDate={queue.setEndDate}
+                                        availableTypes={queue.availableTypes}
+                                    />
+                                )}
+                                {queue.activeTab === 'processing' && (
+                                    <ProcessingQueueTable
+                                        messages={queue.effectiveMessagesData?.messages || []}
+                                        config={queue.config}
+                                        onDelete={queue.handleTableDelete}
+                                        onEdit={queue.openEditDialog}
+                                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={queue.pageSize}
+                                        setPageSize={queue.setPageSize}
+                                        selectedIds={queue.selectedIds}
+                                        onToggleSelect={queue.handleToggleSelect}
+                                        onToggleSelectAll={queue.handleSelectAll}
+                                        currentPage={queue.currentPage}
+                                        setCurrentPage={queue.setCurrentPage}
+                                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                        sortBy={queue.sortBy}
+                                        sortOrder={queue.sortOrder}
+                                        onSort={queue.handleSort}
+                                        scrollResetKey={queue.scrollResetKey}
+                                        highlightedIds={queue.highlightedIds}
+                                        isFilterActive={queue.isFilterActive}
+                                        activeFiltersDescription={queue.activeFiltersDescription}
+                                        isLoading={queue.showMessagesLoading}
+                                        // Filter props
+                                        search={queue.search}
+                                        setSearch={queue.setSearch}
+                                        filterType={queue.filterType}
+                                        setFilterType={queue.setFilterType}
+                                        filterPriority={queue.filterPriority}
+                                        setFilterPriority={queue.setFilterPriority}
+                                        filterAttempts={queue.filterAttempts}
+                                        setFilterAttempts={queue.setFilterAttempts}
+                                        startDate={queue.startDate}
+                                        setStartDate={queue.setStartDate}
+                                        endDate={queue.endDate}
+                                        setEndDate={queue.setEndDate}
+                                        availableTypes={queue.availableTypes}
+                                    />
+                                )}
+                                {queue.activeTab === 'dead' && (
+                                    <DeadLetterTable
+                                        messages={queue.effectiveMessagesData?.messages || []}
+                                        config={queue.config}
+                                        onDelete={queue.handleTableDelete}
+                                        onEdit={queue.openEditDialog}
+                                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={queue.pageSize}
+                                        setPageSize={queue.setPageSize}
+                                        selectedIds={queue.selectedIds}
+                                        onToggleSelect={queue.handleToggleSelect}
+                                        onToggleSelectAll={queue.handleSelectAll}
+                                        currentPage={queue.currentPage}
+                                        setCurrentPage={queue.setCurrentPage}
+                                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                        sortBy={queue.sortBy}
+                                        sortOrder={queue.sortOrder}
+                                        onSort={queue.handleSort}
+                                        scrollResetKey={queue.scrollResetKey}
+                                        highlightedIds={queue.highlightedIds}
+                                        isFilterActive={queue.isFilterActive}
+                                        activeFiltersDescription={queue.activeFiltersDescription}
+                                        isLoading={queue.showMessagesLoading}
+                                        // Filter props
+                                        search={queue.search}
+                                        setSearch={queue.setSearch}
+                                        filterType={queue.filterType}
+                                        setFilterType={queue.setFilterType}
+                                        filterPriority={queue.filterPriority}
+                                        setFilterPriority={queue.setFilterPriority}
+                                        filterAttempts={queue.filterAttempts}
+                                        setFilterAttempts={queue.setFilterAttempts}
+                                        startDate={queue.startDate}
+                                        setStartDate={queue.setStartDate}
+                                        endDate={queue.endDate}
+                                        setEndDate={queue.setEndDate}
+                                        availableTypes={queue.availableTypes}
+                                    />
+                                )}
+                                {queue.activeTab === 'acknowledged' && (
+                                    <AcknowledgedQueueTable
+                                        messages={queue.effectiveMessagesData?.messages || []}
+                                        config={queue.config}
+                                        onDelete={queue.handleTableDelete}
+                                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={queue.pageSize}
+                                        setPageSize={queue.setPageSize}
+                                        selectedIds={queue.selectedIds}
+                                        onToggleSelect={queue.handleToggleSelect}
+                                        onToggleSelectAll={queue.handleSelectAll}
+                                        currentPage={queue.currentPage}
+                                        setCurrentPage={queue.setCurrentPage}
+                                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                        sortBy={queue.sortBy}
+                                        sortOrder={queue.sortOrder}
+                                        onSort={queue.handleSort}
+                                        scrollResetKey={queue.scrollResetKey}
+                                        highlightedIds={queue.highlightedIds}
+                                        isFilterActive={queue.isFilterActive}
+                                        activeFiltersDescription={queue.activeFiltersDescription}
+                                        isLoading={queue.showMessagesLoading}
+                                        // Filter props
+                                        search={queue.search}
+                                        setSearch={queue.setSearch}
+                                        filterType={queue.filterType}
+                                        setFilterType={queue.setFilterType}
+                                        filterPriority={queue.filterPriority}
+                                        setFilterPriority={queue.setFilterPriority}
+                                        filterAttempts={queue.filterAttempts}
+                                        setFilterAttempts={queue.setFilterAttempts}
+                                        startDate={queue.startDate}
+                                        setStartDate={queue.setStartDate}
+                                        endDate={queue.endDate}
+                                        setEndDate={queue.setEndDate}
+                                        availableTypes={queue.availableTypes}
+                                    />
+                                )}
+                                {queue.activeTab === 'archived' && (
+                                    <ArchivedQueueTable
+                                        messages={queue.effectiveMessagesData?.messages || []}
+                                        config={queue.config}
+                                        onDelete={queue.handleTableDelete}
+                                        onViewPayload={(payload) => setViewPayloadDialog({ isOpen: true, payload })}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={queue.pageSize}
+                                        setPageSize={queue.setPageSize}
+                                        selectedIds={queue.selectedIds}
+                                        onToggleSelect={queue.handleToggleSelect}
+                                        onToggleSelectAll={queue.handleSelectAll}
+                                        currentPage={queue.currentPage}
+                                        setCurrentPage={queue.setCurrentPage}
+                                        totalPages={queue.effectiveMessagesData?.pagination?.totalPages || 0}
+                                        totalItems={queue.effectiveMessagesData?.pagination?.total || 0}
+                                        sortBy={queue.sortBy}
+                                        sortOrder={queue.sortOrder}
+                                        onSort={queue.handleSort}
+                                        scrollResetKey={queue.scrollResetKey}
+                                        highlightedIds={queue.highlightedIds}
+                                        isFilterActive={queue.isFilterActive}
+                                        activeFiltersDescription={queue.activeFiltersDescription}
+                                        isLoading={queue.showMessagesLoading}
+                                        // Filter props
+                                        search={queue.search}
+                                        setSearch={queue.setSearch}
+                                        filterType={queue.filterType}
+                                        setFilterType={queue.setFilterType}
+                                        filterPriority={queue.filterPriority}
+                                        setFilterPriority={queue.setFilterPriority}
+                                        filterAttempts={queue.filterAttempts}
+                                        setFilterAttempts={queue.setFilterAttempts}
+                                        startDate={queue.startDate}
+                                        setStartDate={queue.setStartDate}
+                                        endDate={queue.endDate}
+                                        setEndDate={queue.setEndDate}
+                                        availableTypes={queue.availableTypes}
+                                    />
+                                )}
+                            </div>
+                        )}
+
+                        {/* Activity View */}
+                        {!isQueueList && isActivityView && (
+                            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                                {activityTab === 'activity' && (
+                                    <ActivityLogsTable
+                                        logs={activityLogs?.logs ?? []}
+                                        loading={loadingActivity}
+                                        formatTime={queue.formatTimestamp}
+                                        pageSize={String(activityFilter.limit)}
+                                        setPageSize={(size) => setActivityFilter(prev => ({ ...prev, limit: Number(size), offset: 0 }))}
+                                        currentPage={Math.floor(activityFilter.offset / activityFilter.limit) + 1}
+                                        setCurrentPage={(page) => setActivityFilter(prev => ({ ...prev, offset: (page - 1) * prev.limit }))}
+                                        totalPages={activityLogs ? Math.ceil(activityLogs.pagination.total / activityFilter.limit) : 0}
+                                        totalItems={activityLogs?.pagination.total ?? 0}
+                                        isFilterActive={activityFilter.action !== '' || activityFilter.message_id !== '' || activityFilter.has_anomaly !== null}
+                                        onViewMessageHistory={(msgId) => {
+                                            setMessageIdSearch(msgId)
+                                            fetchMessageHistory(msgId)
+                                            setHistoryDialog({ isOpen: true, messageId: msgId })
+                                        }}
+                                        highlightedIds={highlightedLogIds}
+                                        // Filter props
+                                        filterAction={activityFilter.action}
+                                        setFilterAction={(value) => setActivityFilter(prev => ({ ...prev, action: value, offset: 0 }))}
+                                        filterMessageId={activityFilter.message_id}
+                                        setFilterMessageId={(value) => setActivityFilter(prev => ({ ...prev, message_id: value, offset: 0 }))}
+                                        filterHasAnomaly={activityFilter.has_anomaly}
+                                        setFilterHasAnomaly={(value) => setActivityFilter(prev => ({ ...prev, has_anomaly: value, offset: 0 }))}
+                                    />
+                                )}
+                                {activityTab === 'anomalies' && (
+                                    <AnomaliesTable
+                                        anomalies={anomalies}
+                                        loading={loadingAnomalies}
+                                        severityFilter={anomalySeverityFilter}
+                                        setSeverityFilter={setAnomalySeverityFilter}
+                                        typeFilter={anomalyTypeFilter}
+                                        setTypeFilter={setAnomalyTypeFilter}
+                                        sortBy={anomalySortBy}
+                                        setSortBy={setAnomalySortBy}
+                                        sortOrder={anomalySortOrder}
+                                        setSortOrder={setAnomalySortOrder}
+                                        onRefresh={fetchAnomalies}
+                                        formatTime={queue.formatTimestamp}
+                                    />
+                                )}
+                                {activityTab === 'consumers' && (
+                                    <ConsumerStatsTable
+                                        stats={consumerStats}
+                                        loading={loadingConsumerStats}
+                                        onRefresh={fetchConsumerStats}
+                                        formatTime={queue.formatTimestamp}
+                                    />
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
 
             {/* API Key Configuration Dialog */}
             <Dialog open={showApiKeyInput} onOpenChange={setShowApiKeyInput}>
@@ -1082,7 +953,7 @@ export default function Dashboard() {
                         }}>Save</Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog >
+            </Dialog>
 
             {/* Confirmation Dialog */}
             <Dialog open={queue.confirmDialog.isOpen} onOpenChange={(open: boolean) => queue.setConfirmDialog(prev => ({ ...prev, isOpen: open }))}>
@@ -1101,7 +972,7 @@ export default function Dashboard() {
                         }}>Confirm</Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog >
+            </Dialog>
 
             <CreateMessageDialog
                 isOpen={createDialog}
@@ -1167,6 +1038,6 @@ export default function Dashboard() {
                 accept=".json"
                 onChange={queue.handleImport}
             />
-        </div >
+        </div>
     )
 }

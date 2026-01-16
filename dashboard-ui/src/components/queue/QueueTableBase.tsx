@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { Pencil, Copy, Search, Inbox, Filter, Loader2 } from "lucide-react"
+import { Edit, Copy, Search, Inbox, Filter, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -417,7 +417,8 @@ export const ActionsCell = React.memo(({
                     className={tableStyles.BUTTON_ACTION}
                     title="Edit Message"
                 >
-                    <Pencil className="h-4 w-4" />
+                    <Edit className="h-4 w-4" />
+                    <span className="sr-only">Edit</span>
                 </Button>
             )}
         </div>
@@ -670,7 +671,7 @@ export {
     Button,
     Badge,
     Copy,
-    Pencil,
+    Edit,
     Filter,
     Loader2,
     cn,
