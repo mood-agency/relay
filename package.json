@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:all": "concurrently \"pnpm run dev\" \"pnpm run dashboard:dev\"",
     "dev:bun": "bun --watch src/index.ts",
-    "build": "tsc && pnpm --filter dashboard-ui build",
+    "build": "tsc && cp src/lib/queue/schema.sql dist/lib/queue/schema.sql && pnpm --filter dashboard-ui build",
     "start": "node dist/index.js",
     "start:bun": "bun src/index.ts",
     "test": "vitest",

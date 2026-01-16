@@ -2,9 +2,12 @@ import { z } from "zod";
 import { config } from "dotenv";
 import { expand } from "dotenv-expand";
 import { InfisicalSDK } from "@infisical/sdk";
+import { createLogger } from "../lib/logger";
 
 // Load dotenv as fallback for local development
 expand(config());
+
+const logger = createLogger("env");
 
 export const EnvSchema = z.object({
   // General
@@ -107,10 +110,10 @@ async function loadInfisicalSecrets(): Promise<Record<string, string>> {
       }
     }
 
-    console.log(`✅ Loaded ${Object.keys(secretsMap).length} secrets from Infisical`);
+    logger.info({ count: Object.keys(secretsMap).length }, "Loaded secrets from Infisical");
     return secretsMap;
   } catch (error) {
-    console.warn("⚠️ Failed to load secrets from Infisical, falling back to local env:", error);
+    logger.warn({ err: error }, "Failed to load secrets from Infisical, falling back to local env");
     return {};
   }
 }
@@ -134,10 +137,7 @@ function getEnv(): env {
     }
     // Otherwise, this is a real error
     if (process.env.NODE_ENV !== "test") {
-      console.error(
-        "❌ Invalid environment variables",
-        error.flatten().fieldErrors
-      );
+      logger.error({ errors: error.flatten().fieldErrors }, "Invalid environment variables");
       process.exit(1);
     }
     return EnvSchema.parse({});
@@ -167,10 +167,7 @@ export async function initializeEnv(): Promise<void> {
     envInitialized = true;
   } catch (e) {
     const error = e as z.ZodError;
-    console.error(
-      "❌ Invalid environment variables",
-      error.flatten().fieldErrors
-    );
+    logger.error({ errors: error.flatten().fieldErrors }, "Invalid environment variables");
     if (process.env.NODE_ENV !== "test") {
       process.exit(1);
     }
@@ -187,10 +184,7 @@ try {
   // Only exit if not in test mode and Infisical is not configured
   // (If Infisical is configured, initializeEnv will handle validation)
   if (process.env.NODE_ENV !== "test" && !process.env.INFISICAL_TOKEN) {
-    console.error(
-      "❌ Invalid environment variables",
-      error.flatten().fieldErrors
-    );
+    logger.error({ errors: error.flatten().fieldErrors }, "Invalid environment variables");
     process.exit(1);
   }
   envCache = EnvSchema.parse({});

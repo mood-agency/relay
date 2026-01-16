@@ -1,7 +1,8 @@
 import pg from 'pg';
-import { logger } from './queue/utils.js';
+import { createLogger } from './logger.js';
 
 const { Pool } = pg;
+const logger = createLogger('db');
 
 // Singleton pool instance
 let pool = null;
@@ -23,11 +24,11 @@ export function initDB(config) {
   });
 
   pool.on('error', (err, client) => {
-    logger.error('Unexpected error on idle client', err);
+    logger.error({ err }, 'Unexpected error on idle client');
     // Don't exit process, let the pool handle it or reconnect
   });
 
-  logger.info(`Initialized Postgres pool with max ${config.max || 10} connections`);
+  logger.info({ max: config.max || 10 }, 'Initialized Postgres pool');
   return pool;
 }
 
@@ -49,7 +50,7 @@ export async function closeDB() {
   if (pool) {
     await pool.end();
     pool = null;
-    logger.info('Closed Postgres pool');
+    logger.info('Postgres pool closed');
   }
 }
 

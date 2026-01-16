@@ -1,12 +1,10 @@
 import { serve } from "@hono/node-server";
 import app from "./app";
 import { initializeEnv } from "./config/env";
-import { pino } from "pino";
+import { createLogger } from "./lib/logger";
 import { getQueue } from "./routes/queue/queue.handlers";
 
-const logger = pino({
-  level: "debug",
-});
+const logger = createLogger("server");
 
 // Initialize and start server
 (async () => {
