@@ -2,7 +2,10 @@ import type {
   AddMessageRoute,
   AddBatchRoute,
   GetMessageRoute,
+  GetMessagesBatchRoute,
   AcknowledgeMessageRoute,
+  AcknowledgeMessagesBatchRoute,
+  NackMessagesBatchRoute,
   MetricsRoute,
   HealthCheckRoute,
   RemoveMessagesByDateRangeRoute,
@@ -62,6 +65,7 @@ interface QueueConfigI {
   postgres_user: string;
   postgres_password: string;
   postgres_pool_size: number;
+  postgres_read_pool_size: number;
   postgres_ssl: boolean;
   queue_name: string;
   ack_timeout_seconds: number;
@@ -87,6 +91,7 @@ function createQueueConfig(): QueueConfigI {
     postgres_user: env.POSTGRES_USER,
     postgres_password: env.POSTGRES_PASSWORD,
     postgres_pool_size: env.POSTGRES_POOL_SIZE,
+    postgres_read_pool_size: env.POSTGRES_READ_POOL_SIZE,
     postgres_ssl: env.POSTGRES_SSL === "true",
     queue_name: env.QUEUE_NAME,
     ack_timeout_seconds: env.ACK_TIMEOUT_SECONDS,
@@ -262,6 +267,32 @@ export const getMessage: AppRouteHandler<GetMessageRoute> = async (c: any) => {
   }
 };
 
+export const getMessagesBatch: AppRouteHandler<GetMessagesBatchRoute> = async (c: any) => {
+  const { count, timeout, ackTimeout, type, consumerId, queue: queueName } = c.req.valid("query");
+  const q = await getQueue();
+
+  try {
+    const messages = await q.dequeueMessages(
+      count,
+      timeout || 0,
+      ackTimeout,
+      queueName || "default",
+      type,
+      consumerId
+    );
+
+    return c.json({
+      messages,
+      count: messages.length,
+    }, 200);
+  } catch (error: any) {
+    if (error.message?.includes("Queue not found")) {
+      return c.json({ message: error.message }, 404);
+    }
+    return c.json({ message: error.message || "Failed to get messages" }, 500);
+  }
+};
+
 export const acknowledgeMessage: AppRouteHandler<AcknowledgeMessageRoute> = async (c: any) => {
   const message = c.req.valid("json");
   const q = await getQueue();
@@ -285,6 +316,42 @@ export const acknowledgeMessage: AppRouteHandler<AcknowledgeMessageRoute> = asyn
     return c.json({ message: "Message not acknowledged" }, 400);
   }
   return c.json({ message: "Message acknowledged" }, 200);
+};
+
+export const acknowledgeMessagesBatch: AppRouteHandler<AcknowledgeMessagesBatchRoute> = async (c: any) => {
+  const { acks } = c.req.valid("json");
+  const q = await getQueue();
+
+  try {
+    const result = await q.acknowledgeMessages(acks);
+
+    return c.json({
+      message: `Acknowledged ${result.succeeded.length} messages, ${result.failed.length} failed`,
+      succeeded: result.succeeded,
+      failed: result.failed,
+    }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to acknowledge messages" }, 500);
+  }
+};
+
+export const nackMessagesBatch: AppRouteHandler<NackMessagesBatchRoute> = async (c: any) => {
+  const { nacks } = c.req.valid("json");
+  const q = await getQueue();
+
+  try {
+    const result = await q.nackMessages(nacks);
+
+    return c.json({
+      message: `NACKed ${result.succeeded.length} messages, ${result.failed.length} failed`,
+      succeeded: result.succeeded,
+      failed: result.failed,
+      requeued: result.requeued,
+      movedToDlq: result.movedToDlq,
+    }, 200);
+  } catch (error: any) {
+    return c.json({ message: error.message || "Failed to NACK messages" }, 500);
+  }
 };
 
 export const nackMessage: AppRouteHandler<NackMessageRoute> = async (c: any) => {

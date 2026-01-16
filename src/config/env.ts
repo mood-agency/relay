@@ -25,6 +25,7 @@ export const EnvSchema = z.object({
   POSTGRES_USER: z.string().default("postgres"),
   POSTGRES_PASSWORD: z.string().default(""),
   POSTGRES_POOL_SIZE: z.coerce.number().default(10),
+  POSTGRES_READ_POOL_SIZE: z.coerce.number().default(0), // 0 = disabled, use write pool for reads
   POSTGRES_SSL: z.string().default("false"),
 
   // Queue Configuration

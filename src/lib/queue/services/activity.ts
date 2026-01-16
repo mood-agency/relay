@@ -7,9 +7,30 @@ import { createLogger } from "../utils.js";
 
 const logger = createLogger("activity");
 
-export class ActivityService {
-  constructor(private ctx: QueueContext) {}
+interface ActivityLogBuffer {
+  action: string;
+  messageData: any;
+  context: any;
+}
 
+export class ActivityService {
+  private buffer: ActivityLogBuffer[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly maxBufferSize: number;
+  private readonly flushIntervalMs: number;
+  private isShuttingDown = false;
+
+  constructor(private ctx: QueueContext) {
+    // Default: flush every 100ms or when buffer reaches 500 entries
+    this.maxBufferSize = (ctx.config as any).activity_buffer_max_size ?? 500;
+    this.flushIntervalMs = (ctx.config as any).activity_buffer_flush_ms ?? 100;
+  }
+
+  /**
+   * Log activity asynchronously with buffering.
+   * Returns immediately without waiting for database insert.
+   * Buffer is flushed periodically or when full.
+   */
   async logActivity(
     action: string,
     messageData: any,
@@ -17,40 +38,78 @@ export class ActivityService {
   ): Promise<number | null> {
     if (!this.ctx.config.activity_log_enabled) return null;
 
-    try {
-      const enrichedContext = {
-        ...context,
-        payload: context?.payload ?? messageData?.payload ?? null,
-      };
+    // Add to buffer
+    this.buffer.push({ action, messageData, context });
 
-      const result = await this.ctx.pgManager.query(
-        `INSERT INTO activity_logs (action, message_id, message_type, consumer_id, context, payload_size, queue_type, queue_name, processing_time_ms, attempt_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [
-          action,
-          messageData?.id || null,
-          messageData?.type || null,
-          context?.consumer_id || null,
-          JSON.stringify(enrichedContext),
-          context?.payload_size || messageData?.payload_size || null,
-          context?.queue_type || null,
-          context?.queue_name || messageData?.queue_name || null,
-          context?.processing_time_ms || null,
-          context?.attempt_count || messageData?.attempt_count || null,
-        ]
-      );
-      return result.rows[0]?.id || null;
+    // Start flush timer if not running
+    if (!this.flushTimer && !this.isShuttingDown) {
+      this.flushTimer = setTimeout(() => {
+        this.flush().catch((err) => {
+          logger.error({ err }, "Failed to flush activity buffer");
+        });
+      }, this.flushIntervalMs);
+    }
+
+    // Flush immediately if buffer is full
+    if (this.buffer.length >= this.maxBufferSize) {
+      await this.flush();
+    }
+
+    // Return null since we don't have the ID yet (async insert)
+    return null;
+  }
+
+  /**
+   * Flush the activity buffer to the database.
+   * Called automatically on timer or when buffer is full.
+   */
+  async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+
+    if (this.buffer.length === 0) return;
+
+    // Take current buffer and clear it
+    const entries = this.buffer.splice(0);
+
+    try {
+      await this.logActivityBatchInternal(entries);
     } catch (err) {
-      logger.error({ err }, "Failed to log activity");
-      return null;
+      logger.error({ err, count: entries.length }, "Failed to flush activity buffer");
+    }
+
+    // Restart timer if there are still entries (added during flush)
+    if (this.buffer.length > 0 && !this.isShuttingDown) {
+      this.flushTimer = setTimeout(() => {
+        this.flush().catch((err) => {
+          logger.error({ err }, "Failed to flush activity buffer");
+        });
+      }, this.flushIntervalMs);
     }
   }
 
-  async logActivityBatch(
-    entries: Array<{ action: string; messageData: any; context: any }>
+  /**
+   * Stop the activity service and flush remaining entries.
+   * Call this before shutting down the application.
+   */
+  async shutdown(): Promise<void> {
+    this.isShuttingDown = true;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    await this.flush();
+  }
+
+  /**
+   * Internal method for batch logging without buffering.
+   */
+  private async logActivityBatchInternal(
+    entries: ActivityLogBuffer[]
   ): Promise<void> {
-    if (!this.ctx.config.activity_log_enabled || entries.length === 0) return;
+    if (entries.length === 0) return;
 
     try {
       // Build bulk INSERT with multiple VALUES
@@ -89,8 +148,19 @@ export class ActivityService {
         values
       );
     } catch (err) {
-      logger.error({ err }, "Failed to log activity batch");
+      logger.error({ err }, "Failed to log activity batch internal");
     }
+  }
+
+  /**
+   * Public batch logging method - writes directly without buffering.
+   * Use this for already-batched operations (like requeue worker).
+   */
+  async logActivityBatch(
+    entries: Array<{ action: string; messageData: any; context: any }>
+  ): Promise<void> {
+    if (!this.ctx.config.activity_log_enabled || entries.length === 0) return;
+    await this.logActivityBatchInternal(entries);
   }
 
   async getActivityLogs(filters: ActivityLogFilters = {}): Promise<{

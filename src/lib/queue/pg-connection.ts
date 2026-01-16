@@ -9,42 +9,79 @@ export interface PgConnectionConfig {
   database: string;
   user: string;
   password: string;
-  max?: number; // pool size
+  max?: number; // pool size (total or write pool if read pool is configured)
+  maxRead?: number; // read pool size (optional, enables read/write separation)
   ssl?: boolean;
 }
 
 export class PgConnectionManager {
-  private pool: pg.Pool;
+  private writePool: pg.Pool;
+  private readPool: pg.Pool | null = null;
   private listenerClient: pg.Client | null = null;
   private listeners: Map<string, Set<(payload: string) => void>> = new Map();
   public config: PgConnectionConfig;
 
   constructor(config: PgConnectionConfig) {
     this.config = config;
-    this.pool = new pg.Pool({
+
+    const basePoolConfig = {
       host: config.host,
       port: config.port,
       database: config.database,
       user: config.user,
       password: config.password,
-      max: config.max || 10,
       ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
       // Prevent deadlocks from hanging forever
       statement_timeout: 30000, // 30 seconds
       lock_timeout: 10000, // 10 seconds
+    };
+
+    // Write pool (priority operations: enqueue, dequeue, ack)
+    this.writePool = new pg.Pool({
+      ...basePoolConfig,
+      max: config.max || 10,
     });
 
-    this.pool.on("error", (err) => {
-      logger.error({ err }, "Unexpected error on idle client");
+    this.writePool.on("error", (err) => {
+      logger.error({ err }, "Unexpected error on write pool client");
     });
+
+    // Read pool (optional, for dashboard queries, metrics, logs)
+    if (config.maxRead && config.maxRead > 0) {
+      this.readPool = new pg.Pool({
+        ...basePoolConfig,
+        max: config.maxRead,
+      });
+
+      this.readPool.on("error", (err) => {
+        logger.error({ err }, "Unexpected error on read pool client");
+      });
+
+      logger.info(
+        { writePool: config.max || 10, readPool: config.maxRead },
+        "Initialized with separate read/write pools"
+      );
+    }
   }
 
+  /**
+   * @deprecated Use query() instead. This getter is for backwards compatibility.
+   */
+  private get pool(): pg.Pool {
+    return this.writePool;
+  }
+
+  /**
+   * Execute a query on the write pool.
+   * Use this for all write operations (INSERT, UPDATE, DELETE)
+   * and for read operations that require strong consistency.
+   */
   async query<T extends pg.QueryResultRow = any>(
     text: string,
     params?: any[]
   ): Promise<pg.QueryResult<T>> {
     const start = Date.now();
-    const result = await this.pool.query<T>(text, params);
+    const result = await this.writePool.query<T>(text, params);
     const duration = Date.now() - start;
     if (duration > 100) {
       logger.debug({ text: text.substring(0, 100), duration, rows: result.rowCount }, "Slow query");
@@ -52,14 +89,37 @@ export class PgConnectionManager {
     return result;
   }
 
+  /**
+   * Execute a query on the read pool (if configured) or fall back to write pool.
+   * Use this for read-only queries like dashboard data, metrics, logs.
+   * These queries won't block critical write operations.
+   */
+  async queryRead<T extends pg.QueryResultRow = any>(
+    text: string,
+    params?: any[]
+  ): Promise<pg.QueryResult<T>> {
+    const pool = this.readPool || this.writePool;
+    const start = Date.now();
+    const result = await pool.query<T>(text, params);
+    const duration = Date.now() - start;
+    if (duration > 100) {
+      logger.debug({ text: text.substring(0, 100), duration, rows: result.rowCount, pool: this.readPool ? "read" : "write" }, "Slow read query");
+    }
+    return result;
+  }
+
   async getClient(): Promise<pg.PoolClient> {
-    return this.pool.connect();
+    return this.writePool.connect();
+  }
+
+  async getReadClient(): Promise<pg.PoolClient> {
+    return (this.readPool || this.writePool).connect();
   }
 
   async transaction<T>(
     fn: (client: pg.PoolClient) => Promise<T>
   ): Promise<T> {
-    const client = await this.pool.connect();
+    const client = await this.writePool.connect();
     try {
       await client.query("BEGIN");
       const result = await fn(client);
@@ -146,15 +206,33 @@ export class PgConnectionManager {
       await this.listenerClient.end();
       this.listenerClient = null;
     }
-    await this.pool.end();
-    logger.info("PostgreSQL connection pool closed");
+    if (this.readPool) {
+      await this.readPool.end();
+    }
+    await this.writePool.end();
+    logger.info("PostgreSQL connection pools closed");
   }
 
-  async healthCheck(): Promise<{ ok: boolean; latency?: number; error?: string }> {
+  async healthCheck(): Promise<{ ok: boolean; latency?: number; error?: string; pools?: { write: boolean; read: boolean } }> {
     const start = Date.now();
     try {
       await this.query("SELECT 1");
-      return { ok: true, latency: Date.now() - start };
+      const writeOk = true;
+      let readOk = true;
+
+      if (this.readPool) {
+        try {
+          await this.readPool.query("SELECT 1");
+        } catch {
+          readOk = false;
+        }
+      }
+
+      return {
+        ok: writeOk && readOk,
+        latency: Date.now() - start,
+        pools: { write: writeOk, read: readOk },
+      };
     } catch (err: any) {
       return { ok: false, error: err.message };
     }

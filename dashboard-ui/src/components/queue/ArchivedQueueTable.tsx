@@ -1,4 +1,5 @@
 import React from "react"
+import { useTranslation } from "react-i18next"
 import { Search } from "lucide-react"
 
 import { Checkbox } from "@/components/ui/checkbox"
@@ -138,6 +139,7 @@ export const ArchivedQueueTable = React.memo(({
     onMoveSelected,
     onDeleteSelected
 }: ArchivedQueueTableProps) => {
+    const { t } = useTranslation()
     const { shouldVirtualize, scrollContainerRef, setScrollTop, virtual } = useTableVirtualization(messages, scrollResetKey)
     const allSelected = messages.length > 0 && messages.every(msg => selectedIds.has(msg.id))
 
@@ -180,7 +182,7 @@ export const ArchivedQueueTable = React.memo(({
                     <div className={cn(tableStyles.FILTER_BAR_ITEM, "relative")}>
                         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <input
-                            placeholder="Search ID, payload..."
+                            placeholder={t('table.searchIdPayload')}
                             value={search}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch!(e.target.value)}
                             className={cn(tableStyles.FILTER_BAR_TEXT_INPUT, "w-[200px] pl-8")}
@@ -189,13 +191,13 @@ export const ArchivedQueueTable = React.memo(({
 
                     {/* Message Type */}
                     <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Type:</span>
+                        <span className={tableStyles.FILTER_LABEL}>{t('fields.type')}:</span>
                         <MultipleSelector
-                            defaultOptions={(availableTypes || []).map(t => ({ label: t, value: t }))}
+                            defaultOptions={(availableTypes || []).map(typ => ({ label: typ, value: typ }))}
                             value={
                                 filterType === "all" || !filterType
                                     ? []
-                                    : filterType.split(",").map(t => ({ label: t, value: t }))
+                                    : filterType.split(",").map(typ => ({ label: typ, value: typ }))
                             }
                             onChange={(selected: Option[]) => {
                                 if (selected.length === 0) {
@@ -205,24 +207,24 @@ export const ArchivedQueueTable = React.memo(({
                                 }
                             }}
                             hideClearAllButton
-                            placeholder="All"
+                            placeholder={t('common.all')}
                             className="w-[150px]"
                             badgeClassName="rounded-full border border-border text-foreground font-medium bg-transparent hover:bg-transparent"
                             emptyIndicator={
-                                <p className="text-center text-sm text-muted-foreground">No types found</p>
+                                <p className="text-center text-sm text-muted-foreground">{t('table.noTypesFound')}</p>
                             }
                         />
                     </div>
 
                     {/* Priority */}
                     <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Priority:</span>
+                        <span className={tableStyles.FILTER_LABEL}>{t('fields.priority')}:</span>
                         <Select value={filterPriority || "any"} onValueChange={(val: string) => setFilterPriority!(val === "any" ? "" : val)}>
                             <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
-                                <SelectValue placeholder="Any" />
+                                <SelectValue placeholder={t('common.any')} />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="any">Any</SelectItem>
+                                <SelectItem value="any">{t('common.any')}</SelectItem>
                                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
                                     <SelectItem key={p} value={String(p)}>{p}</SelectItem>
                                 ))}
@@ -232,18 +234,18 @@ export const ArchivedQueueTable = React.memo(({
 
                     {/* Date Range */}
                     <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Archived:</span>
+                        <span className={tableStyles.FILTER_LABEL}>{t('table.archived')}:</span>
                         <DateTimePicker
                             date={startDate}
                             setDate={setStartDate!}
-                            placeholder="From"
+                            placeholder={t('common.from')}
                             className={tableStyles.FILTER_BAR_DATE}
                         />
                         <span className="text-muted-foreground">-</span>
                         <DateTimePicker
                             date={endDate}
                             setDate={setEndDate!}
-                            placeholder="To"
+                            placeholder={t('table.to')}
                             className={tableStyles.FILTER_BAR_DATE}
                         />
                     </div>
@@ -268,13 +270,13 @@ export const ArchivedQueueTable = React.memo(({
                                         onCheckedChange={() => onToggleSelectAll(messages.map(m => m.id))}
                                     />
                                 </TableHead>
-                                <SortableHeader label="Message ID" field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
-                                <SortableHeader label="Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
-                                <SortableHeader label="Priority" field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[70px]" />
-                                <SortableHeader label="Payload" field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[200px]" />
-                                <SortableHeader label="Archived At" field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
-                                <SortableHeader label="Attempts" field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
-                                <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Ack time(s)</TableHead>
+                                <SortableHeader label={t('table.columns.messageId')} field="id" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
+                                <SortableHeader label={t('table.columns.type')} field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[120px]" />
+                                <SortableHeader label={t('table.columns.priority')} field="priority" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[70px]" />
+                                <SortableHeader label={t('table.columns.payload')} field="payload" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[200px]" />
+                                <SortableHeader label={t('table.columns.archivedAt')} field="created_at" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[180px]" />
+                                <SortableHeader label={t('table.columns.attempts')} field="attempt_count" currentSort={sortBy} currentOrder={sortOrder} onSort={onSort} className="w-[80px]" />
+                                <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>{t('table.columns.ackTimeout')}</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>

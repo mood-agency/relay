@@ -1,6 +1,6 @@
-# Relay Architecture
+# Architecture
 
-This document explains the PostgreSQL-based queue architecture.
+This document explains the PostgreSQL-based queue architecture and design decisions.
 
 ## Overview
 
@@ -9,6 +9,18 @@ Relay uses PostgreSQL as its backing store, leveraging:
 - **SELECT FOR UPDATE SKIP LOCKED** for atomic, non-blocking dequeue
 - **LISTEN/NOTIFY** for real-time SSE updates
 - **JSONB** for flexible message payloads
+
+### Why PostgreSQL?
+
+| Aspect | PostgreSQL | Redis Streams |
+|--------|------------|---------------|
+| **Atomicity** | Native ACID transactions | Requires Lua scripts |
+| **Indexing** | Built-in (type, priority, status) | Manual sorted sets |
+| **Querying** | Full SQL support | Limited |
+| **Durability** | WAL by default | Configurable (RDB/AOF) |
+| **Complexity** | Simple SQL queries | Multiple data structures |
+
+---
 
 ## Database Schema
 
@@ -64,12 +76,26 @@ CREATE INDEX idx_messages_overdue ON messages(locked_until)
 
 ### Supporting Tables
 
-- **activity_logs** - Message lifecycle events
+- **activity_logs** - Message lifecycle events (enqueue, dequeue, ack, nack)
 - **anomalies** - Detected unusual patterns
 - **consumer_stats** - Per-consumer statistics
 - **queue_metrics** - Historical metrics snapshots
 
+---
+
 ## Message Lifecycle
+
+### States
+
+| Status | Description |
+|--------|-------------|
+| `queued` | Waiting to be processed (main queue) |
+| `processing` | Currently being handled by a consumer |
+| `acknowledged` | Successfully processed |
+| `dead` | Failed after max retry attempts (DLQ) |
+| `archived` | Long-term retention |
+
+### Flow Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -100,6 +126,8 @@ CREATE INDEX idx_messages_overdue ON messages(locked_until)
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
 ## Atomic Dequeue
 
 The key to reliable queue processing is atomic dequeue using PostgreSQL's `SELECT FOR UPDATE SKIP LOCKED`:
@@ -126,6 +154,8 @@ RETURNING *;
 - Multiple workers can dequeue concurrently without blocking
 - Each message is delivered to exactly one worker
 - No distributed locks needed
+
+---
 
 ## Split-Brain Prevention
 
@@ -156,7 +186,7 @@ WHERE id = $1 AND lock_token = $2 AND status = 'processing';
 
 If the token doesn't match → 409 Conflict response.
 
-### TOUCH Endpoint
+### TOUCH Endpoint (Heartbeat)
 
 Workers processing long tasks can extend their lock:
 
@@ -166,9 +196,13 @@ PUT /queue/message/:id/touch
 { "lock_token": "lt_abc123", "extend_seconds": 30 }
 ```
 
+This prevents timeout while the worker is still actively processing.
+
+---
+
 ## Real-Time Updates (SSE)
 
-PostgreSQL LISTEN/NOTIFY powers real-time dashboard updates:
+PostgreSQL LISTEN/NOTIFY powers real-time dashboard updates.
 
 ### Trigger on Message Changes
 
@@ -199,6 +233,8 @@ pgClient.on('notification', (msg) => {
 });
 ```
 
+---
+
 ## Overdue Message Handling
 
 A background worker periodically checks for overdue messages:
@@ -220,6 +256,8 @@ RETURNING *;
 - `OVERDUE_CHECK_INTERVAL_MS` - How often to check (default: 5000ms)
 - `ACK_TIMEOUT_SECONDS` - Default lock duration (default: 30s)
 
+---
+
 ## Performance Characteristics
 
 | Operation | Complexity | Notes |
@@ -229,6 +267,8 @@ RETURNING *;
 | ACK | O(1) | Primary key lookup |
 | Status counts | O(1) | COUNT with index |
 | Type-filtered dequeue | O(log n) | Partial index on type |
+
+---
 
 ## Scaling Considerations
 
@@ -243,6 +283,7 @@ RETURNING *;
 - Default pool size: 10 connections
 - Adjust `POSTGRES_POOL_SIZE` based on worker count
 - Use PgBouncer for high-connection scenarios
+- Separate read pool available: `POSTGRES_READ_POOL_SIZE`
 
 ### High Volume
 
@@ -251,3 +292,23 @@ For very high throughput:
 2. Consider table partitioning by `created_at`
 3. Add read replicas for dashboard queries
 4. Archive old acknowledged/dead messages
+5. Enable enqueue buffering: `ENQUEUE_BUFFER_ENABLED=true`
+
+---
+
+## Service Architecture
+
+The queue system is composed of specialized services:
+
+| Service | Responsibility |
+|---------|---------------|
+| `producer.ts` | Enqueue operations, batch enqueue, buffering |
+| `consumer.ts` | Dequeue, TOUCH, lock management |
+| `activity.ts` | Activity logging and lifecycle tracking |
+| `anomaly.ts` | Anomaly detection plugin system |
+| `admin.ts` | Queue operations (move, delete, clear) |
+| `queue-management.ts` | Status transitions, timeout handling |
+| `metrics.ts` | Statistics and monitoring |
+| `event-emitter.ts` | SSE and LISTEN/NOTIFY integration |
+
+All services are coordinated through the main `PostgresQueue` class in `pg-queue.ts`.

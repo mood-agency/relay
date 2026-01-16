@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { ArrowRight, Search, FileText, ArrowUp, ArrowDown, ArrowUpDown, Copy } from "lucide-react"
 
 import {
@@ -89,6 +90,7 @@ const SortableHeader = ({
 // ============================================================================
 
 const ActivityPayloadCell = React.memo(({ payload }: { payload: any }) => {
+    const { t } = useTranslation()
     const { isHovered, mousePos, handlers } = useCursorTooltip()
 
     return (
@@ -103,11 +105,11 @@ const ActivityPayloadCell = React.memo(({ payload }: { payload: any }) => {
                             e.stopPropagation()
                             e.preventDefault()
                             navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
-                            toast.success("Payload copied to clipboard")
+                            toast.success(t('common.payloadCopied'))
                         }}
                         className={tableStyles.BUTTON_COPY_PAYLOAD}
                         tabIndex={-1}
-                        title="Copy payload"
+                        title={t('common.copy')}
                     >
                         <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
                     </button>
@@ -136,7 +138,9 @@ const ActivityLogRow = React.memo(({
     formatTime: (ts?: number) => string,
     onViewMessageHistory?: (messageId: string) => void,
     isHighlighted?: boolean
-}) => (
+}) => {
+    const { t } = useTranslation()
+    return (
     <HighlightableTableRow
         isHighlighted={isHighlighted}
         isCritical={log.anomaly?.severity === 'critical'}
@@ -156,7 +160,7 @@ const ActivityLogRow = React.memo(({
                         </TooltipTrigger>
                         <TooltipContent>
                             <p className="font-mono text-xs">{log.message_id}</p>
-                            <p className="text-xs text-muted-foreground mt-1">Click to view full history</p>
+                            <p className="text-xs text-muted-foreground mt-1">{t('activityLogs.clickToViewHistory')}</p>
                         </TooltipContent>
                     </Tooltip>
                     <button
@@ -164,11 +168,11 @@ const ActivityLogRow = React.memo(({
                             e.stopPropagation()
                             e.preventDefault()
                             navigator.clipboard.writeText(log.message_id!)
-                            toast.success("ID copied to clipboard")
+                            toast.success(t('common.idCopied'))
                         }}
                         className={tableStyles.BUTTON_COPY_ID}
                         tabIndex={-1}
-                        title="Copy ID"
+                        title={t('common.copyId')}
                     >
                         <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
                     </button>
@@ -203,7 +207,8 @@ const ActivityLogRow = React.memo(({
             </TableCell>
         )}
     </HighlightableTableRow>
-))
+    )
+})
 
 // ============================================================================
 // Activity Logs Table Component
@@ -256,6 +261,7 @@ export const ActivityLogsTable = React.memo(({
     filterHasAnomaly,
     setFilterHasAnomaly
 }: ActivityLogsTableProps) => {
+    const { t } = useTranslation()
     const logsList = Array.isArray(logs) ? logs : []
     const scrollContainerRef = useRef<HTMLDivElement | null>(null)
     const viewportHeight = useElementHeight(scrollContainerRef)
@@ -345,7 +351,7 @@ export const ActivityLogsTable = React.memo(({
                     <div className={cn(tableStyles.FILTER_BAR_ITEM, "relative")}>
                         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <input
-                            placeholder="Search message ID..."
+                            placeholder={t('activityLogs.searchMessageId')}
                             value={filterMessageId || ''}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterMessageId!(e.target.value)}
                             className={cn(tableStyles.FILTER_BAR_TEXT_INPUT, "w-[180px] pl-8")}
@@ -354,38 +360,38 @@ export const ActivityLogsTable = React.memo(({
 
                     {/* Action */}
                     <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Action:</span>
+                        <span className={tableStyles.FILTER_LABEL}>{t('activityLogs.filterAction')}:</span>
                         <Select value={filterAction || "any"} onValueChange={(val: string) => setFilterAction!(val === "any" ? "" : val)}>
                             <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
-                                <SelectValue placeholder="Any" />
+                                <SelectValue placeholder={t('common.any')} />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="any">Any</SelectItem>
-                                <SelectItem value="enqueue">Enqueue</SelectItem>
-                                <SelectItem value="dequeue">Dequeue</SelectItem>
-                                <SelectItem value="ack">Acknowledge</SelectItem>
-                                <SelectItem value="nack">Negative Ack</SelectItem>
-                                <SelectItem value="requeue">Requeue</SelectItem>
-                                <SelectItem value="move">Move</SelectItem>
-                                <SelectItem value="delete">Delete</SelectItem>
+                                <SelectItem value="any">{t('common.any')}</SelectItem>
+                                <SelectItem value="enqueue">{t('activityLogs.actions.enqueue')}</SelectItem>
+                                <SelectItem value="dequeue">{t('activityLogs.actions.dequeue')}</SelectItem>
+                                <SelectItem value="ack">{t('activityLogs.actions.ack')}</SelectItem>
+                                <SelectItem value="nack">{t('activityLogs.actions.nack')}</SelectItem>
+                                <SelectItem value="requeue">{t('activityLogs.actions.requeue')}</SelectItem>
+                                <SelectItem value="move">{t('activityLogs.actions.move')}</SelectItem>
+                                <SelectItem value="delete">{t('activityLogs.actions.delete')}</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
 
                     {/* Has Anomaly */}
                     <div className={tableStyles.FILTER_BAR_ITEM}>
-                        <span className={tableStyles.FILTER_LABEL}>Anomaly:</span>
+                        <span className={tableStyles.FILTER_LABEL}>{t('activityLogs.filterAnomaly')}:</span>
                         <Select
                             value={filterHasAnomaly === null ? "any" : filterHasAnomaly ? "yes" : "no"}
                             onValueChange={(val: string) => setFilterHasAnomaly!(val === "any" ? null : val === "yes")}
                         >
                             <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
-                                <SelectValue placeholder="Any" />
+                                <SelectValue placeholder={t('common.any')} />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="any">Any</SelectItem>
-                                <SelectItem value="yes">Yes</SelectItem>
-                                <SelectItem value="no">No</SelectItem>
+                                <SelectItem value="any">{t('common.any')}</SelectItem>
+                                <SelectItem value="yes">{t('common.yes')}</SelectItem>
+                                <SelectItem value="no">{t('common.no')}</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -404,12 +410,12 @@ export const ActivityLogsTable = React.memo(({
                     <Table>
                         <TableHeader>
                             <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                                <SortableHeader column="message_id" label="Message ID" currentSort={sort} onSort={handleSort} className={cn("w-[120px]", tableStyles.TABLE_HEADER_FIRST)} />
-                                <SortableHeader column="timestamp" label="Timestamp" currentSort={sort} onSort={handleSort} className="w-[180px]" />
-                                <SortableHeader column="action" label="Action" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                                <SortableHeader column="queue" label="Queue" currentSort={sort} onSort={handleSort} className="w-[100px]" />
-                                <SortableHeader column="consumer_id" label="Actor" currentSort={sort} onSort={handleSort} className="w-[192px]" />
-                                <SortableHeader column="payload" label="Payload" currentSort={sort} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
+                                <SortableHeader column="message_id" label={t('activityLogs.columns.messageId')} currentSort={sort} onSort={handleSort} className={cn("w-[120px]", tableStyles.TABLE_HEADER_FIRST)} />
+                                <SortableHeader column="timestamp" label={t('activityLogs.columns.timestamp')} currentSort={sort} onSort={handleSort} className="w-[180px]" />
+                                <SortableHeader column="action" label={t('activityLogs.columns.action')} currentSort={sort} onSort={handleSort} className="w-[100px]" />
+                                <SortableHeader column="queue" label={t('activityLogs.columns.queue')} currentSort={sort} onSort={handleSort} className="w-[100px]" />
+                                <SortableHeader column="consumer_id" label={t('activityLogs.columns.actor')} currentSort={sort} onSort={handleSort} className="w-[192px]" />
+                                <SortableHeader column="payload" label={t('activityLogs.columns.payload')} currentSort={sort} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -419,8 +425,8 @@ export const ActivityLogsTable = React.memo(({
                                         <TableCell colSpan={colSpan} className={tableStyles.TABLE_CELL_EMPTY}>
                                             <EmptyState
                                                 icon={isFilterActive ? Search : FileText}
-                                                title="No activity logs found"
-                                                description="Activity will appear here as queue operations occur"
+                                                title={t('activityLogs.noLogsFound')}
+                                                description={t('activityLogs.noLogsDescription')}
                                                 isFilterActive={isFilterActive}
                                                 activeFiltersDescription={activeFiltersDescription}
                                             />

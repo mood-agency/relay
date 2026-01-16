@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import {
     RefreshCw,
@@ -67,6 +68,7 @@ import {
     ArchivedQueueTable,
 } from "@/components/queue"
 import { ThemeToggle } from "@/components/ThemeToggle"
+import { LanguageToggle } from "@/components/LanguageToggle"
 
 // Layout
 import { Sidebar } from "@/components/layout"
@@ -111,6 +113,8 @@ const parseQueueTab = (value: string | undefined): QueueTab => {
 // ============================================================================
 
 export default function Dashboard() {
+    const { t } = useTranslation()
+
     // Router hooks
     const params = useParams<{ tab?: string; queueName?: string; messageId?: string }>()
     const navigate = useNavigate()
@@ -430,29 +434,29 @@ export default function Dashboard() {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen">
                 <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-                <p className="text-muted-foreground font-medium">Loading queue data...</p>
+                <p className="text-muted-foreground font-medium">{t('status.loadingQueueData')}</p>
             </div>
         )
     }
 
     // Get current tab title
     const getTabTitle = () => {
-        if (isQueueList) return 'All Queues'
+        if (isQueueList) return t('header.allQueues')
         if (isActivityView) {
             switch (activityTab) {
-                case 'activity': return 'Activity Logs'
-                case 'anomalies': return 'Anomalies'
-                case 'consumers': return 'Consumers'
+                case 'activity': return t('activityTabs.activity')
+                case 'anomalies': return t('activityTabs.anomalies')
+                case 'consumers': return t('activityTabs.consumers')
             }
         }
         switch (queueTab) {
-            case 'main': return 'Main Queue'
-            case 'processing': return 'Processing'
-            case 'dead': return 'Dead Letter'
-            case 'acknowledged': return 'Acknowledged'
-            case 'archived': return 'Archived'
+            case 'main': return t('queueTabs.main')
+            case 'processing': return t('queueTabs.processing')
+            case 'dead': return t('queueTabs.dead')
+            case 'acknowledged': return t('queueTabs.acknowledged')
+            case 'archived': return t('queueTabs.archived')
         }
-        return 'Queue'
+        return t('sidebar.messages')
     }
 
     return (
@@ -476,6 +480,9 @@ export default function Dashboard() {
                             )}
                             {getTabTitle()}
                         </h2>
+                    </div>
+
+                    <div className="flex items-center gap-1">
                         {!isQueueList && (
                             <>
                                 <Tooltip>
@@ -498,7 +505,7 @@ export default function Dashboard() {
                                         </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
-                                        <p>Refresh</p>
+                                        <p>{t('common.refresh')}</p>
                                     </TooltipContent>
                                 </Tooltip>
                                 <Tooltip>
@@ -514,14 +521,12 @@ export default function Dashboard() {
                                         </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
-                                        <p>{queue.autoRefresh ? "Pause Auto-refresh" : "Enable Auto-refresh"}</p>
+                                        <p>{queue.autoRefresh ? t('header.pauseAutoRefresh') : t('header.enableAutoRefresh')}</p>
                                     </TooltipContent>
                                 </Tooltip>
                             </>
                         )}
-                    </div>
-
-                    <div className="flex items-center gap-1">
+                        <LanguageToggle />
                         <ThemeToggle />
                         <Popover>
                             <PopoverTrigger asChild>
@@ -541,7 +546,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     <Plus className="h-4 w-4" />
-                                    Create Message
+                                    {t('actions.createMessage')}
                                 </Button>
                                 <Button
                                     onClick={() => queue.fileInputRef.current?.click()}
@@ -549,7 +554,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     <Upload className="h-4 w-4" />
-                                    Import Messages
+                                    {t('actions.importMessages')}
                                 </Button>
                                 <Button
                                     onClick={queue.handleExport}
@@ -557,7 +562,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     <Download className="h-4 w-4" />
-                                    Export Messages
+                                    {t('actions.exportMessages')}
                                 </Button>
                                 <Button
                                     onClick={() => setShowApiKeyInput(true)}
@@ -565,7 +570,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     {apiKey ? <KeyRound className="h-4 w-4" /> : <Key className="h-4 w-4" />}
-                                    {apiKey ? "API Key Configured" : "Configure API Key"}
+                                    {apiKey ? t('actions.apiKeyConfigured') : t('actions.configureApiKey')}
                                 </Button>
                                 <Button
                                     onClick={queue.handleClearAll}
@@ -573,7 +578,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     <Trash2 className="h-4 w-4" />
-                                    Clear All Queues
+                                    {t('actions.clearAllQueues')}
                                 </Button>
                                 <Button
                                     onClick={queue.handleClearActivityLogs}
@@ -581,7 +586,7 @@ export default function Dashboard() {
                                     className="w-full justify-start gap-2 h-9 px-2"
                                 >
                                     <Trash2 className="h-4 w-4" />
-                                    Clear Logs
+                                    {t('actions.clearLogs')}
                                 </Button>
                             </PopoverContent>
                         </Popover>
@@ -908,22 +913,21 @@ export default function Dashboard() {
             <Dialog open={showApiKeyInput} onOpenChange={setShowApiKeyInput}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>API Key Configuration</DialogTitle>
+                        <DialogTitle>{t('dialogs.apiKeyConfiguration')}</DialogTitle>
                         <DialogDescription>
-                            Enter your API key to authenticate with the queue API.
-                            This key is stored locally in your browser.
+                            {t('dialogs.apiKeyDescription')}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="py-4">
                         <input
                             type="password"
-                            placeholder="Enter your SECRET_KEY..."
+                            placeholder={t('dialogs.apiKeyPlaceholder')}
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         <p className="text-xs text-muted-foreground mt-2">
-                            The API key should match the SECRET_KEY environment variable on the server.
+                            {t('dialogs.apiKeyHint')}
                         </p>
                     </div>
                     <DialogFooter>
@@ -931,12 +935,12 @@ export default function Dashboard() {
                             setApiKey('')
                             setStoredApiKey('')
                             setShowApiKeyInput(false)
-                        }}>Clear</Button>
+                        }}>{t('common.clear')}</Button>
                         <Button onClick={() => {
                             setStoredApiKey(apiKey)
                             setShowApiKeyInput(false)
                             queue.fetchAll()
-                        }}>Save</Button>
+                        }}>{t('common.save')}</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -951,11 +955,11 @@ export default function Dashboard() {
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => queue.setConfirmDialog(prev => ({ ...prev, isOpen: false }))}>Cancel</Button>
+                        <Button variant="outline" onClick={() => queue.setConfirmDialog(prev => ({ ...prev, isOpen: false }))}>{t('common.cancel')}</Button>
                         <Button variant="destructive" onClick={async () => {
                             await queue.confirmDialog.action()
                             queue.setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-                        }}>Confirm</Button>
+                        }}>{t('common.confirm')}</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -1002,7 +1006,7 @@ export default function Dashboard() {
             <Dialog open={historyDialog.isOpen} onOpenChange={(open) => setHistoryDialog(prev => ({ ...prev, isOpen: open }))}>
                 <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
                     <DialogHeader>
-                        <DialogTitle>Message History from {historyDialog.messageId}</DialogTitle>
+                        <DialogTitle>{t('dialogs.messageHistory', { messageId: historyDialog.messageId })}</DialogTitle>
                     </DialogHeader>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col -mx-6 px-6">
                         <MessageHistoryTable

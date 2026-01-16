@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import {
     User,
     RefreshCw
@@ -42,6 +43,7 @@ export function ConsumerStatsTable({
     onRefresh,
     formatTime
 }: ConsumerStatsTableProps) {
+    const { t } = useTranslation()
     const [sortBy, setSortBy] = useState<SortField>('dequeue_count')
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
 
@@ -81,8 +83,8 @@ export function ConsumerStatsTable({
 
     // Build summary footer items
     const summaryItems = [
-        { label: "Consumers", value: consumerEntries.length },
-        { label: "Total Dequeues", value: totalDequeues }
+        { label: t('consumers.consumers'), value: consumerEntries.length },
+        { label: t('consumers.totalDequeues'), value: totalDequeues }
     ]
 
     return (
@@ -95,10 +97,10 @@ export function ConsumerStatsTable({
                 <Table>
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                            <SortableHeader label="Consumer ID" field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[200px]", tableStyles.TABLE_HEADER_FIRST)} />
-                            <SortableHeader label="Dequeue Count" field="dequeue_count" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
-                            <SortableHeader label="Last Activity" field="last_dequeue" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
-                            <SortableHeader label="Share" field="share" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
+                            <SortableHeader label={t('consumers.consumerId')} field="consumer_id" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[200px]", tableStyles.TABLE_HEADER_FIRST)} />
+                            <SortableHeader label={t('consumers.dequeueCount')} field="dequeue_count" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
+                            <SortableHeader label={t('consumers.lastActivity')} field="last_dequeue" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
+                            <SortableHeader label={t('consumers.share')} field="share" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={tableStyles.TABLE_HEADER_LAST} />
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -107,8 +109,8 @@ export function ConsumerStatsTable({
                                 <TableCell colSpan={4} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={User}
-                                        title="No consumer data"
-                                        description="Consumer stats will appear as messages are dequeued"
+                                        title={t('consumers.noConsumerData')}
+                                        description={t('consumers.consumerStatsWillAppear')}
                                     />
                                 </TableCell>
                             </TableRow>
@@ -153,7 +155,7 @@ export function ConsumerStatsTable({
                     rightContent={
                         <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
                             <RefreshCw className={cn("h-4 w-4 mr-1", loading && "animate-spin")} />
-                            Refresh
+                            {t('common.refresh')}
                         </Button>
                     }
                 />

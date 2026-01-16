@@ -70,6 +70,7 @@ export class PostgresQueue {
       user: (config as any).postgres_user || "postgres",
       password: (config as any).postgres_password || "",
       max: (config as any).postgres_pool_size || 10,
+      maxRead: (config as any).postgres_read_pool_size || 0,
       ssl: (config as any).postgres_ssl || false,
     };
 
@@ -196,11 +197,57 @@ export class PostgresQueue {
     );
   }
 
+  /**
+   * Batch dequeue multiple messages in a single database query.
+   * More efficient than calling dequeueMessage() multiple times.
+   *
+   * @param count - Maximum number of messages to dequeue (1-100)
+   * @param timeout - Long-polling timeout in seconds (0 = no wait)
+   * @param ackTimeout - Override ack timeout for these messages
+   * @param queueName - Queue to dequeue from
+   * @param type - Optional message type filter
+   * @param consumerId - Consumer identifier for tracking
+   * @returns Array of dequeued messages (may be less than count if fewer available)
+   */
+  dequeueMessages(
+    count: number,
+    timeout: number = 0,
+    ackTimeout?: number | null,
+    queueName: string = "default",
+    type?: string | null,
+    consumerId?: string | null
+  ): Promise<DequeuedMessage[]> {
+    return this.consumer.dequeueMessages(
+      count,
+      timeout,
+      ackTimeout,
+      queueName,
+      type,
+      consumerId
+    );
+  }
+
   acknowledgeMessage(ackPayload: {
     id: string;
     lock_token?: string;
   }): Promise<AckResult> {
     return this.consumer.acknowledgeMessage(ackPayload);
+  }
+
+  /**
+   * Bulk acknowledge multiple messages in a single database operation.
+   * More efficient than calling acknowledgeMessage() multiple times.
+   *
+   * @param acks - Array of {id, lock_token} pairs
+   * @returns Object with succeeded IDs and failed entries with error details
+   */
+  acknowledgeMessages(
+    acks: Array<{ id: string; lock_token: string }>
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ id: string; error: string; code: string }>;
+  }> {
+    return this.consumer.acknowledgeMessages(acks);
   }
 
   nackMessage(
@@ -209,6 +256,24 @@ export class PostgresQueue {
     errorReason?: string
   ): Promise<AckResult> {
     return this.consumer.nackMessage(messageId, lockToken, errorReason);
+  }
+
+  /**
+   * Bulk NACK multiple messages in a single database operation.
+   * Messages will be requeued or moved to DLQ based on attempt count.
+   *
+   * @param nacks - Array of {id, lock_token, error?} entries
+   * @returns Object with succeeded IDs and failed entries with error details
+   */
+  nackMessages(
+    nacks: Array<{ id: string; lock_token: string; error?: string }>
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ id: string; error: string; code: string }>;
+    requeued: string[];
+    movedToDlq: string[];
+  }> {
+    return this.consumer.nackMessages(nacks);
   }
 
   touchMessage(

@@ -40,6 +40,10 @@ const logger = pino({
     }
   };
 
+  // Advisory lock ID for distributed requeue worker coordination
+  // Only one instance should run the requeue worker at a time
+  const REQUEUE_WORKER_LOCK_ID = 12345678;
+
   const startOverdueRequeueWorker = async () => {
     const overdueCheckIntervalMs = env.OVERDUE_CHECK_INTERVAL_MS;
     const queue = await getQueue();
@@ -50,7 +54,27 @@ const logger = pino({
 
     const tick = async () => {
       try {
-        await queue.requeueFailedMessages();
+        // Try to acquire advisory lock (non-blocking)
+        // This ensures only one instance runs the requeue worker across multiple deployments
+        const lockResult = await queue.pgManager.query(
+          "SELECT pg_try_advisory_lock($1) as acquired",
+          [REQUEUE_WORKER_LOCK_ID]
+        );
+
+        if (!lockResult.rows[0]?.acquired) {
+          // Another instance has the lock - skip this tick
+          logger.debug("Requeue worker lock held by another instance, skipping");
+        } else {
+          try {
+            await queue.requeueFailedMessages();
+          } finally {
+            // Release the lock after processing
+            await queue.pgManager.query(
+              "SELECT pg_advisory_unlock($1)",
+              [REQUEUE_WORKER_LOCK_ID]
+            );
+          }
+        }
       } catch (error) {
         logger.error({ err: error }, "Overdue requeue worker failed");
       }

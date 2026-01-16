@@ -168,6 +168,179 @@ export class ConsumerService {
     }
   }
 
+  /**
+   * Batch dequeue multiple messages in a single database query.
+   * More efficient than calling dequeueMessage() multiple times.
+   *
+   * @param count - Maximum number of messages to dequeue (1-100)
+   * @param timeout - Long-polling timeout in seconds (0 = no wait)
+   * @param ackTimeout - Override ack timeout for these messages
+   * @param queueName - Queue to dequeue from
+   * @param type - Optional message type filter
+   * @param consumerId - Consumer identifier for tracking
+   * @returns Array of dequeued messages (may be less than count if fewer available)
+   */
+  async dequeueMessages(
+    count: number,
+    timeout: number = 0,
+    ackTimeout?: number | null,
+    queueName: string = "default",
+    type?: string | null,
+    consumerId?: string | null
+  ): Promise<DequeuedMessage[]> {
+    // Validate count
+    const effectiveCount = Math.min(Math.max(1, count), 100);
+
+    const queueConfig = await this.getQueueConfig(queueName);
+    if (!queueConfig) {
+      throw new Error(`Queue not found: ${queueName}`);
+    }
+
+    const effectiveAckTimeout =
+      ackTimeout ||
+      this.ctx.config.ack_timeout_seconds ||
+      queueConfig.ack_timeout_seconds;
+    const now = new Date();
+    const lockedUntil = new Date(now.getTime() + effectiveAckTimeout * 1000);
+
+    const tableName = getTableName(queueConfig.queue_type);
+
+    // Generate lock tokens for each potential message
+    const lockTokens = Array.from({ length: effectiveCount }, () =>
+      generateId()
+    );
+
+    let query: string;
+    let params: any[];
+
+    // Use a CTE to select and update atomically with individual lock tokens
+    if (type) {
+      query = `
+        WITH selected AS (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY priority DESC, created_at ASC) as rn
+          FROM ${tableName}
+          WHERE status = 'queued' AND queue_name = $1 AND type = $2
+          ORDER BY priority DESC, created_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT $3
+        ),
+        tokens AS (
+          SELECT unnest($4::text[]) as token, generate_series(1, $3) as rn
+        )
+        UPDATE ${tableName} m SET
+          status = 'processing',
+          lock_token = t.token,
+          locked_until = $5,
+          consumer_id = $6,
+          dequeued_at = NOW(),
+          attempt_count = attempt_count + 1
+        FROM selected s
+        JOIN tokens t ON s.rn = t.rn
+        WHERE m.id = s.id
+        RETURNING m.*`;
+      params = [
+        queueName,
+        type,
+        effectiveCount,
+        lockTokens,
+        lockedUntil,
+        consumerId,
+      ];
+    } else {
+      query = `
+        WITH selected AS (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY priority DESC, created_at ASC) as rn
+          FROM ${tableName}
+          WHERE status = 'queued' AND queue_name = $1
+          ORDER BY priority DESC, created_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT $2
+        ),
+        tokens AS (
+          SELECT unnest($3::text[]) as token, generate_series(1, $2) as rn
+        )
+        UPDATE ${tableName} m SET
+          status = 'processing',
+          lock_token = t.token,
+          locked_until = $4,
+          consumer_id = $5,
+          dequeued_at = NOW(),
+          attempt_count = attempt_count + 1
+        FROM selected s
+        JOIN tokens t ON s.rn = t.rn
+        WHERE m.id = s.id
+        RETURNING m.*`;
+      params = [queueName, effectiveCount, lockTokens, lockedUntil, consumerId];
+    }
+
+    const startTime = Date.now();
+    const timeoutMs = timeout * 1000;
+
+    while (true) {
+      const result = await this.ctx.pgManager.query<QueueMessage>(
+        query,
+        params
+      );
+
+      if (result.rows.length > 0) {
+        const messages: DequeuedMessage[] = result.rows.map((row) => {
+          const message = mapMessage(row) as DequeuedMessage;
+          message.processing_started_at = Math.floor(Date.now() / 1000);
+          return message;
+        });
+
+        // Batch update consumer stats and log activities
+        if (consumerId) {
+          // Update stats once for all messages
+          await this.updateConsumerStats(consumerId, "dequeue");
+          // Check burst dequeue once
+          await this.checkBurstDequeue(consumerId, queueName);
+        }
+
+        // Batch log activities
+        const logEntries = messages.map((message) => ({
+          action: "dequeue",
+          messageData: message,
+          context: {
+            consumer_id: consumerId,
+            attempt_count: message.attempt_count,
+            timeout_seconds: effectiveAckTimeout,
+            batch_size: messages.length,
+          },
+        }));
+        await this.logActivityBatch(logEntries);
+
+        // Run detection for first message only (avoid spam)
+        if (messages.length > 0) {
+          const firstMessage = messages[0];
+          const createdAtMs =
+            (firstMessage.created_at as unknown as number) * 1000;
+          const timeSinceCreated = Date.now() - createdAtMs;
+
+          await this.runDetection("dequeue", {
+            message: firstMessage,
+            consumerId,
+            queueName,
+            timeInQueueMs: timeSinceCreated,
+          });
+        }
+
+        return messages;
+      }
+
+      if (timeoutMs === 0 || Date.now() - startTime >= timeoutMs) {
+        return [];
+      }
+
+      const elapsed = Date.now() - startTime;
+      const waitTime = Math.min(
+        100 * Math.pow(2, Math.floor(elapsed / 1000)),
+        1000
+      );
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+  }
+
   async acknowledgeMessage(ackPayload: {
     id: string;
     lock_token?: string;
@@ -353,6 +526,268 @@ export class ConsumerService {
     });
 
     return true;
+  }
+
+  /**
+   * Bulk acknowledge multiple messages in a single database operation.
+   * More efficient than calling acknowledgeMessage() multiple times.
+   *
+   * @param acks - Array of {id, lock_token} pairs
+   * @returns Object with succeeded IDs and failed entries with error details
+   */
+  async acknowledgeMessages(
+    acks: Array<{ id: string; lock_token: string }>
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ id: string; error: string; code: string }>;
+  }> {
+    if (acks.length === 0) {
+      return { succeeded: [], failed: [] };
+    }
+
+    const ids = acks.map((a) => a.id);
+    const tokenMap = new Map(acks.map((a) => [a.id, a.lock_token]));
+
+    // Fetch all messages in single query
+    const checkResult = await this.ctx.pgManager.query(
+      `SELECT id, lock_token, status, consumer_id, dequeued_at
+       FROM messages WHERE id = ANY($1)`,
+      [ids]
+    );
+
+    const messageMap = new Map(checkResult.rows.map((r) => [r.id, r]));
+    const toAck: string[] = [];
+    const failed: Array<{ id: string; error: string; code: string }> = [];
+
+    // Validate each message
+    for (const ack of acks) {
+      const msg = messageMap.get(ack.id);
+
+      if (!msg) {
+        failed.push({
+          id: ack.id,
+          error: "Message not found",
+          code: "NOT_FOUND",
+        });
+        continue;
+      }
+
+      if (msg.status !== "processing") {
+        failed.push({
+          id: ack.id,
+          error: `Message is not in processing state (current: ${msg.status})`,
+          code: "INVALID_STATE",
+        });
+        continue;
+      }
+
+      if (msg.lock_token !== ack.lock_token) {
+        failed.push({
+          id: ack.id,
+          error: "Lock token mismatch - message may have been requeued",
+          code: "LOCK_LOST",
+        });
+        continue;
+      }
+
+      toAck.push(ack.id);
+    }
+
+    // Bulk update all valid messages
+    if (toAck.length > 0) {
+      const result = await this.ctx.pgManager.query(
+        `UPDATE messages SET
+          status = 'acknowledged',
+          acknowledged_at = NOW(),
+          lock_token = NULL,
+          locked_until = NULL
+         WHERE id = ANY($1) AND status = 'processing'
+         RETURNING id, consumer_id, acknowledged_at, dequeued_at`,
+        [toAck]
+      );
+
+      // Batch log activities
+      const logEntries = result.rows.map((row) => {
+        const processingTimeMs =
+          row.acknowledged_at && row.dequeued_at
+            ? new Date(row.acknowledged_at).getTime() -
+              new Date(row.dequeued_at).getTime()
+            : null;
+
+        return {
+          action: "acknowledge",
+          messageData: { id: row.id },
+          context: {
+            consumer_id: row.consumer_id,
+            processing_time_ms: processingTimeMs,
+            batch_size: toAck.length,
+          },
+        };
+      });
+
+      if (logEntries.length > 0) {
+        await this.logActivityBatch(logEntries);
+      }
+
+      // Update consumer stats once for the batch
+      const consumerIds = new Set(result.rows.map((r) => r.consumer_id));
+      for (const consumerId of consumerIds) {
+        if (consumerId) {
+          await this.updateConsumerStats(consumerId, "ack");
+        }
+      }
+    }
+
+    return {
+      succeeded: toAck,
+      failed,
+    };
+  }
+
+  /**
+   * Bulk NACK multiple messages in a single database operation.
+   * Messages will be requeued or moved to DLQ based on attempt count.
+   *
+   * @param nacks - Array of {id, lock_token, error?} entries
+   * @returns Object with succeeded IDs and failed entries with error details
+   */
+  async nackMessages(
+    nacks: Array<{ id: string; lock_token: string; error?: string }>
+  ): Promise<{
+    succeeded: string[];
+    failed: Array<{ id: string; error: string; code: string }>;
+    requeued: string[];
+    movedToDlq: string[];
+  }> {
+    if (nacks.length === 0) {
+      return { succeeded: [], failed: [], requeued: [], movedToDlq: [] };
+    }
+
+    const ids = nacks.map((n) => n.id);
+    const nackMap = new Map(nacks.map((n) => [n.id, n]));
+
+    // Fetch all messages in single query
+    const checkResult = await this.ctx.pgManager.query(
+      `SELECT id, lock_token, status, attempt_count, max_attempts, consumer_id, queue_name
+       FROM messages WHERE id = ANY($1)`,
+      [ids]
+    );
+
+    const messageMap = new Map(checkResult.rows.map((r) => [r.id, r]));
+    const toRequeue: Array<{ id: string; error?: string }> = [];
+    const toDlq: Array<{ id: string; error?: string }> = [];
+    const failed: Array<{ id: string; error: string; code: string }> = [];
+
+    // Validate and categorize each message
+    for (const nack of nacks) {
+      const msg = messageMap.get(nack.id);
+
+      if (!msg) {
+        failed.push({
+          id: nack.id,
+          error: "Message not found",
+          code: "NOT_FOUND",
+        });
+        continue;
+      }
+
+      if (msg.status !== "processing") {
+        failed.push({
+          id: nack.id,
+          error: `Message is not in processing state (current: ${msg.status})`,
+          code: "INVALID_STATE",
+        });
+        continue;
+      }
+
+      if (msg.lock_token !== nack.lock_token) {
+        failed.push({
+          id: nack.id,
+          error: "Lock token mismatch",
+          code: "LOCK_LOST",
+        });
+        continue;
+      }
+
+      const effectiveMaxAttempts = Math.min(
+        msg.max_attempts,
+        this.ctx.config.max_attempts
+      );
+
+      if (msg.attempt_count >= effectiveMaxAttempts) {
+        toDlq.push({ id: nack.id, error: nack.error });
+      } else {
+        toRequeue.push({ id: nack.id, error: nack.error });
+      }
+    }
+
+    const requeuedIds: string[] = [];
+    const dlqIds: string[] = [];
+
+    // Bulk requeue
+    if (toRequeue.length > 0) {
+      const requeueIds = toRequeue.map((r) => r.id);
+      await this.ctx.pgManager.query(
+        `UPDATE messages SET
+          status = 'queued',
+          lock_token = NULL,
+          locked_until = NULL,
+          consumer_id = NULL,
+          dequeued_at = NULL,
+          last_error = 'NACK - requeued',
+          priority = COALESCE(original_priority, priority)
+         WHERE id = ANY($1)`,
+        [requeueIds]
+      );
+
+      requeuedIds.push(...requeueIds);
+
+      // Batch log activities
+      const logEntries = toRequeue.map((r) => ({
+        action: "nack",
+        messageData: { id: r.id },
+        context: {
+          reason: r.error,
+          will_retry: true,
+          batch_size: toRequeue.length,
+        },
+      }));
+      await this.logActivityBatch(logEntries);
+    }
+
+    // Bulk move to DLQ
+    if (toDlq.length > 0) {
+      const dlqIdList = toDlq.map((r) => r.id);
+      await this.ctx.pgManager.query(
+        `UPDATE messages SET
+          status = 'dead',
+          lock_token = NULL,
+          locked_until = NULL,
+          last_error = 'Max attempts exceeded'
+         WHERE id = ANY($1)`,
+        [dlqIdList]
+      );
+
+      dlqIds.push(...dlqIdList);
+
+      // Batch log activities
+      const logEntries = toDlq.map((r) => ({
+        action: "move_to_dlq",
+        messageData: { id: r.id },
+        context: {
+          reason: r.error || "Max attempts exceeded",
+          batch_size: toDlq.length,
+        },
+      }));
+      await this.logActivityBatch(logEntries);
+    }
+
+    return {
+      succeeded: [...requeuedIds, ...dlqIds],
+      failed,
+      requeued: requeuedIds,
+      movedToDlq: dlqIds,
+    };
   }
 
   async touchMessage(

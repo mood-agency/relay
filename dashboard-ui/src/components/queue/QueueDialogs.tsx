@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import {
     Loader2,
     Check,
@@ -52,6 +53,7 @@ export function MoveMessageDialog({
     count,
     currentQueue
 }: MoveMessageDialogProps) {
+    const { t } = useTranslation()
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
@@ -82,16 +84,16 @@ export function MoveMessageDialog({
         <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && !isSubmitting && onClose()}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Move {count.toLocaleString()} {count === 1 ? 'message' : 'messages'}</DialogTitle>
+                    <DialogTitle>{t('dialogs.moveMessages', { count })}</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                     <div className="flex items-center gap-3 text-sm">
-                        <span className="text-muted-foreground">From</span>
+                        <span className="text-muted-foreground">{t('common.from')}</span>
                         <span className="font-medium px-3 py-1.5 bg-muted rounded-md">{currentQueueLabel}</span>
-                        <span className="text-muted-foreground">to</span>
+                        <span className="text-muted-foreground">{t('common.to')}</span>
                         <Select value={targetQueue} onValueChange={setTargetQueue}>
                             <SelectTrigger className="w-[140px]">
-                                <SelectValue placeholder="Select queue" />
+                                <SelectValue placeholder={t('dialogs.selectQueue')} />
                             </SelectTrigger>
                             <SelectContent>
                                 {availableQueues.map(q => (
@@ -103,14 +105,14 @@ export function MoveMessageDialog({
                     {targetQueue === "dead" && (
                         <div className="space-y-2">
                             <label htmlFor="dlqReason" className="text-sm font-medium">
-                                Error Reason
+                                {t('dialogs.errorReason')}
                             </label>
                             <ScrollArea className="h-[80px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
                                 <textarea
                                     id="dlqReason"
                                     value={dlqReason}
                                     onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setDlqReason(e.target.value)}
-                                    placeholder="Why are you moving these messages to Failed?"
+                                    placeholder={t('dialogs.moveToDlqPlaceholder')}
                                     className="min-h-[80px] w-full bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 resize-none border-none"
                                 />
                             </ScrollArea>
@@ -118,10 +120,10 @@ export function MoveMessageDialog({
                     )}
                 </div>
                 <DialogFooter>
-                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+                    <Button variant="outline" onClick={onClose} disabled={isSubmitting}>{t('common.cancel')}</Button>
                     <Button onClick={handleConfirm} disabled={isSubmitting}>
                         {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                        Move
+                        {t('common.move')}
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -144,6 +146,7 @@ export function ViewPayloadDialog({
     onClose,
     payload
 }: ViewPayloadDialogProps) {
+    const { t } = useTranslation()
     const [copied, setCopied] = useState(false);
     const jsonString = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
@@ -182,7 +185,7 @@ export function ViewPayloadDialog({
             <DialogContent className="sm:max-w-[1000px] w-[90vw] max-h-[90vh] flex flex-col">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                        <span>Message Payload</span>
+                        <span>{t('dialogs.messagePayload')}</span>
                     </DialogTitle>
                 </DialogHeader>
                 <div className="group relative flex-1 overflow-hidden mt-4 rounded-md border bg-slate-50 text-slate-900 p-6">
@@ -191,7 +194,7 @@ export function ViewPayloadDialog({
                         size="icon"
                         onClick={copyToClipboard}
                         className="absolute right-4 top-4 z-10 h-8 w-8 bg-white/80 backdrop-blur-sm border-slate-200 opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:bg-slate-100 hover:text-slate-900 shadow-sm"
-                        title={copied ? "Copied!" : "Copy JSON"}
+                        title={copied ? t('common.copied') : t('dialogs.copyJson')}
                     >
                         {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
                     </Button>
@@ -203,7 +206,7 @@ export function ViewPayloadDialog({
                 </div>
                 <DialogFooter className="mt-4">
                     <Button variant="secondary" onClick={onClose}>
-                        Close
+                        {t('common.close')}
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -232,6 +235,7 @@ export function EditMessageDialog({
     queueType,
     defaultAckTimeout = 60
 }: EditMessageDialogProps) {
+    const { t } = useTranslation()
     const [payload, setPayload] = useState("");
     const [priority, setPriority] = useState(0);
     const [type, setType] = useState("");
@@ -268,7 +272,7 @@ export function EditMessageDialog({
 
             if (queueType === 'processing') {
                 if (customAckTimeout === "" || Number(customAckTimeout) <= 0) {
-                    setError("Ack Timeout must be a positive number");
+                    setError(t('dialogs.ackTimeoutMustBePositive'));
                     return;
                 }
                 updates.custom_ack_timeout = Number(customAckTimeout);
@@ -277,7 +281,7 @@ export function EditMessageDialog({
                 try {
                     parsedPayload = JSON.parse(payload);
                 } catch (e) {
-                    setError("Invalid JSON payload");
+                    setError(t('dialogs.invalidJsonPayload'));
                     return;
                 }
                 updates.payload = parsedPayload;
@@ -290,7 +294,7 @@ export function EditMessageDialog({
 
             await onSave(message.id, queueType, updates);
         } catch (e) {
-            setError("Failed to save message");
+            setError(t('dialogs.failedToSave'));
         }
     };
 
@@ -298,17 +302,17 @@ export function EditMessageDialog({
         <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
-                    <DialogTitle>Edit Message</DialogTitle>
+                    <DialogTitle>{t('dialogs.editMessage')}</DialogTitle>
                     <DialogDescription>
                         {queueType === 'processing'
-                            ? "Edit the timeout for this processing message."
-                            : "Make changes to the message here. Click save when you're done."}
+                            ? t('dialogs.editProcessingMessage')
+                            : t('dialogs.editMessageDescription')}
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="edit-id" className="text-right text-sm font-medium">
-                            ID
+                            {t('fields.id')}
                         </label>
                         <div className="col-span-3 relative group">
                             <input
@@ -333,7 +337,7 @@ export function EditMessageDialog({
                         <>
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <label htmlFor="ackTimeout" className="text-right text-sm font-medium">
-                                    Ack Timeout (s)
+                                    {t('fields.ackTimeout')}
                                 </label>
                                 <input
                                     id="ackTimeout"
@@ -345,7 +349,7 @@ export function EditMessageDialog({
                             </div>
                             <div className="grid grid-cols-4 items-start gap-4">
                                 <label htmlFor="payload-readonly" className="text-right text-sm font-medium pt-2">
-                                    Payload
+                                    {t('fields.payload')}
                                 </label>
                                 <div className="col-span-3 relative group">
                                     <ScrollArea className="h-[150px] w-full rounded-md border border-input bg-muted">
@@ -375,7 +379,7 @@ export function EditMessageDialog({
                         <>
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <label htmlFor="type" className="text-right text-sm font-medium">
-                                    Type
+                                    {t('fields.type')}
                                 </label>
                                 <input
                                     id="type"
@@ -386,7 +390,7 @@ export function EditMessageDialog({
                             </div>
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <label htmlFor="priority" className="text-right text-sm font-medium">
-                                    Priority
+                                    {t('fields.priority')}
                                 </label>
                                 <input
                                     id="priority"
@@ -398,20 +402,20 @@ export function EditMessageDialog({
                             </div>
                             <div className="grid grid-cols-4 items-center gap-4">
                                 <label htmlFor="ackTimeout-main" className="text-right text-sm font-medium">
-                                    Ack Timeout (s)
+                                    {t('fields.ackTimeout')}
                                 </label>
                                 <input
                                     id="ackTimeout-main"
                                     type="number"
                                     value={customAckTimeout}
                                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
-                                    placeholder={`Default: ${defaultAckTimeout}s`}
+                                    placeholder={`${t('common.default')}: ${defaultAckTimeout}s`}
                                     className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 />
                             </div>
                             <div className="grid grid-cols-4 items-start gap-4">
                                 <label htmlFor="payload" className="text-right text-sm font-medium pt-2">
-                                    Payload
+                                    {t('fields.payload')}
                                 </label>
                                 <div className="col-span-3 relative group">
                                     <ScrollArea className="h-[150px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
@@ -448,10 +452,10 @@ export function EditMessageDialog({
                 </div>
                 <DialogFooter>
                     <Button type="button" variant="secondary" onClick={onClose}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button type="button" onClick={handleSave}>
-                        Save changes
+                        {t('common.saveChanges')}
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -474,6 +478,7 @@ export function CreateMessageDialog({
     onClose,
     onCreate
 }: CreateMessageDialogProps) {
+    const { t } = useTranslation()
     const [payload, setPayload] = useState("{\n  \n}");
     const [priority, setPriority] = useState(0);
     const [type, setType] = useState("default");
@@ -501,7 +506,7 @@ export function CreateMessageDialog({
             try {
                 parsedPayload = JSON.parse(payload);
             } catch (e) {
-                setError("Invalid JSON payload");
+                setError(t('dialogs.invalidJsonPayload'));
                 return;
             }
 
@@ -525,7 +530,7 @@ export function CreateMessageDialog({
 
             await onCreate(data);
         } catch (e) {
-            setError("Failed to create message");
+            setError(t('dialogs.failedToCreate'));
         }
     };
 
@@ -533,15 +538,15 @@ export function CreateMessageDialog({
         <Dialog open={isOpen} onOpenChange={(open: boolean) => !open && onClose()}>
             <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
-                    <DialogTitle>Create New Message</DialogTitle>
+                    <DialogTitle>{t('dialogs.createNewMessage')}</DialogTitle>
                     <DialogDescription>
-                        Create a new message to be enqueued.
+                        {t('dialogs.createMessageDescription')}
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-type" className="text-right text-sm font-medium">
-                            Type
+                            {t('fields.type')}
                         </label>
                         <input
                             id="create-type"
@@ -553,11 +558,11 @@ export function CreateMessageDialog({
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-queue" className="text-right text-sm font-medium">
-                            Queue
+                            {t('fields.queue')}
                         </label>
                         <Select value={queue || "main"} onValueChange={(val: string) => setQueue(val === "main" ? "" : val)}>
                             <SelectTrigger className="col-span-3" id="create-queue">
-                                <SelectValue placeholder="Select queue" />
+                                <SelectValue placeholder={t('dialogs.selectQueue')} />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="main">{QUEUE_TAB_NAMES.main}</SelectItem>
@@ -568,7 +573,7 @@ export function CreateMessageDialog({
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-priority" className="text-right text-sm font-medium">
-                            Priority
+                            {t('fields.priority')}
                         </label>
                         <Select value={String(priority)} onValueChange={(val: string) => setPriority(Number(val))}>
                             <SelectTrigger className="col-span-3" id="create-priority">
@@ -583,7 +588,7 @@ export function CreateMessageDialog({
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-ackTimeout" className="text-right text-sm font-medium">
-                            Ack Timeout (s)
+                            {t('fields.ackTimeout')}
                         </label>
                         <input
                             id="create-ackTimeout"
@@ -591,12 +596,12 @@ export function CreateMessageDialog({
                             value={ackTimeout}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAckTimeout(e.target.value === "" ? "" : Number(e.target.value))}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            placeholder="Optional"
+                            placeholder={t('common.optional')}
                         />
                     </div>
                     <div className="grid grid-cols-4 items-center gap-4">
                         <label htmlFor="create-maxAttempts" className="text-right text-sm font-medium">
-                            Max Attempts
+                            {t('fields.maxAttempts')}
                         </label>
                         <input
                             id="create-maxAttempts"
@@ -606,12 +611,12 @@ export function CreateMessageDialog({
                             value={maxAttempts}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxAttempts(e.target.value === "" ? "" : Number(e.target.value))}
                             className="col-span-3 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            placeholder="Optional"
+                            placeholder={t('common.optional')}
                         />
                     </div>
                     <div className="grid grid-cols-4 items-start gap-4">
                         <label htmlFor="create-payload" className="text-right text-sm font-medium pt-2">
-                            Payload
+                            {t('fields.payload')}
                         </label>
                         <ScrollArea className="col-span-3 h-[150px] w-full rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
                             <textarea
@@ -630,10 +635,10 @@ export function CreateMessageDialog({
                 </div>
                 <DialogFooter>
                     <Button type="button" variant="secondary" onClick={onClose}>
-                        Cancel
+                        {t('common.cancel')}
                     </Button>
                     <Button type="button" onClick={handleCreate}>
-                        Create Message
+                        {t('actions.createMessage')}
                     </Button>
                 </DialogFooter>
             </DialogContent>

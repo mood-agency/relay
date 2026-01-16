@@ -1,4 +1,5 @@
 import React from "react"
+import { useTranslation } from "react-i18next"
 import { CheckCircle2 } from "lucide-react"
 
 import {
@@ -65,6 +66,7 @@ export function AnomaliesTable({
     onRefresh: _onRefresh,
     formatTime
 }: AnomaliesTableProps) {
+    const { t } = useTranslation()
     const isFilterActive = severityFilter !== '' || typeFilter !== ''
 
     // onRefresh is available via props if needed in the future
@@ -86,10 +88,10 @@ export function AnomaliesTable({
 
     // Build summary footer items
     const summaryItems = anomalies ? [
-        { label: "Total", value: anomalies.summary.total },
-        { label: "Critical", value: anomalies.summary.by_severity.critical, color: "bg-destructive" },
-        { label: "Warning", value: anomalies.summary.by_severity.warning, color: "bg-amber-500" },
-        { label: "Info", value: anomalies.summary.by_severity.info, color: "bg-blue-500" }
+        { label: t('anomalies.total'), value: anomalies.summary.total },
+        { label: t('anomalies.critical'), value: anomalies.summary.by_severity.critical, color: "bg-destructive" },
+        { label: t('anomalies.warning'), value: anomalies.summary.by_severity.warning, color: "bg-amber-500" },
+        { label: t('anomalies.info'), value: anomalies.summary.by_severity.info, color: "bg-blue-500" }
     ] : []
 
     return (
@@ -100,40 +102,40 @@ export function AnomaliesTable({
             >
                 {/* Severity */}
                 <div className={tableStyles.FILTER_BAR_ITEM}>
-                    <span className={tableStyles.FILTER_LABEL}>Severity:</span>
+                    <span className={tableStyles.FILTER_LABEL}>{t('anomalies.severity')}:</span>
                     <Select value={severityFilter || 'all'} onValueChange={(val) => setSeverityFilter(val === 'all' ? '' : val)}>
                         <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
-                            <SelectValue placeholder="All" />
+                            <SelectValue placeholder={t('common.all')} />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="critical">Critical</SelectItem>
-                            <SelectItem value="warning">Warning</SelectItem>
-                            <SelectItem value="info">Info</SelectItem>
+                            <SelectItem value="all">{t('common.all')}</SelectItem>
+                            <SelectItem value="critical">{t('anomalies.critical')}</SelectItem>
+                            <SelectItem value="warning">{t('anomalies.warning')}</SelectItem>
+                            <SelectItem value="info">{t('anomalies.info')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
 
                 {/* Anomaly Type */}
                 <div className={tableStyles.FILTER_BAR_ITEM}>
-                    <span className={tableStyles.FILTER_LABEL}>Type:</span>
+                    <span className={tableStyles.FILTER_LABEL}>{t('common.type')}:</span>
                     <Select value={typeFilter || 'all'} onValueChange={(val) => setTypeFilter(val === 'all' ? '' : val)}>
                         <SelectTrigger className={tableStyles.FILTER_BAR_SELECT}>
-                            <SelectValue placeholder="All" />
+                            <SelectValue placeholder={t('common.all')} />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="all">All Types</SelectItem>
-                            <SelectItem value="flash_message">Flash Message</SelectItem>
-                            <SelectItem value="zombie_message">Zombie Message</SelectItem>
-                            <SelectItem value="near_dlq">Near DLQ</SelectItem>
-                            <SelectItem value="dlq_movement">DLQ Movement</SelectItem>
-                            <SelectItem value="long_processing">Long Processing</SelectItem>
-                            <SelectItem value="lock_stolen">Lock Stolen</SelectItem>
-                            <SelectItem value="burst_dequeue">Burst Dequeue</SelectItem>
-                            <SelectItem value="bulk_delete">Bulk Delete</SelectItem>
-                            <SelectItem value="bulk_move">Bulk Move</SelectItem>
-                            <SelectItem value="queue_cleared">Queue Cleared</SelectItem>
-                            <SelectItem value="large_payload">Large Payload</SelectItem>
+                            <SelectItem value="all">{t('anomalies.allTypes')}</SelectItem>
+                            <SelectItem value="flash_message">{t('anomalies.flashMessage')}</SelectItem>
+                            <SelectItem value="zombie_message">{t('anomalies.zombieMessage')}</SelectItem>
+                            <SelectItem value="near_dlq">{t('anomalies.nearDlq')}</SelectItem>
+                            <SelectItem value="dlq_movement">{t('anomalies.dlqMovement')}</SelectItem>
+                            <SelectItem value="long_processing">{t('anomalies.longProcessing')}</SelectItem>
+                            <SelectItem value="lock_stolen">{t('anomalies.lockStolen')}</SelectItem>
+                            <SelectItem value="burst_dequeue">{t('anomalies.burstDequeue')}</SelectItem>
+                            <SelectItem value="bulk_delete">{t('anomalies.bulkDelete')}</SelectItem>
+                            <SelectItem value="bulk_move">{t('anomalies.bulkMove')}</SelectItem>
+                            <SelectItem value="queue_cleared">{t('anomalies.queueCleared')}</SelectItem>
+                            <SelectItem value="large_payload">{t('anomalies.largePayload')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -146,12 +148,12 @@ export function AnomaliesTable({
                 <Table>
                     <TableHeader>
                         <TableRow className={tableStyles.TABLE_ROW_HEADER}>
-                            <SortableHeader label="Severity" field="severity" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[90px]", tableStyles.TABLE_HEADER_FIRST)} />
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[120px]")}>Message ID</TableHead>
-                            <SortableHeader label="Anomaly Type" field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[220px]")}>Description</TableHead>
-                            <SortableHeader label="Timestamp" field="timestamp" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
-                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>Payload</TableHead>
+                            <SortableHeader label={t('anomalies.severity')} field="severity" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className={cn("w-[90px]", tableStyles.TABLE_HEADER_FIRST)} />
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[120px]")}>{t('activityLogs.columns.messageId')}</TableHead>
+                            <SortableHeader label={t('anomalies.anomalyType')} field="type" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[140px]" />
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, "w-[220px]")}>{t('fields.description')}</TableHead>
+                            <SortableHeader label={t('activityLogs.columns.timestamp')} field="timestamp" currentSort={sortBy} currentOrder={sortOrder} onSort={handleSort} className="w-[180px]" />
+                            <TableHead className={cn(tableStyles.TABLE_HEADER_BASE, tableStyles.TABLE_HEADER_LAST)}>{t('activityLogs.columns.payload')}</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -160,8 +162,8 @@ export function AnomaliesTable({
                                 <TableCell colSpan={6} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={CheckCircle2}
-                                        title="No anomalies detected"
-                                        description="Your queue is operating normally"
+                                        title={t('anomalies.noAnomalies')}
+                                        description={t('anomalies.queueOperatingNormally')}
                                         isFilterActive={isFilterActive}
                                     />
                                 </TableCell>
@@ -190,7 +192,7 @@ export function AnomaliesTable({
                                         {formatTime(log.timestamp)}
                                     </TableCell>
                                     {log.payload ? (
-                                        <PayloadCell payload={log.payload} toastMessage="Payload copied to clipboard" className={tableStyles.TABLE_CELL_LAST} />
+                                        <PayloadCell payload={log.payload} toastMessage={t('common.payloadCopied')} className={tableStyles.TABLE_CELL_LAST} />
                                     ) : (
                                         <TableCell className={cn(tableStyles.TABLE_CELL_PAYLOAD, tableStyles.TABLE_CELL_LAST)}>
                                             <span className={tableStyles.TEXT_MUTED}>—</span>
@@ -209,7 +211,7 @@ export function AnomaliesTable({
                     items={summaryItems}
                     rightContent={
                         <div className={tableStyles.TEXT_MUTED}>
-                            {anomalies.anomalies.length} anomalies shown
+                            {t('anomalies.anomaliesShown', { count: anomalies.anomalies.length })}
                         </div>
                     }
                 />

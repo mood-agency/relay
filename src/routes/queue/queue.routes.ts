@@ -129,6 +129,41 @@ export const getMessage = createRoute({
   },
 });
 
+export const getMessagesBatch = createRoute({
+  path: "/queue/messages/batch",
+  method: "get",
+  tags,
+  description: "Batch dequeue multiple messages in a single request. More efficient than calling GET /queue/message multiple times.",
+  request: {
+    query: z.object({
+      count: z.string().pipe(z.coerce.number().min(1).max(100)).describe("Number of messages to dequeue (1-100)"),
+      timeout: z.string().pipe(z.coerce.number()).optional().describe("Long-polling timeout in seconds (0 = no wait)"),
+      ackTimeout: z.string().pipe(z.coerce.number()).optional().describe("Override ack timeout for these messages"),
+      type: z.string().optional().describe("Filter by message type"),
+      consumerId: z.string().optional().describe("Consumer identifier for tracking"),
+      queue: z.string().optional().describe("Target queue name (defaults to 'default')"),
+    }),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        messages: z.array(DequeuedMessageSchema),
+        count: z.number().describe("Number of messages returned"),
+      }),
+      "Batch of Queue Messages"
+    ),
+    422: jsonContent(
+      createErrorSchema(z.object({
+        count: z.number(),
+        timeout: z.number().optional(),
+      })),
+      "Validation Error"
+    ),
+  },
+});
+
+export type GetMessagesBatchRoute = typeof getMessagesBatch;
+
 export const acknowledgeMessage = createRoute({
   path: "/queue/ack",
   method: "post",
@@ -158,6 +193,76 @@ export const acknowledgeMessage = createRoute({
     ),
   },
 });
+
+export const BulkAckSchema = z.object({
+  acks: z.array(z.object({
+    id: z.string().describe("Message ID"),
+    lock_token: z.string().describe("Lock token received when message was dequeued"),
+  })).min(1).max(100).describe("Array of message ACKs (max 100)"),
+});
+
+export const acknowledgeMessagesBatch = createRoute({
+  path: "/queue/ack/batch",
+  method: "post",
+  tags,
+  description: "Bulk acknowledge multiple messages in a single request. More efficient than calling POST /queue/ack multiple times.",
+  request: {
+    body: jsonContentRequired(BulkAckSchema, "Bulk Acknowledge Messages"),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        succeeded: z.array(z.string()).describe("IDs of successfully acknowledged messages"),
+        failed: z.array(z.object({
+          id: z.string(),
+          error: z.string(),
+          code: z.string(),
+        })).describe("Messages that failed to acknowledge with error details"),
+      }),
+      "Bulk Acknowledge Result"
+    ),
+    422: jsonContent(createErrorSchema(BulkAckSchema), "Validation Error"),
+  },
+});
+
+export const BulkNackSchema = z.object({
+  nacks: z.array(z.object({
+    id: z.string().describe("Message ID"),
+    lock_token: z.string().describe("Lock token received when message was dequeued"),
+    error: z.string().optional().describe("Error reason for NACK"),
+  })).min(1).max(100).describe("Array of message NACKs (max 100)"),
+});
+
+export const nackMessagesBatch = createRoute({
+  path: "/queue/nack/batch",
+  method: "post",
+  tags,
+  description: "Bulk NACK multiple messages in a single request. Messages will be requeued or moved to DLQ based on attempt count.",
+  request: {
+    body: jsonContentRequired(BulkNackSchema, "Bulk NACK Messages"),
+  },
+  responses: {
+    200: jsonContent(
+      z.object({
+        message: z.string(),
+        succeeded: z.array(z.string()).describe("IDs of successfully NACKed messages"),
+        failed: z.array(z.object({
+          id: z.string(),
+          error: z.string(),
+          code: z.string(),
+        })).describe("Messages that failed to NACK with error details"),
+        requeued: z.array(z.string()).describe("IDs of messages that were requeued for retry"),
+        movedToDlq: z.array(z.string()).describe("IDs of messages that were moved to DLQ (max attempts exceeded)"),
+      }),
+      "Bulk NACK Result"
+    ),
+    422: jsonContent(createErrorSchema(BulkNackSchema), "Validation Error"),
+  },
+});
+
+export type AcknowledgeMessagesBatchRoute = typeof acknowledgeMessagesBatch;
+export type NackMessagesBatchRoute = typeof nackMessagesBatch;
 
 export const metrics = createRoute({
   path: "/queue/metrics",

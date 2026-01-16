@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react"
+import { useTranslation } from "react-i18next"
 import { useNavigate, useParams, useLocation } from "react-router-dom"
 import {
     Database,
@@ -67,6 +68,7 @@ export default function Sidebar({
     activityCounts,
     refreshTrigger,
 }: SidebarProps) {
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const params = useParams<{ queueName?: string; tab?: string }>()
     const location = useLocation()
@@ -139,19 +141,19 @@ export default function Sidebar({
 
     // Queue tabs configuration
     type QueueStatusKey = 'mainQueue' | 'processingQueue' | 'deadLetterQueue' | 'acknowledgedQueue' | 'archivedQueue'
-    const queueTabs: { id: QueueTab; icon: typeof Inbox; label: string; countKey: QueueStatusKey }[] = [
-        { id: 'main', icon: Inbox, label: 'Main', countKey: 'mainQueue' },
-        { id: 'processing', icon: Pickaxe, label: 'Processing', countKey: 'processingQueue' },
-        { id: 'dead', icon: XCircle, label: 'Dead Letter', countKey: 'deadLetterQueue' },
-        { id: 'acknowledged', icon: Check, label: 'Acknowledged', countKey: 'acknowledgedQueue' },
-        { id: 'archived', icon: Archive, label: 'Archived', countKey: 'archivedQueue' },
+    const queueTabs: { id: QueueTab; icon: typeof Inbox; labelKey: string; countKey: QueueStatusKey }[] = [
+        { id: 'main', icon: Inbox, labelKey: 'queueTabs.mainShort', countKey: 'mainQueue' },
+        { id: 'processing', icon: Pickaxe, labelKey: 'queueTabs.processing', countKey: 'processingQueue' },
+        { id: 'dead', icon: XCircle, labelKey: 'queueTabs.dead', countKey: 'deadLetterQueue' },
+        { id: 'acknowledged', icon: Check, labelKey: 'queueTabs.acknowledged', countKey: 'acknowledgedQueue' },
+        { id: 'archived', icon: Archive, labelKey: 'queueTabs.archived', countKey: 'archivedQueue' },
     ]
 
     // Activity tabs configuration
-    const activityTabs: { id: ActivityTab; icon: typeof FileText; label: string }[] = [
-        { id: 'activity', icon: FileText, label: 'All Logs' },
-        { id: 'anomalies', icon: AlertCircle, label: 'Anomalies' },
-        { id: 'consumers', icon: User, label: 'Consumers' },
+    const activityTabs: { id: ActivityTab; icon: typeof FileText; labelKey: string }[] = [
+        { id: 'activity', icon: FileText, labelKey: 'activityTabs.allLogs' },
+        { id: 'anomalies', icon: AlertCircle, labelKey: 'activityTabs.anomalies' },
+        { id: 'consumers', icon: User, labelKey: 'activityTabs.consumers' },
     ]
 
     return (
@@ -179,10 +181,7 @@ export default function Sidebar({
                             ) : (
                                 <ChevronRight className="h-3 w-3" />
                             )}
-                            Queues
-                            <span className="ml-auto text-[10px] bg-muted px-1.5 py-0.5 rounded">
-                                {queues.length}
-                            </span>
+                            {t('sidebar.queues')}
                         </button>
 
                         {expandedSections.has('queues') && (
@@ -193,7 +192,7 @@ export default function Sidebar({
                                     </div>
                                 ) : queues.length === 0 ? (
                                     <div className="px-2 py-3 text-xs text-muted-foreground text-center">
-                                        No queues yet
+                                        {t('sidebar.noQueuesYet')}
                                     </div>
                                 ) : (
                                     queues.map((queue) => {
@@ -205,7 +204,7 @@ export default function Sidebar({
                                                 className={cn(
                                                     "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
                                                     currentQueueName === queue.name
-                                                        ? "bg-primary/10 text-primary font-medium"
+                                                        ? "bg-primary/10 text-primary"
                                                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                                                 )}
                                             >
@@ -240,7 +239,7 @@ export default function Sidebar({
                                 ) : (
                                     <ChevronRight className="h-3 w-3" />
                                 )}
-                                Messages
+                                {t('sidebar.messages')}
                             </button>
 
                             {expandedSections.has('messages') && (
@@ -259,7 +258,7 @@ export default function Sidebar({
                                                 className={cn(
                                                     "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
                                                     isActive
-                                                        ? "bg-primary/10 text-primary font-medium"
+                                                        ? "bg-primary/10 text-primary"
                                                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                                                 )}
                                             >
@@ -268,7 +267,7 @@ export default function Sidebar({
                                                     isDead && count > 0 && "text-destructive",
                                                     isAcknowledged && count > 0 && "text-green-500"
                                                 )} />
-                                                <span className="flex-1 text-left">{tab.label}</span>
+                                                <span className="flex-1 text-left">{t(tab.labelKey)}</span>
                                                 <span className={cn(
                                                     "text-[10px] px-1.5 py-0.5 rounded min-w-[1.5rem] text-center",
                                                     isDead && count > 0
@@ -299,7 +298,7 @@ export default function Sidebar({
                                 ) : (
                                     <ChevronRight className="h-3 w-3" />
                                 )}
-                                Activity
+                                {t('sidebar.activity')}
                                 {(activityCounts?.criticalAnomalies ?? 0) > 0 && (
                                     <span className="h-2 w-2 bg-destructive rounded-full animate-pulse ml-auto" />
                                 )}
@@ -325,7 +324,7 @@ export default function Sidebar({
                                                 className={cn(
                                                     "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
                                                     isActive
-                                                        ? "bg-primary/10 text-primary font-medium"
+                                                        ? "bg-primary/10 text-primary"
                                                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                                                 )}
                                             >
@@ -333,7 +332,7 @@ export default function Sidebar({
                                                     "h-3.5 w-3.5",
                                                     hasCritical && "text-destructive"
                                                 )} />
-                                                <span className="flex-1 text-left">{tab.label}</span>
+                                                <span className="flex-1 text-left">{t(tab.labelKey)}</span>
                                                 <span className={cn(
                                                     "text-[10px] px-1.5 py-0.5 rounded min-w-[1.5rem] text-center",
                                                     hasCritical

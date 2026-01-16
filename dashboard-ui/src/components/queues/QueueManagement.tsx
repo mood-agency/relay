@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { format } from "date-fns"
 import {
     Search,
@@ -175,6 +176,7 @@ interface CreateQueueDialogProps {
 }
 
 function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueueDialogProps) {
+    const { t } = useTranslation()
     const [form, setForm] = useState<CreateQueueForm>({
         name: "",
         queue_type: "standard",
@@ -192,11 +194,11 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
 
         // Validate name
         if (!form.name.trim()) {
-            setError("Queue name is required")
+            setError(t('queueManagement.queueNameRequired'))
             return
         }
         if (!/^[a-zA-Z0-9_-]+$/.test(form.name)) {
-            setError("Queue name can only contain alphanumeric characters, underscores, and hyphens")
+            setError(t('queueManagement.queueNameInvalid'))
             return
         }
 
@@ -213,7 +215,7 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
             })
             onClose()
         } catch (err: any) {
-            setError(err.message || "Failed to create queue")
+            setError(err.message || t('queueManagement.failedToCreate'))
         }
     }
 
@@ -221,9 +223,9 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
         <Dialog open={isOpen} onOpenChange={onClose}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Create New Queue</DialogTitle>
+                    <DialogTitle>{t('queueManagement.createNewQueue')}</DialogTitle>
                     <DialogDescription>
-                        Create a new message queue with custom configuration.
+                        {t('queueManagement.createQueueDescription')}
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit}>
@@ -236,7 +238,7 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Queue Name *</label>
+                            <label className="text-sm font-medium">{t('queueManagement.queueName')} *</label>
                             <input
                                 type="text"
                                 value={form.name}
@@ -244,11 +246,11 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                                 placeholder="my-queue"
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                             />
-                            <p className="text-xs text-muted-foreground">Alphanumeric, underscores, and hyphens only</p>
+                            <p className="text-xs text-muted-foreground">{t('queueManagement.queueNameInvalid')}</p>
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Queue Type</label>
+                            <label className="text-sm font-medium">{t('queueManagement.queueType')}</label>
                             <Select
                                 value={form.queue_type}
                                 onValueChange={(v) => setForm(prev => ({ ...prev, queue_type: v as any }))}
@@ -260,33 +262,33 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                                     <SelectItem value="standard">
                                         <div className="flex items-center gap-2">
                                             <Database className="h-4 w-4" />
-                                            Standard (High Durability)
+                                            {t('queueTypes.standard')} ({t('queueTypes.standardDesc')})
                                         </div>
                                     </SelectItem>
                                     <SelectItem value="unlogged">
                                         <div className="flex items-center gap-2">
                                             <Zap className="h-4 w-4" />
-                                            Unlogged (High Performance)
+                                            {t('queueTypes.unlogged')} ({t('queueTypes.unloggedDesc')})
                                         </div>
                                     </SelectItem>
                                     <SelectItem value="partitioned">
                                         <div className="flex items-center gap-2">
                                             <Layers className="h-4 w-4" />
-                                            Partitioned (High Scalability)
+                                            {t('queueTypes.partitioned')} ({t('queueTypes.partitionedDesc')})
                                         </div>
                                     </SelectItem>
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-muted-foreground">
-                                {form.queue_type === "standard" && "Messages stored in logged PostgreSQL tables. Best for general use."}
-                                {form.queue_type === "unlogged" && "2-3x faster writes, but data lost on crash. Best for transient data."}
-                                {form.queue_type === "partitioned" && "Uses table partitioning for very high throughput."}
+                                {form.queue_type === "standard" && t('queueManagement.standardFullDesc')}
+                                {form.queue_type === "unlogged" && t('queueManagement.unloggedFullDesc')}
+                                {form.queue_type === "partitioned" && t('queueManagement.partitionedFullDesc')}
                             </p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">ACK Timeout (s)</label>
+                                <label className="text-sm font-medium">{t('queueManagement.ackTimeout')}</label>
                                 <input
                                     type="number"
                                     value={form.ack_timeout_seconds}
@@ -296,7 +298,7 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                                 />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">Max Attempts</label>
+                                <label className="text-sm font-medium">{t('queueManagement.maxAttempts')}</label>
                                 <input
                                     type="number"
                                     value={form.max_attempts}
@@ -310,7 +312,7 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                         {form.queue_type === "partitioned" && (
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium">Partition Interval</label>
+                                    <label className="text-sm font-medium">{t('queueManagement.partitionInterval')}</label>
                                     <Select
                                         value={form.partition_interval}
                                         onValueChange={(v) => setForm(prev => ({ ...prev, partition_interval: v }))}
@@ -319,14 +321,14 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                                             <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="hourly">Hourly</SelectItem>
-                                            <SelectItem value="daily">Daily</SelectItem>
-                                            <SelectItem value="weekly">Weekly</SelectItem>
+                                            <SelectItem value="hourly">{t('queueManagement.hourly')}</SelectItem>
+                                            <SelectItem value="daily">{t('queueManagement.daily')}</SelectItem>
+                                            <SelectItem value="weekly">{t('queueManagement.weekly')}</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium">Retention Interval</label>
+                                    <label className="text-sm font-medium">{t('queueManagement.retentionInterval')}</label>
                                     <Select
                                         value={form.retention_interval}
                                         onValueChange={(v) => setForm(prev => ({ ...prev, retention_interval: v }))}
@@ -346,11 +348,11 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Description</label>
+                            <label className="text-sm font-medium">{t('queueManagement.description')}</label>
                             <textarea
                                 value={form.description}
                                 onChange={(e) => setForm(prev => ({ ...prev, description: e.target.value }))}
-                                placeholder="Optional description..."
+                                placeholder={t('queueManagement.descriptionPlaceholder')}
                                 rows={2}
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                             />
@@ -358,11 +360,11 @@ function CreateQueueDialog({ isOpen, onClose, onCreate, isLoading }: CreateQueue
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
+                            {t('common.cancel')}
                         </Button>
                         <Button type="submit" disabled={isLoading}>
                             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            Create Queue
+                            {t('actions.createQueue')}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -384,6 +386,7 @@ interface EditQueueDialogProps {
 }
 
 function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueueDialogProps) {
+    const { t } = useTranslation()
     const [form, setForm] = useState<EditQueueForm>({
         name: "",
         ack_timeout_seconds: 30,
@@ -409,11 +412,11 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
 
         // Validate name
         if (!form.name.trim()) {
-            setError("Queue name is required")
+            setError(t('queueManagement.queueNameRequired'))
             return
         }
         if (!/^[a-zA-Z0-9_-]+$/.test(form.name)) {
-            setError("Queue name can only contain alphanumeric characters, underscores, and hyphens")
+            setError(t('queueManagement.queueNameInvalid'))
             return
         }
 
@@ -421,7 +424,7 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
             await onSave(form)
             onClose()
         } catch (err: any) {
-            setError(err.message || "Failed to update queue")
+            setError(err.message || t('queueManagement.failedToUpdate'))
         }
     }
 
@@ -429,9 +432,9 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
         <Dialog open={isOpen} onOpenChange={onClose}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Edit Queue</DialogTitle>
+                    <DialogTitle>{t('queueManagement.editQueue')}</DialogTitle>
                     <DialogDescription>
-                        Update queue configuration. Note: Queue type cannot be changed.
+                        {t('queueManagement.editQueueDescription')}
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit}>
@@ -444,7 +447,7 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Queue Name</label>
+                            <label className="text-sm font-medium">{t('queueManagement.queueName')}</label>
                             <input
                                 type="text"
                                 value={form.name}
@@ -452,12 +455,12 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
                                 placeholder="my-queue"
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                             />
-                            <p className="text-xs text-muted-foreground">Alphanumeric, underscores, and hyphens only</p>
+                            <p className="text-xs text-muted-foreground">{t('queueManagement.queueNameInvalid')}</p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">ACK Timeout (s)</label>
+                                <label className="text-sm font-medium">{t('queueManagement.ackTimeout')}</label>
                                 <input
                                     type="number"
                                     value={form.ack_timeout_seconds}
@@ -467,7 +470,7 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
                                 />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-sm font-medium">Max Attempts</label>
+                                <label className="text-sm font-medium">{t('queueManagement.maxAttempts')}</label>
                                 <input
                                     type="number"
                                     value={form.max_attempts}
@@ -479,11 +482,11 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Description</label>
+                            <label className="text-sm font-medium">{t('queueManagement.description')}</label>
                             <textarea
                                 value={form.description}
                                 onChange={(e) => setForm(prev => ({ ...prev, description: e.target.value }))}
-                                placeholder="Optional description..."
+                                placeholder={t('queueManagement.descriptionPlaceholder')}
                                 rows={2}
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                             />
@@ -491,11 +494,11 @@ function EditQueueDialog({ isOpen, onClose, onSave, queue, isLoading }: EditQueu
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
+                            {t('common.cancel')}
                         </Button>
                         <Button type="submit" disabled={isLoading}>
                             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            Save Changes
+                            {t('common.saveChanges')}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -517,6 +520,7 @@ interface DeleteQueueDialogProps {
 }
 
 function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: DeleteQueueDialogProps) {
+    const { t } = useTranslation()
     const [forceDelete, setForceDelete] = useState(false)
     const [confirmText, setConfirmText] = useState("")
     const [error, setError] = useState<string | null>(null)
@@ -536,7 +540,7 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
             setForceDelete(false)
             onClose()
         } catch (err: any) {
-            setError(err.message || "Failed to delete queue")
+            setError(err.message || t('queueManagement.failedToDelete'))
         }
     }
 
@@ -551,12 +555,12 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-destructive">
                         <AlertTriangle className="h-5 w-5" />
-                        Delete Queue
+                        {t('queueManagement.deleteQueue')}
                     </DialogTitle>
                     <DialogDescription>
-                        This action cannot be undone. This will permanently delete the queue
+                        {t('queueManagement.deleteQueueWarning')}
                         <span className="font-mono font-semibold mx-1">{queue?.name}</span>
-                        and all its data.
+                        {t('queueManagement.deleteQueueConfirm')}
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit}>
@@ -572,34 +576,34 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
                             <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md">
                                 <div className="flex items-center gap-2 text-yellow-600 font-medium text-sm mb-2">
                                     <AlertTriangle className="h-4 w-4" />
-                                    Queue has {totalMessages.toLocaleString()} messages
+                                    {t('queueManagement.queueHasMessages', { count: totalMessages })}
                                 </div>
                                 <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
                                     <Checkbox
                                         checked={forceDelete}
                                         onCheckedChange={(checked) => setForceDelete(checked === true)}
                                     />
-                                    Force delete (delete all messages)
+                                    {t('queueManagement.forceDelete')}
                                 </label>
                             </div>
                         )}
 
                         <div className="space-y-2">
                             <label className="text-sm font-medium">
-                                Type <span className="font-mono font-semibold">{queue?.name}</span> to confirm
+                                {t('queueManagement.typeToConfirm', { name: queue?.name })}
                             </label>
                             <input
                                 type="text"
                                 value={confirmText}
                                 onChange={(e) => setConfirmText(e.target.value)}
-                                placeholder="Queue name"
+                                placeholder={t('queueManagement.queueName')}
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                             />
                         </div>
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
+                            {t('common.cancel')}
                         </Button>
                         <Button
                             type="submit"
@@ -607,7 +611,7 @@ function DeleteQueueDialog({ isOpen, onClose, onConfirm, queue, isLoading }: Del
                             disabled={!canDelete || isLoading || (hasMessages && !forceDelete)}
                         >
                             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            Delete Queue
+                            {t('actions.deleteQueue')}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -629,6 +633,7 @@ interface RenameQueueDialogProps {
 }
 
 function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: RenameQueueDialogProps) {
+    const { t } = useTranslation()
     const [newName, setNewName] = useState("")
     const [error, setError] = useState<string | null>(null)
 
@@ -645,15 +650,15 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
 
         // Validate new name
         if (!newName.trim()) {
-            setError("Queue name is required")
+            setError(t('queueManagement.queueNameRequired'))
             return
         }
         if (!/^[a-zA-Z0-9_-]+$/.test(newName)) {
-            setError("Queue name can only contain alphanumeric characters, underscores, and hyphens")
+            setError(t('queueManagement.queueNameInvalid'))
             return
         }
         if (newName === queue?.name) {
-            setError("New name must be different from current name")
+            setError(t('queueManagement.newNameMustBeDifferent'))
             return
         }
 
@@ -661,7 +666,7 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
             await onRename(newName.trim())
             onClose()
         } catch (err: any) {
-            setError(err.message || "Failed to rename queue")
+            setError(err.message || t('queueManagement.failedToRename'))
         }
     }
 
@@ -669,9 +674,9 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
         <Dialog open={isOpen} onOpenChange={onClose}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Rename Queue</DialogTitle>
+                    <DialogTitle>{t('queueManagement.renameQueue')}</DialogTitle>
                     <DialogDescription>
-                        Change the name of queue <span className="font-mono font-semibold">{queue?.name}</span>
+                        {t('queueManagement.renameQueueDescription')} <span className="font-mono font-semibold">{queue?.name}</span>
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit}>
@@ -684,7 +689,7 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
                         )}
 
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">New Queue Name *</label>
+                            <label className="text-sm font-medium">{t('queueManagement.newQueueName')} *</label>
                             <input
                                 type="text"
                                 value={newName}
@@ -692,25 +697,25 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
                                 placeholder="my-queue"
                                 className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                             />
-                            <p className="text-xs text-muted-foreground">Alphanumeric, underscores, and hyphens only</p>
+                            <p className="text-xs text-muted-foreground">{t('queueManagement.queueNameInvalid')}</p>
                         </div>
 
                         {/* Queue Info (read-only) */}
                         <div className="space-y-3 pt-2 border-t">
-                            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Queue Configuration</p>
+                            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{t('queueManagement.queueConfiguration')}</p>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                    <label className="text-xs text-muted-foreground">ACK Timeout</label>
+                                    <label className="text-xs text-muted-foreground">{t('queueManagement.ackTimeout')}</label>
                                     <p className="text-sm font-medium">{queue?.ack_timeout_seconds}s</p>
                                 </div>
                                 <div className="space-y-1">
-                                    <label className="text-xs text-muted-foreground">Max Attempts</label>
+                                    <label className="text-xs text-muted-foreground">{t('queueManagement.maxAttempts')}</label>
                                     <p className="text-sm font-medium">{queue?.max_attempts}</p>
                                 </div>
                             </div>
                             {queue?.description && (
                                 <div className="space-y-1">
-                                    <label className="text-xs text-muted-foreground">Description</label>
+                                    <label className="text-xs text-muted-foreground">{t('queueManagement.description')}</label>
                                     <p className="text-sm text-muted-foreground">{queue.description}</p>
                                 </div>
                             )}
@@ -718,11 +723,11 @@ function RenameQueueDialog({ isOpen, onClose, onRename, queue, isLoading }: Rena
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
+                            {t('common.cancel')}
                         </Button>
                         <Button type="submit" disabled={isLoading || newName === queue?.name}>
                             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                            Rename Queue
+                            {t('actions.renameQueue')}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -742,6 +747,8 @@ interface QueueManagementProps {
 }
 
 export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChanged }: QueueManagementProps) {
+    const { t } = useTranslation()
+
     // State
     const [queues, setQueues] = useState<QueueInfo[]>([])
     const [loading, setLoading] = useState(true)
@@ -986,7 +993,7 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
         return (
             <div className="flex flex-col items-center justify-center min-h-[400px]">
                 <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-                <p className="text-muted-foreground font-medium">Loading queues...</p>
+                <p className="text-muted-foreground font-medium">{t('status.loadingQueues')}</p>
             </div>
         )
     }
@@ -1009,7 +1016,7 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <input
                         type="text"
-                        placeholder="Search queues..."
+                        placeholder={t('queueManagement.searchQueues')}
                         value={search}
                         onChange={(e) => {
                             setSearch(e.target.value)
@@ -1022,13 +1029,13 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
                 {/* Type Filter */}
                 <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setCurrentPage(1) }}>
                     <SelectTrigger className="w-[160px] h-9">
-                        <SelectValue placeholder="All Types" />
+                        <SelectValue placeholder={t('queueManagement.allTypes')} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="standard">Standard</SelectItem>
-                        <SelectItem value="unlogged">Unlogged</SelectItem>
-                        <SelectItem value="partitioned">Partitioned</SelectItem>
+                        <SelectItem value="all">{t('queueManagement.allTypes')}</SelectItem>
+                        <SelectItem value="standard">{t('queueTypes.standard')}</SelectItem>
+                        <SelectItem value="unlogged">{t('queueTypes.unlogged')}</SelectItem>
+                        <SelectItem value="partitioned">{t('queueTypes.partitioned')}</SelectItem>
                     </SelectContent>
                 </Select>
 
@@ -1036,7 +1043,7 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
 
                 <Button onClick={() => setCreateDialog(true)} size="sm" className="h-9">
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Queue
+                    {t('actions.createQueue')}
                 </Button>
             </div>
 
@@ -1060,10 +1067,10 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
                                 <TableCell colSpan={7} className={tableStyles.TABLE_CELL_EMPTY}>
                                     <EmptyState
                                         icon={Database}
-                                        title={search || typeFilter !== "all" ? "No queues found" : "No queues yet"}
+                                        title={search || typeFilter !== "all" ? t('queueManagement.noQueuesFound') : t('queueManagement.noQueuesYet')}
                                         description={search || typeFilter !== "all"
-                                            ? "Try adjusting your search or filters"
-                                            : "Create a queue to get started"
+                                            ? t('queueManagement.tryAdjustingFilters')
+                                            : t('queueManagement.createToGetStarted')
                                         }
                                         isFilterActive={!!search || typeFilter !== "all"}
                                     />
@@ -1117,7 +1124,7 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
                                                         <Edit className="h-3.5 w-3.5" />
                                                     </Button>
                                                 </TooltipTrigger>
-                                                <TooltipContent>Edit settings</TooltipContent>
+                                                <TooltipContent>{t('actions.editSettings')}</TooltipContent>
                                             </Tooltip>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
@@ -1130,7 +1137,7 @@ export default function QueueManagement({ authFetch, onQueueSelect, onQueuesChan
                                                         <Trash2 className="h-3.5 w-3.5" />
                                                     </Button>
                                                 </TooltipTrigger>
-                                                <TooltipContent>Delete queue</TooltipContent>
+                                                <TooltipContent>{t('actions.deleteQueue')}</TooltipContent>
                                             </Tooltip>
                                         </div>
                                     </TableCell>

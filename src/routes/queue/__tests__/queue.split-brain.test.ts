@@ -86,6 +86,9 @@ describe('Queue Routes - Split Brain Prevention', () => {
     it('should reject ACK from slow worker after message was re-queued (different lock_token)', async () => {
       const queue = await getQueue();
 
+      // Ensure clean state - clear any leftover messages
+      await testClient(router).queue.clear.$delete();
+
       // 1. Enqueue a message
       await testClient(router).queue.message.$post({ json: { type: 'split-brain', payload: { test: 1 } } });
 
